@@ -7,7 +7,7 @@
                 Polymarket is an online prediction market that lets users bet on the outcome of future events in a wide range of topics, like sports, politics, and pop culture. 
                 Get accurate real-time probabilities of the events that matter most to you. 
         
-        Filter these events for the ones you will be best at trading on profitably.
+        Filter these events for the ones you will be best at trading profitably.
 
         
 

@@ -18,7 +18,7 @@ We value all kinds of contributions! Whether it’s improving our documentation,
 
 To streamline the process, please avoid these types of contributions:
 
-> Please do not use the issue tracker for general support questions. For help, consider joining our the Polymarket Discord or referring to the [Polymarket API documentation](https://polymarket.com/docs).
+> Please do not use the issue tracker for general support questions. For help, consider joining our Polymarket Discord or referring to the [Polymarket API documentation](https://polymarket.com/docs).
 
 # Ground Rules
 
