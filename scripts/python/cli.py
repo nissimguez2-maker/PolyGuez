@@ -7,6 +7,10 @@ from agents.connectors.news import News
 from agents.application.trade import Trader
 from agents.application.executor import Executor
 from agents.application.creator import Creator
+from agents.application.enhanced_trader import EnhancedTrader
+from agents.analytics.metrics import MarketMetrics
+from agents.analytics.calibration import CalibrationTracker
+from agents.risk.portfolio import PortfolioManager
 
 app = typer.Typer()
 polymarket = Polymarket()
@@ -118,10 +122,110 @@ def ask_polymarket_llm(user_input: str) -> None:
 @app.command()
 def run_autonomous_trader() -> None:
     """
-    Let an autonomous system trade for you.
+    Let an autonomous system trade for you (basic version).
     """
     trader = Trader()
     trader.one_best_trade()
+
+
+@app.command()
+def run_enhanced_trader() -> None:
+    """
+    Run enhanced autonomous trader with all new features:
+    - Category-based filtering (information edge)
+    - Quantitative pre-filters
+    - News integration
+    - Kelly sizing
+    - Confidence scoring
+    - Risk controls
+    """
+    trader = EnhancedTrader()
+    trader.one_best_trade_enhanced()
+
+
+@app.command()
+def analyze_market_categories() -> None:
+    """
+    Analyze available markets by category and information edge.
+    Shows which categories have the most tradeable opportunities.
+    """
+    metrics = MarketMetrics()
+    metrics.analyze_market_universe(polymarket)
+
+
+@app.command()
+def show_performance() -> None:
+    """
+    Display calibration and portfolio performance metrics.
+    """
+    print("\n" + "="*70)
+    print("PERFORMANCE DASHBOARD")
+    print("="*70 + "\n")
+
+    calibration = CalibrationTracker()
+    calibration.print_performance_report()
+
+    portfolio = PortfolioManager()
+    portfolio.print_portfolio_summary()
+
+
+@app.command()
+def monitor_positions() -> None:
+    """
+    Monitor open positions and execute stop-loss/take-profit rules.
+    """
+    trader = EnhancedTrader()
+    trader.monitor_and_exit_positions()
+
+
+@app.command()
+def find_obscure_markets(max_volume: float = 10000, min_spread: float = 0.03) -> None:
+    """
+    Find low-volume markets where LLMs may have edge.
+
+    Args:
+        max_volume: Maximum market volume (default $10k)
+        min_spread: Minimum spread indicating mispricing (default 3%)
+    """
+    from agents.strategies.inefficiency import InefficiencyStrategies
+
+    markets = polymarket.get_all_markets()
+    obscure = InefficiencyStrategies.find_obscure_markets(
+        markets,
+        max_volume=max_volume,
+        min_spread=min_spread
+    )
+
+    print(f"\nFound {len(obscure)} obscure markets:\n")
+    for market in obscure[:10]:
+        print(f"  - {market.question}")
+        print(f"    Volume: ${market.volume:,.0f}, Spread: {market.spread:.2%}\n")
+
+
+@app.command()
+def find_time_decay_plays(min_days: int = 1, max_days: int = 7) -> None:
+    """
+    Find markets near resolution (potentially stale pricing).
+
+    Args:
+        min_days: Minimum days to close (default 1)
+        max_days: Maximum days to close (default 7)
+    """
+    from agents.strategies.inefficiency import InefficiencyStrategies
+
+    markets = polymarket.get_all_markets()
+    time_decay = InefficiencyStrategies.find_time_decay_plays(
+        markets,
+        min_days=min_days,
+        max_days=max_days
+    )
+
+    print(f"\nFound {len(time_decay)} markets near resolution:\n")
+    for market in time_decay[:10]:
+        from agents.utils.filters import QuantitativeFilters
+        days = QuantitativeFilters.days_until_close(market)
+        print(f"  - {market.question}")
+        print(f"    Closes in: {days:.1f} days\n")
 
 
 if __name__ == "__main__":

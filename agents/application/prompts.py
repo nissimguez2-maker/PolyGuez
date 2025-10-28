@@ -93,8 +93,33 @@ class Prompter:
         return (
             self.polymarket_analyst_api()
             + f"""
-        
+
         Filter these events for the ones you will be best at trading on profitably.
+
+        PRIORITY CATEGORIES (Focus on these - high information edge):
+        1. Politics: Elections, appointments, legislation (information-driven)
+        2. Finance: Fed decisions, economic data, market events (macro-driven)
+        3. Tech: Product launches, regulations, M&A (insider knowledge matters)
+        4. Business: Earnings, executive changes, bankruptcies (fundamental analysis)
+        5. Crypto: ETF approvals, regulations, protocol updates (information asymmetry)
+
+        AVOID CATEGORIES (Low information edge):
+        - Sports: High variance, physical randomness dominates
+        - Entertainment: Subjective taste, low information content
+        - Weather: Chaotic systems, professional models dominate
+        - Pop culture: Random viral dynamics, low signal
+
+        SELECTION CRITERIA:
+        ✓ Events where insider knowledge provides edge
+        ✓ Events driven by macro factors (policy, economics, business)
+        ✓ Events with analyzable fundamentals
+        ✓ Events where deep research can uncover non-obvious insights
+
+        ✗ Events dominated by physical randomness (sports outcomes)
+        ✗ Events based on subjective taste (awards, entertainment)
+        ✗ Events with pure variance (weather, random events)
+
+        Return only events in PRIORITY CATEGORIES where information edge exists.
 
         """
         )
@@ -103,8 +128,17 @@ class Prompter:
         return (
             self.polymarket_analyst_api()
             + f"""
-        
+
         Filter these markets for the ones you will be best at trading on profitably.
+
+        Focus on markets where:
+        - Information edge matters more than luck
+        - Recent news and analysis can provide alpha
+        - Deep research reveals mispricing
+        - Macro trends and insider knowledge drive outcomes
+
+        Prioritize: Politics, Finance, Tech, Business, Crypto markets
+        Avoid: Sports, Entertainment, Weather, Pop Culture markets
 
         """
         )
