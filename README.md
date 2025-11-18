@@ -47,35 +47,35 @@ This code is free and publicly available under MIT License open source license (
 
 # Getting started
 
-This repo is intended for use with Python 3.12 and uv package manager.
+This repo requires **Python 3.12+** and uses **[uv](https://github.com/astral-sh/uv)** for fast, reliable package management.
 
 ## Prerequisites
 
 - Python 3.12 or higher
-- [uv](https://github.com/astral-sh/uv) package manager
+- [uv](https://github.com/astral-sh/uv) package manager (10-100x faster than pip!)
 
 ## Installation
 
-1. Clone the repository
+1. **Clone the repository**
 
    ```bash
    git clone https://github.com/{username}/polymarket-agents.git
    cd polymarket-agents
    ```
 
-2. Install uv (if not already installed)
+2. **Install uv** (if not already installed)
 
    ```bash
    curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-3. Create a virtual environment with Python 3.12
+3. **Create a virtual environment with Python 3.12**
 
    ```bash
    uv venv --python 3.12
    ```
 
-4. Activate the virtual environment
+4. **Activate the virtual environment**
 
    - On Windows:
 
@@ -89,54 +89,50 @@ This repo is intended for use with Python 3.12 and uv package manager.
    source .venv/bin/activate
    ```
 
-5. Install the package and its dependencies
+5. **Install the package and dependencies**
 
    ```bash
+   # Install with dev dependencies (recommended for development)
    uv pip install -e ".[dev]"
-   ```
 
-   Or, to install without dev dependencies:
-
-   ```bash
+   # Or without dev dependencies
    uv pip install -e .
    ```
 
-6. Set up your environment variables:
+6. **Set up your environment variables**
 
    - Create a `.env` file in the project root directory
 
-   ```
+   ```bash
    cp .env.example .env
    ```
 
    - Add the following environment variables:
 
-   ```
+   ```bash
    POLYGON_WALLET_PRIVATE_KEY=""
    OPENAI_API_KEY=""
+   # Optional: Add search API keys for enhanced functionality
+   TAVILY_API_KEY=""
+   EXA_API_KEY=""
+   KAGI_API_KEY=""
    ```
 
-7. Load your wallet with USDC.
+7. **Load your wallet with USDC**
 
 ## Usage
 
 ### Command Line Interface
 
-Try the command line interface:
-
 ```bash
-python scripts/python/cli.py
+# Using the installed CLI command
+polymarket-cli --help
+
+# Or directly with Python
+python scripts/python/cli.py --help
 ```
 
-Or use the installed CLI command:
-
-```bash
-polymarket-cli
-```
-
-### Trading
-
-To start autonomous trading:
+### Autonomous Trading
 
 ```bash
 python agents/application/trade.py
@@ -144,14 +140,14 @@ python agents/application/trade.py
 
 ### Docker
 
-If running with Docker is preferred, we provide the following scripts:
+If you prefer Docker, use the provided scripts:
 
 ```bash
 ./scripts/bash/build-docker.sh
 ./scripts/bash/run-docker-dev.sh
 ```
 
-**Note:** The package is now installed in editable mode, so you no longer need to set `PYTHONPATH` manually.
+**Note:** With the new package installation setup, you no longer need to set `PYTHONPATH` manually!
 
 ## Architecture
 

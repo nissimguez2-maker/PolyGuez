@@ -2,6 +2,7 @@ import typer
 from devtools import pprint
 
 from agents.polymarket.polymarket import Polymarket
+
 from agents.connectors.chroma import PolymarketRAG
 from agents.connectors.news import News
 from agents.application.trade import Trader

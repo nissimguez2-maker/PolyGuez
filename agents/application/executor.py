@@ -34,11 +34,32 @@ class Executor:
         max_token_model = {'gpt-3.5-turbo-16k':15000, 'gpt-4-1106-preview':95000}
         self.token_limit = max_token_model.get(default_model)
         self.prompter = Prompter()
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.llm = ChatOpenAI(
-            model=default_model, #gpt-3.5-turbo"
-            temperature=0,
-        )
+
+        # LLM Provider configuration
+        llm_provider = os.getenv("LLM_PROVIDER", "openai").lower()
+        llm_model = os.getenv("LLM_MODEL", default_model)
+
+        if llm_provider == "openai":
+            self.openai_api_key = os.getenv("OPENAI_API_KEY")
+            if not self.openai_api_key:
+                raise ValueError("OPENAI_API_KEY environment variable is required for OpenAI LLM provider")
+            self.llm = ChatOpenAI(
+                model=llm_model,
+                temperature=0,
+            )
+        elif llm_provider == "openrouter":
+            openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+            if not openrouter_api_key:
+                raise ValueError("OPENROUTER_API_KEY environment variable is required for OpenRouter LLM provider")
+            self.llm = ChatOpenAI(
+                model=llm_model,
+                temperature=0,
+                base_url="https://openrouter.ai/api/v1",
+                api_key=openrouter_api_key,
+            )
+        else:
+            raise ValueError(f"Unsupported LLM_PROVIDER: {llm_provider}. Supported: openai, openrouter")
+
         self.gamma = Gamma()
         self.chroma = Chroma()
         self.polymarket = Polymarket()
