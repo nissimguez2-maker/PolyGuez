@@ -47,42 +47,61 @@ This code is free and publicly available under MIT License open source license (
 
 # Getting started
 
-This repo is inteded for use with Python 3.9
+This repo is intended for use with Python 3.12 and uv package manager.
+
+## Prerequisites
+
+- Python 3.12 or higher
+- [uv](https://github.com/astral-sh/uv) package manager
+
+## Installation
 
 1. Clone the repository
 
-   ```
+   ```bash
    git clone https://github.com/{username}/polymarket-agents.git
    cd polymarket-agents
    ```
 
-2. Create the virtual environment
+2. Install uv (if not already installed)
 
-   ```
-   virtualenv --python=python3.9 .venv
+   ```bash
+   curl -LsSf https://astral.sh/uv/install.sh | sh
    ```
 
-3. Activate the virtual environment
+3. Create a virtual environment with Python 3.12
+
+   ```bash
+   uv venv --python 3.12
+   ```
+
+4. Activate the virtual environment
 
    - On Windows:
 
-   ```
+   ```bash
    .venv\Scripts\activate
    ```
 
    - On macOS and Linux:
 
-   ```
+   ```bash
    source .venv/bin/activate
    ```
 
-4. Install the required dependencies:
+5. Install the package and its dependencies
 
-   ```
-   pip install -r requirements.txt
+   ```bash
+   uv pip install -e ".[dev]"
    ```
 
-5. Set up your environment variables:
+   Or, to install without dev dependencies:
+
+   ```bash
+   uv pip install -e .
+   ```
+
+6. Set up your environment variables:
 
    - Create a `.env` file in the project root directory
 
@@ -97,32 +116,42 @@ This repo is inteded for use with Python 3.9
    OPENAI_API_KEY=""
    ```
 
-6. Load your wallet with USDC.
+7. Load your wallet with USDC.
 
-7. Try the command line interface...
+## Usage
 
-   ```
-   python scripts/python/cli.py
-   ```
+### Command Line Interface
 
-   Or just go trade! 
+Try the command line interface:
 
-   ```
-   python agents/application/trade.py
-   ```
+```bash
+python scripts/python/cli.py
+```
 
-8. Note: If running the command outside of docker, please set the following env var:
+Or use the installed CLI command:
 
-   ```
-   export PYTHONPATH="."
-   ```
+```bash
+polymarket-cli
+```
 
-   If running with docker is preferred, we provide the following scripts:
+### Trading
 
-   ```
-   ./scripts/bash/build-docker.sh
-   ./scripts/bash/run-docker-dev.sh
-   ```
+To start autonomous trading:
+
+```bash
+python agents/application/trade.py
+```
+
+### Docker
+
+If running with Docker is preferred, we provide the following scripts:
+
+```bash
+./scripts/bash/build-docker.sh
+./scripts/bash/run-docker-dev.sh
+```
+
+**Note:** The package is now installed in editable mode, so you no longer need to set `PYTHONPATH` manually.
 
 ## Architecture
 
