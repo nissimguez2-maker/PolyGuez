@@ -1,0 +1,90 @@
+name: Agent runtime issue
+description: Report problems running Polymarket Agents (CLI or agent processes).
+title: "[Agent] <short summary>"
+labels:
+  - bug
+  - agent-runtime
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting an issue with Polymarket Agents.
+        Please fill out the details below to help us reproduce and
+        diagnose the problem.
+
+  - type: dropdown
+    id: run-mode
+    attributes:
+      label: How are you running the code?
+      options:
+        - Local Python (virtualenv)
+        - Docker
+        - Other / not sure
+    validations:
+      required: true
+
+  - type: input
+    id: cli-command
+    attributes:
+      label: Exact command
+      description: The exact CLI or Python command you ran.
+      placeholder: "Example: python scripts/python/cli.py get-all-markets --limit 10"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      description: OS, Python version, and any relevant tooling.
+      placeholder: "Example: Ubuntu 22.04, Python 3.9, virtualenv in .venv"
+    validations:
+      required: true
+
+  - type: textarea
+    id: env-config
+    attributes:
+      label: Environment configuration
+      description: Describe how your .env is configured (do not paste secrets).
+      placeholder: |
+        Example:
+        - .env created from .env.example
+        - POLYGON_WALLET_PRIVATE_KEY set (value hidden)
+        - OPENAI_API_KEY set (value hidden)
+    validations:
+      required: false
+
+  - type: textarea
+    id: expected-behavior
+    attributes:
+      label: Expected behavior
+      description: What did you expect to happen?
+      placeholder: "The command should list active markets, place a simulated trade, etc."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual-behavior
+    attributes:
+      label: Actual behavior
+      description: What actually happened, including any error messages.
+      placeholder: "Instead, I saw an exception stack trace or no output..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or tracebacks
+      description: Paste relevant log lines or traceback output (with secrets removed).
+      placeholder: |
+        Please include any stack traces or CLI output that shows the issue.
+    validations:
+      required: false
+
+  - type: textarea
+    id: additional-context
+    attributes:
+      label: Additional context
+      description: Any other information that might be helpful (market IDs, timestamps, etc.).
+      placeholder: "Optional extra details such as specific markets or time windows."
