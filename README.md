@@ -150,10 +150,11 @@ Commands should follow this format:
 
 `python scripts/python/cli.py command_name [attribute value] [attribute value]`
 
-Example:
+For example, to list active markets sorted by volume:
 
-`get-all-markets`
-Retrieve and display a list of markets from Polymarket, sorted by volume.
+python scripts/python/cli.py get-all-markets --limit 5 --sort-by volume
+
+This retrieves up to 5 markets from Polymarket and prints them sorted by traded volume.
 
    ```
    python scripts/python/cli.py get-all-markets --limit <LIMIT> --sort-by <SORT_BY>
