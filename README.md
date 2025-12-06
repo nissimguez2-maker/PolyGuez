@@ -205,6 +205,15 @@ Enjoy using the CLI application! If you encounter any issues, feel free to open 
 
 [Terms of Service](https://polymarket.com/tos) prohibit US persons and persons from certain other jurisdictions from trading on Polymarket (via UI & API and including agents developed by persons in restricted jurisdictions), although data and information is viewable globally.
 
+## Environment variables
+
+Before running agents, ensure your environment includes:
+
+- `POLYMARKET_API_KEY` – required for authenticated requests  
+- `POLYMARKET_API_URL` – optional custom API endpoint  
+- `OPENAI_API_KEY` – needed for LLM-enabled agents  
+
+These variables should be stored in a `.env` file or exported in your shell.
 
 <!-- LINKS -->
 [contributors-shield]: https://img.shields.io/github/contributors/polymarket/agents?style=for-the-badge
