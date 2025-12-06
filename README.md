@@ -43,11 +43,12 @@ This code is free and publicly available under MIT License open source license (
 - AI agent utilities for prediction markets
 - Local and remote RAG (Retrieval-Augmented Generation) support
 - Data sourcing from betting services, news providers, and web search
-- Comphrehensive LLM tools for prompt engineering
+- Comprehensive LLM tools for prompt engineering
+
 
 # Getting started
 
-This repo is inteded for use with Python 3.9
+This repo is intended for use with Python 3.9.
 
 1. Clone the repository
 
@@ -161,6 +162,13 @@ Retrieve and display a list of markets from Polymarket, sorted by volume.
 
 - limit: The number of markets to retrieve (default: 5).
 - sort_by: The sorting criterion, either volume (default) or another valid attribute.
+
+Some commonly used commands are:
+
+- `get-all-markets` – list tradable markets, optionally limited and sorted by spread.
+- `get-all-events` – list tradable events, sorted by number of markets.
+- `get-relevant-news` – fetch recent news articles for a given keyword string.
+- `run-autonomous-trader` – run the autonomous trading strategy that evaluates markets and prepares a trade.
 
 # Contributing
 
