@@ -205,6 +205,19 @@ Enjoy using the CLI application! If you encounter any issues, feel free to open 
 
 [Terms of Service](https://polymarket.com/tos) prohibit US persons and persons from certain other jurisdictions from trading on Polymarket (via UI & API and including agents developed by persons in restricted jurisdictions), although data and information is viewable globally.
 
+## Citation
+
+If you use RL Swarm in academic or research work, please cite the RL Swarm technical report:
+
+```bibtex
+@misc{rl_swarm_2025,
+  title        = {RL Swarm: Collaborative Post-Training for Large Language Models},
+  author       = {Gensyn AI},
+  year         = {2025},
+  howpublished = {\url{https://github.com/gensyn-ai/paper-rl-swarm}}
+}
+
+
 
 <!-- LINKS -->
 [contributors-shield]: https://img.shields.io/github/contributors/polymarket/agents?style=for-the-badge
