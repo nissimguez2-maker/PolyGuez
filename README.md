@@ -123,6 +123,12 @@ This repo is inteded for use with Python 3.9
    ./scripts/bash/build-docker.sh
    ./scripts/bash/run-docker-dev.sh
    ```
+## Testing
+
+To run the test suite locally after installation:
+
+```bash
+pytest
 
 ## Architecture
 
