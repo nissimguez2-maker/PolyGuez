@@ -1,6 +1,8 @@
 repos:
--   repo: https://github.com/psf/black
+  - repo: https://github.com/psf/black
     rev: 24.4.2
     hooks:
-    - id: black
-      language_version: python3.9
+      - id: black
+        language_version: python3.9
+        args:
+          - "--line-length=100"
