@@ -128,6 +128,16 @@ This repo is inteded for use with Python 3.9
 
 The Polymarket Agents architecture features modular components that can be maintained and extended by individual community members.
 
+## Troubleshooting
+
+Common issues when running agents locally:
+
+- **Module import errors**  
+  Make sure you installed the package in editable mode:  
+  ```bash
+  pip install -e .
+
+
 ### APIs
 
 Polymarket Agents connectors standardize data sources and order types.
