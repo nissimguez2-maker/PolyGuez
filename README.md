@@ -123,6 +123,10 @@ This repo is inteded for use with Python 3.9
    ./scripts/bash/build-docker.sh
    ./scripts/bash/run-docker-dev.sh
    ```
+### Supported Python versions
+
+This project officially supports **Python 3.9**.  
+Other versions of Python may work, but are not guaranteed and can produce dependency conflicts.
 
 ## Architecture
 
