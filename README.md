@@ -117,12 +117,19 @@ This repo is inteded for use with Python 3.9
    export PYTHONPATH="."
    ```
 
-   If running with docker is preferred, we provide the following scripts:
+  If running with docker is preferred, we provide the following scripts:
 
-   ```
-   ./scripts/bash/build-docker.sh
-   ./scripts/bash/run-docker-dev.sh
-   ```
+    ./scripts/bash/build-docker.sh
+    ./scripts/bash/run-docker-dev.sh
+
+## Testing & linting
+
+To validate your environment and changes before contributing, run:
+
+```bash
+pytest
+pre-commit run --all-files
+
 
 ## Architecture
 
