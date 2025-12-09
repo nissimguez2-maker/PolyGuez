@@ -123,6 +123,17 @@ This repo is inteded for use with Python 3.9
    ./scripts/bash/build-docker.sh
    ./scripts/bash/run-docker-dev.sh
    ```
+## Version compatibility
+
+Recommended environment versions for stable usage:
+
+- **Python:** 3.10+
+- **uv:** latest stable
+- **Docker:** 24+
+- **OpenAI API:** latest supported version
+
+Using older versions may cause import issues or failures during agent initialization.
+
 
 ## Architecture
 
