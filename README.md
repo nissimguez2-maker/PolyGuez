@@ -217,3 +217,10 @@ Enjoy using the CLI application! If you encounter any issues, feel free to open 
 [issues-url]: https://github.com/polymarket/agents/issues
 [license-shield]: https://img.shields.io/github/license/polymarket/agents?style=for-the-badge
 [license-url]: https://github.com/polymarket/agents/blob/master/LICENSE.md
+
+## Support & Community
+
+If you need help running agents, exploring the SDK, or troubleshooting:
+- Join the Polymarket Discord: https://discord.gg/polymarket
+- Read the official docs: https://docs.polymarket.com
+- Explore agent examples: https://github.com/Polymarket/agents/tree/main/examples
