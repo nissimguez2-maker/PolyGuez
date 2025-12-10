@@ -191,6 +191,11 @@ Please run pre-commit hooks before making contributions. To initialize them:
 - The promise and challenges of crypto + AI applications, Vitalik Buterin: https://vitalik.eth.limo/general/2024/01/30/cryptoai.html
 - Superforecasting: How to Upgrade Your Company's Judgement, Schoemaker and Tetlock: https://hbr.org/2016/05/superforecasting-how-to-upgrade-your-companys-judgment
 
+## Support
+
+If you encounter issues or have questions about using the agents, please open an issue in this repository or join the Polymarket community channels for assistance.
+
+
 # License
 
 This project is licensed under the MIT License. See the [LICENSE](https://github.com/Polymarket/agents/blob/main/LICENSE.md) file for details.
