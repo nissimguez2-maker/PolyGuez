@@ -1,3 +1,8 @@
+## Requirements
+
+- Python 3.9+
+- Node.js 18+ (for optional tooling)
+
 <!-- PROJECT SHIELDS -->
 [![Contributors][contributors-shield]][contributors-url]
 [![Forks][forks-shield]][forks-url]
