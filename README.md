@@ -37,6 +37,11 @@ Polymarket Agents is a developer framework and set of utilities for building AI 
 
 This code is free and publicly available under MIT License open source license ([terms of service](#terms-of-service))!
 
+## Architecture Note
+
+Agents in this repository are designed to be modular and composable, allowing reuse across different prediction market strategies.
+
+
 ## Features
 
 - Integration with Polymarket API
