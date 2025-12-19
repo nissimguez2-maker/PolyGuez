@@ -102,7 +102,7 @@ This repo is inteded for use with Python 3.9
 7. Try the command line interface...
 
    ```
-   python scripts/python/cli.py
+   python scripts/python/.py
    ```
 
    Or just go trade! 
@@ -111,13 +111,13 @@ This repo is inteded for use with Python 3.9
    python agents/application/trade.py
    ```
 
-8. Note: If running the command outside of docker, please set the following env var:
+8. Note: If running the command outside of Docker, please set the following env var:
 
    ```
    export PYTHONPATH="."
    ```
 
-   If running with docker is preferred, we provide the following scripts:
+   If running with Docker is preferred, we provide the following scripts:
 
    ```
    ./scripts/bash/build-docker.sh
@@ -134,7 +134,7 @@ Polymarket Agents connectors standardize data sources and order types.
 
 - `Chroma.py`: chroma DB for vectorizing news sources and other API data. Developers are able to add their own vector database implementations.
 
-- `Gamma.py`: defines `GammaMarketClient` class, which interfaces with the Polymarket Gamma API to fetch and parse market and event metadata. Methods to retrieve current and tradable markets, as well as defined information on specific markets and events.
+- `Gamma.py`: defines `GammaMarketent` class, which interfaces with the Polymarket Gamma API to fetch and parse market and event metadata. Methods to retrieve current and tradable markets, as well as defined information on specific markets and events.
 
 - `Polymarket.py`: defines a Polymarket class that interacts with the Polymarket API to retrieve and manage market and event data, and to execute orders on the Polymarket DEX. It includes methods for API key initialization, market and event data retrieval, and trade execution. The file also provides utility functions for building and signing orders, as well as examples for testing API interactions.
 
@@ -142,7 +142,7 @@ Polymarket Agents connectors standardize data sources and order types.
 
 ### Scripts
 
-Files for managing your local environment, server set-up to run the application remotely, and cli for end-user commands.
+Files for managing your local environment, server setup to run the application remotely, and CLI for end-user commands.
 
 `cli.py` is the primary user interface for the repo. Users can run various commands to interact with the Polymarket API, retrieve relevant news articles, query local data, send data/prompts to LLMs, and execute trades in Polymarkets.
 
