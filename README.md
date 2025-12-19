@@ -144,7 +144,7 @@ Polymarket Agents connectors standardize data sources and order types.
 
 Files for managing your local environment, server set-up to run the application remotely, and cli for end-user commands.
 
-`cli.py` is the primary user interface for the repo. Users can run various commands to interact with the Polymarket API, retrieve relevant news articles, query local data, send data/prompts to LLMs, and execute trades in Polymarkets.
+`cli.py` is the primary user interface for the repo. Users can run various commands to interact with the Polymarket API, retrieve relevant news articles, query local data, send data/prompts to LLMs, and execute trades in Polymarket.
 
 Commands should follow this format:
 
@@ -181,7 +181,7 @@ Please run pre-commit hooks before making contributions. To initialize them:
 
 - [py-clob-client](https://github.com/Polymarket/py-clob-client): Python client for the Polymarket CLOB
 - [python-order-utils](https://github.com/Polymarket/python-order-utils): Python utilities to generate and sign orders from Polymarket's CLOB
-- [Polymarket CLOB client](https://github.com/Polymarket/clob-client): Typescript client for Polymarket CLOB
+- [Polymarket CLOB client](https://github.com/Polymarket/clob-client): TypeScript client for Polymarket CLOB
 - [Langchain](https://github.com/langchain-ai/langchain): Utility for building context-aware reasoning applications
 - [Chroma](https://docs.trychroma.com/getting-started): Chroma is an AI-native open-source vector database
 
