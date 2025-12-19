@@ -37,6 +37,10 @@ Polymarket Agents is a developer framework and set of utilities for building AI 
 
 This code is free and publicly available under MIT License open source license ([terms of service](#terms-of-service))!
 
+This repository focuses on autonomous agent logic and strategy execution.
+Market data ingestion and user-facing interfaces are handled separately.
+
+
 ## Features
 
 - Integration with Polymarket API
