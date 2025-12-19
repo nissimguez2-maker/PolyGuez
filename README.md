@@ -87,7 +87,7 @@ This repo is inteded for use with Python 3.9
    - Create a `.env` file in the project root directory
 
    ```
-   cp .env.example .env
+   cp .env.example .env  # Windows: copy .env.example .env
    ```
 
    - Add the following environment variables:
