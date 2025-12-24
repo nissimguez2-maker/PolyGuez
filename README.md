@@ -205,6 +205,11 @@ Enjoy using the CLI application! If you encounter any issues, feel free to open 
 
 [Terms of Service](https://polymarket.com/tos) prohibit US persons and persons from certain other jurisdictions from trading on Polymarket (via UI & API and including agents developed by persons in restricted jurisdictions), although data and information is viewable globally.
 
+## Overview
+
+This repository provides example agents that interact with Polymarket markets using public APIs.
+
+
 
 <!-- LINKS -->
 [contributors-shield]: https://img.shields.io/github/contributors/polymarket/agents?style=for-the-badge
@@ -217,3 +222,5 @@ Enjoy using the CLI application! If you encounter any issues, feel free to open 
 [issues-url]: https://github.com/polymarket/agents/issues
 [license-shield]: https://img.shields.io/github/license/polymarket/agents?style=for-the-badge
 [license-url]: https://github.com/polymarket/agents/blob/master/LICENSE.md
+
+
