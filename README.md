@@ -124,6 +124,47 @@ This repo is inteded for use with Python 3.9
    ./scripts/bash/run-docker-dev.sh
    ```
 
+## Using python-order-utils with Agents
+
+If you want to build and sign orders in your agent using the same primitives as the Polymarket Python order tooling, you can use the `py-order-utils` package together with this repo.[web:493]
+
+1. Install the extra dependency in your agent environment:
+
+pip install py-order-utils
+
+2. Inside your agent code, you can construct and sign an order and then submit it via the CLOB client:
+
+from py_clob_client.client import ClobClient
+from py_order_utils.builders import OrderBuilder, OrderData
+from py_order_utils.signer import Signer
+
+Example configuration, replace with your own values
+PRIVATE_KEY = "0x..." # funded account
+EXCHANGE_ADDRESS = "0x..." # Polymarket exchange proxy
+CHAIN_ID = 80002 # example chain id
+
+signer = Signer(PRIVATE_KEY)
+builder = OrderBuilder(EXCHANGE_ADDRESS, CHAIN_ID, signer)
+client = ClobClient()
+
+order_data = OrderData(
+maker=signer.address,
+taker="0x0000000000000000000000000000000000000000",
+token_id="123",
+side="BUY",
+price="0.10",
+size="1.0",
+expiration=9999999999,
+salt="1",
+)
+
+signed_order = builder.build_signed_order(order_data)
+
+Submit the order via the CLOB client
+client.post_order(signed_order.dict())
+
+This pattern lets you reuse the same order encoding and signing logic across standalone scripts and Agents-based strategies, keeping your integration consistent with the Polymarket Python tooling.[web:493][web:363]
+
 ## Architecture
 
 The Polymarket Agents architecture features modular components that can be maintained and extended by individual community members.
