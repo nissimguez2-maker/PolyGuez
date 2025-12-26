@@ -124,6 +124,99 @@ This repo is inteded for use with Python 3.9
    ./scripts/bash/run-docker-dev.sh
    ```
 
+## TypeScript/Node.js Apps (Development)
+
+This repository now includes TypeScript/Node.js applications alongside the Python project. The monorepo structure allows both to coexist independently.
+
+### Prerequisites
+
+- Node.js >= 18.0.0
+- pnpm >= 8.0.0
+
+### Setup
+
+1. Install pnpm (if not already installed):
+
+   ```bash
+   npm install -g pnpm
+   ```
+
+2. Install all dependencies:
+
+   ```bash
+   pnpm install
+   ```
+
+### Running the TypeScript Apps
+
+#### Development Mode
+
+- **API Server** (Node.js + Express backend):
+  ```bash
+  pnpm dev:api
+  ```
+  The API server will run on `http://localhost:3001`
+
+- **Web Dashboard** (React + TypeScript frontend):
+  ```bash
+  pnpm dev:web
+  ```
+  The web app will run on `http://localhost:3000`
+
+- **Run both simultaneously** (in separate terminals):
+  ```bash
+  # Terminal 1
+  pnpm dev:api
+
+  # Terminal 2
+  pnpm dev:web
+  ```
+
+#### Other Commands
+
+- **Build all packages**:
+  ```bash
+  pnpm build
+  ```
+
+- **Type checking**:
+  ```bash
+  pnpm type-check
+  ```
+
+- **Linting**:
+  ```bash
+  pnpm lint
+  ```
+
+- **Format code**:
+  ```bash
+  pnpm format
+  ```
+
+### Monorepo Structure
+
+```
+.
+├── apps/
+│   ├── api/          # Node.js + TypeScript backend API
+│   └── web/          # React + TypeScript dashboard
+├── packages/
+│   └── domain/       # Shared TypeScript types and validation
+├── samples/          # Saved JSON samples
+├── scripts/          # Fetch scripts (separate from scripts/python/)
+└── [existing Python code remains unchanged]
+```
+
+### Shared Domain Package
+
+The `@polymarket/domain` package contains shared TypeScript types and Zod validation schemas that can be used across all TypeScript apps. Import using:
+
+```typescript
+import { Market, Event, Trade } from '@domain/types';
+import { MarketSchema } from '@domain/validation';
+```
+
 ## Architecture
 
 The Polymarket Agents architecture features modular components that can be maintained and extended by individual community members.

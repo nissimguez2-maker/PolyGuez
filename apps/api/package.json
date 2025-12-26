@@ -1,0 +1,41 @@
+{
+  "name": "@polymarket/api",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "kill:3001": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"try { $conns = Get-NetTCPConnection -LocalPort 3001 -State Listen -ErrorAction SilentlyContinue; if ($conns) { $pids = $conns | Select-Object -ExpandProperty OwningProcess -Unique; $pids | ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue } } } catch {} ; exit 0\"",
+    "dev": "npm run kill:3001 && tsx watch src/index.ts",
+    "dev:raw": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "sanity": "tsx src/services/runSanity.ts",
+    "smoke": "powershell -ExecutionPolicy Bypass -File scripts/smoke.ps1",
+    "health": "powershell -Command \"$response = Invoke-RestMethod -Uri 'http://localhost:3001/health' -Method Get; $response | ConvertTo-Json -Depth 20\"",
+    "agents:list": "powershell -Command \"$response = Invoke-RestMethod -Uri 'http://localhost:3001/agents' -Method Get; $response | ConvertTo-Json -Depth 20\"",
+    "replay:agent1": "powershell -Command \"$response = Invoke-RestMethod -Uri 'http://localhost:3001/replay?agentId=agent-1' -Method Get; $response | ConvertTo-Json -Depth 20\"",
+    "chat:agent1": "powershell -ExecutionPolicy Bypass -File scripts/chat-agent1.ps1",
+    "chat": "powershell -ExecutionPolicy Bypass -File scripts/chat.ps1"
+  },
+  "dependencies": {
+    "@polymarket/domain": "workspace:*",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "openai": "^4.20.1",
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.11.0",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^6.3.3",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3",
+    "vitest": "^1.2.0"
+  }
+}

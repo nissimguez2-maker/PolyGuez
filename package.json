@@ -1,0 +1,29 @@
+{
+  "name": "polymarket-agents-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Polymarket Agents monorepo with Python backend and TypeScript frontend",
+  "scripts": {
+    "dev:api": "powershell -NoProfile -ExecutionPolicy Bypass -Command \"$env:DEV_FORCE_TRADES='true'; $env:RUNNER_ENABLED='true'; pnpm --filter @polymarket/api dev\"",
+    "dev:web": "pnpm --filter @polymarket/web dev",
+    "dev": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev.ps1",
+    "status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/status.ps1",
+    "build": "pnpm -r build",
+    "lint": "pnpm -r lint",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\"",
+    "type-check": "pnpm -r type-check"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@typescript-eslint/eslint-plugin": "^6.19.0",
+    "@typescript-eslint/parser": "^6.19.0",
+    "eslint": "^8.56.0",
+    "prettier": "^3.2.4",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "pnpm": ">=8.0.0"
+  }
+}
+

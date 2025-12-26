@@ -229,12 +229,15 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
     );
   }
 
+  // Find selected agent for header display
+  const selectedAgent = agents.find((a) => a.id === selectedAgentId);
+
   return (
     <div className="space-y-6">
       <PageHeader title="Agents" description="Manage and monitor trading agents" />
-      <div className="flex gap-6">
+      <div className="flex flex-col xl:flex-row gap-6">
         {/* Left Panel: Agent List */}
-        <div className="w-80 shrink-0">
+        <div className="w-full xl:w-80 shrink-0">
           <Card>
           <div className="mb-4 space-y-3">
             <input
@@ -289,6 +292,7 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
                 <Card
                   key={agent.id}
                   padding="sm"
+                  data-testid={`agent-card-${agent.id}`}
                   className={`cursor-pointer ${tokens.transitions.default} ${
                     selectedAgentId === agent.id
                       ? 'border-teal-500/50 bg-zinc-800/50 shadow-md shadow-teal-500/10'
@@ -335,6 +339,7 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
                           onOpenDetails?.(agent.id);
                         }}
                         className="whitespace-nowrap"
+                        data-testid={`agent-details-btn-${agent.id}`}
                       >
                         Details
                       </Button>
@@ -374,7 +379,7 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
       </div>
 
       {/* Right Panel: Agent Detail */}
-      <div className="flex-1 min-w-0">
+      <div className="flex-1 min-w-0" data-testid="agent-detail-panel" style={{ minHeight: '400px' }}>
         {!selectedAgentId ? (
           <Card>
             <EmptyState
@@ -384,6 +389,9 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
           </Card>
         ) : detailLoading ? (
           <div className="space-y-6">
+            <Card>
+              <Skeleton lines={3} className="h-4" />
+            </Card>
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               {Array.from({ length: 4 }).map((_, i) => (
                 <Skeleton key={i} className="h-28" />
@@ -402,6 +410,28 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
           </Card>
         ) : (
           <div className="space-y-6">
+            {/* Agent Header */}
+            <Card>
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div>
+                    <h2 className={`${tokens.typography.h3} mb-1`} data-testid="agent-detail-title">
+                      {selectedAgent?.name || agentState.name}
+                    </h2>
+                    <div className={`${tokens.typography.bodySmall} text-zinc-400 font-mono`}>
+                      ID: {agentState.agentId}
+                    </div>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge status={agentState.status} />
+                  <span className={`${tokens.typography.bodySmall} text-zinc-500`}>
+                    {selectedAgent?.strategyType || agentState.strategyType}
+                  </span>
+                </div>
+              </div>
+            </Card>
+
             {/* KPI Tiles */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
               <StatTile

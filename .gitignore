@@ -27,3 +27,11 @@ archive.zip
 .cache
 .DS_Store
 local_db*
+
+# TypeScript/Node.js
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+.pnpm-store/
+.vite/

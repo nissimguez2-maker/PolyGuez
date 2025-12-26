@@ -11,22 +11,63 @@ import { ErrorCard } from '../ui/ErrorCard';
 import { Table, TableHeader, TableHeaderCell, TableBody, TableRow, TableCell } from '../ui/Table';
 import { tokens } from '../ui/tokens';
 
-// Helper to convert datetime-local string to ISO timestamp
-function datetimeLocalToISO(datetimeLocal: string): string {
-  if (!datetimeLocal) return '';
-  // datetime-local format: YYYY-MM-DDTHH:mm
-  // Convert to ISO: YYYY-MM-DDTHH:mm:ss.sssZ
-  return new Date(datetimeLocal).toISOString();
+// Helper to parse date string in multiple formats
+// Accepts: "YYYY-MM-DD HH:MM" or "DD/MM/YYYY HH:MM"
+function parseDateString(dateStr: string): Date | null {
+  if (!dateStr || !dateStr.trim()) return null;
+
+  const trimmed = dateStr.trim();
+
+  // Try format: YYYY-MM-DD HH:MM or YYYY-MM-DDTHH:MM
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})[T\s]+(\d{2}):(\d{2})$/);
+  if (isoMatch) {
+    const [, year, month, day, hours, minutes] = isoMatch;
+    const date = new Date(
+      parseInt(year),
+      parseInt(month) - 1,
+      parseInt(day),
+      parseInt(hours),
+      parseInt(minutes)
+    );
+    if (!isNaN(date.getTime())) return date;
+  }
+
+  // Try format: DD/MM/YYYY HH:MM
+  const ddmmyyyyMatch = trimmed.match(/^(\d{2})\/(\d{2})\/(\d{4})[T\s]+(\d{2}):(\d{2})$/);
+  if (ddmmyyyyMatch) {
+    const [, day, month, year, hours, minutes] = ddmmyyyyMatch;
+    const date = new Date(
+      parseInt(year),
+      parseInt(month) - 1,
+      parseInt(day),
+      parseInt(hours),
+      parseInt(minutes)
+    );
+    if (!isNaN(date.getTime())) return date;
+  }
+
+  // Fallback: try Date constructor
+  const fallback = new Date(trimmed);
+  if (!isNaN(fallback.getTime())) return fallback;
+
+  return null;
 }
 
-// Helper to get datetime-local string from Date
-function dateToDatetimeLocal(date: Date): string {
+// Helper to convert date string to ISO timestamp
+function dateStringToISO(dateStr: string): string | undefined {
+  if (!dateStr || !dateStr.trim()) return undefined;
+  const date = parseDateString(dateStr);
+  return date ? date.toISOString() : undefined;
+}
+
+// Helper to get default date string in YYYY-MM-DD HH:MM format
+function getDefaultDateString(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
   const day = String(date.getDate()).padStart(2, '0');
   const hours = String(date.getHours()).padStart(2, '0');
   const minutes = String(date.getMinutes()).padStart(2, '0');
-  return `${year}-${month}-${day}T${hours}:${minutes}`;
+  return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
 export function ReplayView() {
@@ -37,15 +78,17 @@ export function ReplayView() {
   const getDefaultFromDate = () => {
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
-    return dateToDatetimeLocal(yesterday);
+    return getDefaultDateString(yesterday);
   };
   
   const getDefaultToDate = () => {
-    return dateToDatetimeLocal(new Date());
+    return getDefaultDateString(new Date());
   };
   
   const [fromDate, setFromDate] = useState<string>(getDefaultFromDate());
   const [toDate, setToDate] = useState<string>(getDefaultToDate());
+  const [dateError, setDateError] = useState<string>('');
+  const [hasUserEditedDates, setHasUserEditedDates] = useState<boolean>(false);
   
   const [trades, setTrades] = useState<TradeLog[]>([]);
   const [decisions, setDecisions] = useState<DecisionLog[]>([]);
@@ -63,9 +106,22 @@ export function ReplayView() {
       if (!selectedAgentId) {
         throw new Error('Please select an agent');
       }
-      // Convert datetime-local strings to ISO timestamps for API
-      const fromISO = fromDate ? datetimeLocalToISO(fromDate) : undefined;
-      const toISO = toDate ? datetimeLocalToISO(toDate) : undefined;
+      
+      // Validate dates
+      const fromISO = dateStringToISO(fromDate);
+      const toISO = dateStringToISO(toDate);
+      
+      if (fromDate && !fromISO) {
+        setDateError(`Invalid "From" date format. Use YYYY-MM-DD HH:MM or DD/MM/YYYY HH:MM`);
+        throw new Error('Invalid date format');
+      }
+      
+      if (toDate && !toISO) {
+        setDateError(`Invalid "To" date format. Use YYYY-MM-DD HH:MM or DD/MM/YYYY HH:MM`);
+        throw new Error('Invalid date format');
+      }
+      
+      setDateError('');
       return api.getReplay(selectedAgentId, fromISO, toISO);
     },
     { immediate: false }
@@ -86,9 +142,9 @@ export function ReplayView() {
       });
   }, []);
 
-  // Reset dates to default when agent changes
+  // Reset dates to default when agent changes ONLY if user hasn't edited them
   useEffect(() => {
-    if (selectedAgentId) {
+    if (selectedAgentId && !hasUserEditedDates) {
       setFromDate(getDefaultFromDate());
       setToDate(getDefaultToDate());
     }
@@ -105,8 +161,21 @@ export function ReplayView() {
 
   const handleLoad = () => {
     if (selectedAgentId) {
+      setDateError('');
       fetchReplay();
     }
+  };
+
+  const handleFromDateChange = (value: string) => {
+    setFromDate(value);
+    setHasUserEditedDates(true);
+    setDateError('');
+  };
+
+  const handleToDateChange = (value: string) => {
+    setToDate(value);
+    setHasUserEditedDates(true);
+    setDateError('');
   };
 
   const copyToClipboard = (text: string) => {
@@ -132,7 +201,12 @@ export function ReplayView() {
         <SectionHeader
           title="Replay Controls"
           actions={
-            <Button variant="primary" onClick={handleLoad} disabled={!selectedAgentId || loading}>
+            <Button
+              variant="primary"
+              onClick={handleLoad}
+              disabled={!selectedAgentId || loading}
+              data-testid="replay-load"
+            >
               {loading ? 'Loading...' : 'Load Replay'}
             </Button>
           }
@@ -156,22 +230,37 @@ export function ReplayView() {
           <div>
             <label className={`block ${tokens.typography.label} mb-2`}>From</label>
             <input
-              type="datetime-local"
+              type="text"
               value={fromDate}
-              onChange={(e) => setFromDate(e.target.value)}
-              className={`w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700/50 ${tokens.radii.md} text-zinc-100 placeholder-zinc-500 ${tokens.focus.ringTeal} focus:border-teal-500/50 ${tokens.transitions.fast}`}
+              onChange={(e) => handleFromDateChange(e.target.value)}
+              placeholder="YYYY-MM-DD HH:MM or DD/MM/YYYY HH:MM"
+              data-testid="replay-from"
+              className={`w-full px-3 py-2 bg-zinc-800/50 border ${
+                dateError && dateError.includes('From') ? 'border-red-500/50' : 'border-zinc-700/50'
+              } ${tokens.radii.md} text-zinc-100 placeholder-zinc-500 ${tokens.focus.ringTeal} focus:border-teal-500/50 ${tokens.transitions.fast}`}
             />
           </div>
           <div>
             <label className={`block ${tokens.typography.label} mb-2`}>To</label>
             <input
-              type="datetime-local"
+              type="text"
               value={toDate}
-              onChange={(e) => setToDate(e.target.value)}
-              className={`w-full px-3 py-2 bg-zinc-800/50 border border-zinc-700/50 ${tokens.radii.md} text-zinc-100 placeholder-zinc-500 ${tokens.focus.ringTeal} focus:border-teal-500/50 ${tokens.transitions.fast}`}
+              onChange={(e) => handleToDateChange(e.target.value)}
+              placeholder="YYYY-MM-DD HH:MM or DD/MM/YYYY HH:MM"
+              data-testid="replay-to"
+              className={`w-full px-3 py-2 bg-zinc-800/50 border ${
+                dateError && dateError.includes('To') ? 'border-red-500/50' : 'border-zinc-700/50'
+              } ${tokens.radii.md} text-zinc-100 placeholder-zinc-500 ${tokens.focus.ringTeal} focus:border-teal-500/50 ${tokens.transitions.fast}`}
             />
           </div>
         </div>
+        {dateError && (
+          <div className="mt-3">
+            <div className="text-sm text-red-400" data-testid="replay-date-error">
+              {dateError}
+            </div>
+          </div>
+        )}
       </Card>
 
       {/* Error state */}
