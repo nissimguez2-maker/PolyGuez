@@ -117,7 +117,7 @@ This repo is inteded for use with Python 3.9
    export PYTHONPATH="."
    ```
 
-   If running with docker is preferred, we provide the following scripts:
+   If running with Docker is preferred (recommended), we provide the following scripts:
 
    ```
    ./scripts/bash/build-docker.sh
