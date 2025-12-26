@@ -117,6 +117,8 @@ This repo is inteded for use with Python 3.9
    export PYTHONPATH="."
    ```
 
+   - Note: PowerShell: $env:PYTHONPATH="."
+
    If running with docker is preferred, we provide the following scripts:
 
    ```
