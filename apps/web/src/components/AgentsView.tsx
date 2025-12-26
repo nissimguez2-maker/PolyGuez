@@ -162,12 +162,6 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
   usePolling(fetchAgents, 8000, true);
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetchAgents(controller.signal);
-    return () => controller.abort();
-  }, [fetchAgents]);
-
-  useEffect(() => {
     if (initialSelectedId !== undefined && initialSelectedId !== selectedAgentId) {
       handleSelectionChange(initialSelectedId);
     }

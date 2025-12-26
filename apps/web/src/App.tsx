@@ -88,12 +88,6 @@ function App() {
     setSelectedAgentId(agentId);
   }, []);
 
-  // Debug: Log render (only in dev)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  if ((import.meta as any).env?.DEV || (import.meta as any).env?.MODE === 'development') {
-    console.log('[App] Rendering, view:', view, 'selectedAgentId:', selectedAgentId);
-  }
-
   try {
     return (
       <ErrorBoundary>

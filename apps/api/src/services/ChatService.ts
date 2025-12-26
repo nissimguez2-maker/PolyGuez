@@ -198,7 +198,10 @@ Open Positions: ${state.openPositions.length}`;
       };
     }
 
-    // Add user message to history
+    // Build messages for LLM (before adding user message to store to avoid duplication)
+    const messages = this.buildMessages(agentId, message);
+
+    // Add user message to history (after building messages so it doesn't appear twice)
     const userMessage: ChatMessage = {
       role: 'user',
       content: message,
@@ -206,9 +209,6 @@ Open Positions: ${state.openPositions.length}`;
       clientTimestamp,
     };
     this.chatStore.addMessage(agentId, userMessage);
-
-    // Build messages for LLM
-    const messages = this.buildMessages(agentId, message);
 
     let assistantResponse: string;
     let mode: 'mock' | 'openai' = 'mock';

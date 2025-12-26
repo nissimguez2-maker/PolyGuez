@@ -89,12 +89,6 @@ export function AgentDetail({ agentId, onBack }: AgentDetailProps) {
   usePolling(fetchData, 8000, true);
 
   useEffect(() => {
-    const controller = new AbortController();
-    fetchData(controller.signal);
-    return () => controller.abort();
-  }, [agentId, fetchData]);
-
-  useEffect(() => {
     if (config) {
       setMaxRisk(config.maxRiskPerTradePct);
       setMaxExposure(config.maxExposurePct);

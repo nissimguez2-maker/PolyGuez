@@ -189,12 +189,6 @@ export function Dashboard({ onAgentClick }: DashboardProps) {
 
   usePolling(fetchData, 8000, true);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    fetchData(controller.signal);
-    return () => controller.abort();
-  }, [fetchData]);
-
   const handleStartPause = async (agentId: string, currentStatus: 'running' | 'paused') => {
     try {
       const action = currentStatus === 'running' ? 'pause' : 'start';
