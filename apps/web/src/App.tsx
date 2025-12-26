@@ -1,4 +1,4 @@
-import { useState, Component, ErrorInfo, ReactNode } from 'react';
+import { useState, useCallback, Component, ErrorInfo, ReactNode } from 'react';
 import { Dashboard } from './components/Dashboard';
 import { AgentsView } from './components/AgentsView';
 import { ReplayView } from './components/ReplayView';
@@ -80,8 +80,19 @@ function App() {
     setView('chat');
   };
 
-  // Debug: Log render
-  console.log('[App] Rendering, view:', view, 'selectedAgentId:', selectedAgentId);
+  const handleOpenDetails = useCallback((agentId: string) => {
+    setSelectedAgentId(agentId);
+  }, []);
+
+  const handleSelectionChange = useCallback((agentId: string | null) => {
+    setSelectedAgentId(agentId);
+  }, []);
+
+  // Debug: Log render (only in dev)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  if ((import.meta as any).env?.DEV || (import.meta as any).env?.MODE === 'development') {
+    console.log('[App] Rendering, view:', view, 'selectedAgentId:', selectedAgentId);
+  }
 
   try {
     return (
@@ -91,14 +102,9 @@ function App() {
           {view === 'agents' && (
             <AgentsView
               onOpenChat={handleOpenChat}
-              onOpenDetails={(agentId) => {
-                setSelectedAgentId(agentId);
-                // Could navigate to AgentDetail view here if needed
-              }}
+              onOpenDetails={handleOpenDetails}
               initialSelectedId={selectedAgentId}
-              onSelectionChange={(agentId) => {
-                setSelectedAgentId(agentId);
-              }}
+              onSelectionChange={handleSelectionChange}
             />
           )}
           {view === 'replay' && <ReplayView />}

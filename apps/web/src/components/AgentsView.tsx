@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { api, AgentsResponse, AgentState, EquityEntry, TradeLog, DecisionLog } from '../api/client';
 import { usePolling } from '../hooks/usePolling';
 import { Card } from '../ui/Card';
@@ -35,10 +35,14 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
   const [agents, setAgents] = useState<AgentListItem[]>([]);
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(initialSelectedId || null);
 
-  const handleSelectionChange = (agentId: string | null) => {
-    setSelectedAgentId(agentId);
-    onSelectionChange?.(agentId);
-  };
+  const handleSelectionChange = useCallback(
+    (agentId: string | null) => {
+      setSelectedAgentId(agentId);
+      onSelectionChange?.(agentId);
+    },
+    [onSelectionChange]
+  );
+
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<'all' | 'running' | 'paused'>('all');
   const [loading, setLoading] = useState(true);
@@ -50,64 +54,85 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
   const [agentTrades, setAgentTrades] = useState<TradeLog[]>([]);
   const [agentDecisions, setAgentDecisions] = useState<DecisionLog[]>([]);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState<Error | null>(null);
+  
+  // Use ref to access current selectedAgentId in fetchAgents callback
+  const selectedAgentIdRef = useRef<string | null>(initialSelectedId || null);
+  
+  useEffect(() => {
+    selectedAgentIdRef.current = selectedAgentId;
+  }, [selectedAgentId]);
 
-  const fetchAgents = useCallback(async (signal: AbortSignal) => {
-    try {
-      const agentsResponse: AgentsResponse = await api.getAgents();
+  const fetchAgents = useCallback(
+    async (signal: AbortSignal) => {
+      try {
+        const agentsResponse: AgentsResponse = await api.getAgents();
 
-      const agentsWithMetrics = await Promise.all(
-        agentsResponse.agents.map(async (agent) => {
-          try {
-            const state = await api.getAgent(agent.id);
-            const bankroll = state.bankroll;
-            const startBankroll = state.startBankroll;
+        const agentsWithMetrics = await Promise.all(
+          agentsResponse.agents.map(async (agent) => {
+            try {
+              const state = await api.getAgent(agent.id);
+              const bankroll = state.bankroll;
+              const startBankroll = state.startBankroll;
 
-            return {
-              id: agent.id,
-              name: agent.name,
-              strategyType: agent.strategyType,
-              status: agent.status,
-              bankroll,
-              startBankroll,
-              pnlPercent: calculatePnLPercent(bankroll, startBankroll),
-            };
-          } catch (err) {
-            console.error(`Failed to fetch data for agent ${agent.id}:`, err);
-            return {
-              id: agent.id,
-              name: agent.name,
-              strategyType: agent.strategyType,
-              status: agent.status,
-              bankroll: 0,
-              startBankroll: 0,
-              pnlPercent: 0,
-            };
+              return {
+                id: agent.id,
+                name: agent.name,
+                strategyType: agent.strategyType,
+                status: agent.status,
+                bankroll,
+                startBankroll,
+                pnlPercent: calculatePnLPercent(bankroll, startBankroll),
+              };
+            } catch (err) {
+              console.error(`Failed to fetch data for agent ${agent.id}:`, err);
+              return {
+                id: agent.id,
+                name: agent.name,
+                strategyType: agent.strategyType,
+                status: agent.status,
+                bankroll: 0,
+                startBankroll: 0,
+                pnlPercent: 0,
+              };
+            }
+          })
+        );
+
+        if (!signal.aborted) {
+          setAgents(agentsWithMetrics);
+          setLoading(false);
+          setError(null);
+
+          // Auto-select first agent if none selected and no initial selection
+          // Use ref to get current value without adding to dependencies
+          const currentSelectedId = selectedAgentIdRef.current;
+          if (!currentSelectedId && !initialSelectedId && agentsWithMetrics.length > 0) {
+            handleSelectionChange(agentsWithMetrics[0].id);
           }
-        })
-      );
-
-      if (!signal.aborted) {
-        setAgents(agentsWithMetrics);
-        setLoading(false);
-        setError(null);
-
-        // Auto-select first agent if none selected and no initial selection
-        if (!selectedAgentId && !initialSelectedId && agentsWithMetrics.length > 0) {
-          handleSelectionChange(agentsWithMetrics[0].id);
+        }
+      } catch (err) {
+        if (!signal.aborted) {
+          setError(err instanceof Error ? err : new Error('Unknown error'));
+          setLoading(false);
         }
       }
-    } catch (err) {
-      if (!signal.aborted) {
-        setError(err instanceof Error ? err : new Error('Unknown error'));
-        setLoading(false);
-      }
-    }
-  }, [selectedAgentId, initialSelectedId]);
+    },
+    [initialSelectedId, handleSelectionChange]
+  );
 
   const fetchAgentDetail = useCallback(async (agentId: string) => {
     if (!agentId) return;
 
     setDetailLoading(true);
+    setDetailError(null);
+    
+    // Clear stale data immediately when fetching new agent
+    setAgentState(null);
+    setAgentEquity([]);
+    setAgentTrades([]);
+    setAgentDecisions([]);
+    
     try {
       const [state, equityResponse, tradesResponse, replayData] = await Promise.all([
         api.getAgent(agentId),
@@ -120,8 +145,15 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
       setAgentEquity(equityResponse.equity);
       setAgentTrades(tradesResponse.trades);
       setAgentDecisions(replayData.decisions || []);
+      setDetailError(null);
     } catch (err) {
       console.error('Failed to fetch agent detail:', err);
+      // Clear all data on error to prevent showing stale data
+      setAgentState(null);
+      setAgentEquity([]);
+      setAgentTrades([]);
+      setAgentDecisions([]);
+      setDetailError(err instanceof Error ? err : new Error('Failed to load agent details'));
     } finally {
       setDetailLoading(false);
     }
@@ -401,11 +433,23 @@ export function AgentsView({ onOpenChat, onOpenDetails, initialSelectedId, onSel
               <Skeleton lines={5} className="h-4" />
             </Card>
           </div>
+        ) : detailError ? (
+          <Card>
+            <ErrorCard
+              title="Failed to load agent details"
+              message={detailError.message}
+              onRetry={() => {
+                if (selectedAgentId) {
+                  fetchAgentDetail(selectedAgentId);
+                }
+              }}
+            />
+          </Card>
         ) : !agentState ? (
           <Card>
             <EmptyState
-              title="Failed to load agent"
-              description="Unable to fetch agent details"
+              title="No agent data"
+              description="Agent details will appear here once loaded"
             />
           </Card>
         ) : (
