@@ -47,7 +47,7 @@ This code is free and publicly available under MIT License open source license (
 
 # Getting started
 
-This repo is inteded for use with Python 3.9
+This repo is inteded for use with Python 3.9+
 
 1. Clone the repository
 
