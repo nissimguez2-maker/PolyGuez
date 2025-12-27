@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { api, AgentsResponse, ChatResponse } from '../api/client';
 import { useApi } from '../hooks/useApi';
 import { Card } from '../ui/Card';
@@ -15,6 +15,7 @@ export function ChatView() {
   const [selectedAgentId, setSelectedAgentId] = useState<string>('');
   const [chatMessage, setChatMessage] = useState('');
   const [chatHistory, setChatHistory] = useState<Array<{ message: string; response: ChatResponse; timestamp: string }>>([]);
+  const sentMessageRef = useRef<string>('');
 
   const {
     data: chatResponse,
@@ -48,30 +49,35 @@ export function ChatView() {
 
   // Add to history when response arrives
   useEffect(() => {
-    if (chatResponse && chatMessage) {
+    if (chatResponse && sentMessageRef.current) {
       setChatHistory((prev) => [
         ...prev,
         {
-          message: chatMessage,
+          message: sentMessageRef.current,
           response: chatResponse,
           timestamp: new Date().toISOString(),
         },
       ]);
       setChatMessage('');
+      sentMessageRef.current = '';
       // Store chat mode in localStorage
       if (chatResponse.mode) {
         localStorage.setItem('chatMode', chatResponse.mode);
       }
     }
-  }, [chatResponse, chatMessage]);
+  }, [chatResponse]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedAgentId || !chatMessage.trim()) return;
+    // Store the message that's being sent before clearing the input
+    sentMessageRef.current = chatMessage.trim();
     try {
       await sendChat();
     } catch (err) {
       // Error handled by useApi
+      // Clear the ref on error so we don't add to history
+      sentMessageRef.current = '';
     }
   };
 
