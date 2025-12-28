@@ -1,0 +1,9 @@
+{
+  "ticker": "POLY-TEST-001",
+  "question": "Will POLY reach $1 by year end?",
+  "spread": 0.05,
+  "yes_price": 0.45,
+  "no_price": 0.55,
+  "liquidity": 10000,
+  "close_date": "2025-12-31T23:59:00Z"
+}
