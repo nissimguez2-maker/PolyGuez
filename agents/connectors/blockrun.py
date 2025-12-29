@@ -5,6 +5,12 @@ BlockRun enables AI agents to access 31+ LLMs (GPT-4, Claude, Gemini, etc.)
 via x402 USDC micropayments on Base. No API keys required - agents pay
 directly with their wallets.
 
+Payment: USDC on Base network only.
+
+Security: Your private key NEVER leaves your machine. It is only used locally
+to sign EIP-712 payment authorizations. Only the signature is transmitted -
+BlockRun never sees your private key.
+
 Learn more: https://blockrun.ai
 
 Installation:
@@ -42,6 +48,7 @@ class BlockRunClient:
     3. SDK signs EIP-712 USDC transfer authorization locally
     4. SDK retries request with payment signature
 
+    Payment: USDC on Base network only. Ensure your wallet has USDC on Base.
     Your private key is NEVER transmitted - only used locally for signing.
 
     Args:
