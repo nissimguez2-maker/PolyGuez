@@ -211,7 +211,7 @@ def create_blockrun_client(
         >>> client = create_blockrun_client(private_key="0x...")
         >>> response = client.chat("gpt-4o", "What is 2+2?")
     """
-    pk = private_key or os.getenv("BLOCKRUN_WALLET_KEY") or os.getenv("BLOCKRUN_PRIVATE_KEY")
+    pk = private_key or os.getenv("BLOCKRUN_WALLET_KEY") or os.getenv("POLYGON_WALLET_PRIVATE_KEY")
 
     url = base_url or os.getenv("BLOCKRUN_API_URL", "https://blockrun.ai/api")
 
@@ -308,6 +308,8 @@ class BlockRunLLM:
         )
 
         # Return LangChain-compatible response
+        if not result.choices:
+            raise ValueError("BlockRun API returned empty response. Check your wallet balance and try again.")
         return AIMessage(content=result.choices[0].message.content)
 
 
