@@ -75,7 +75,9 @@ This repo is inteded for use with Python 3.9
    ```
    source .venv/bin/activate
    ```
-
+   
+   > To deactivate the virtual environment: 'deactivate'
+   
 4. Install the required dependencies:
 
    ```
