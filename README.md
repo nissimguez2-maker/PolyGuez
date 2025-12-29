@@ -31,7 +31,6 @@
 
 
 <!-- CONTENT -->
-# Polymarket Agents
 
 Polymarket Agents is a developer framework and set of utilities for building AI agents for Polymarket.
 
