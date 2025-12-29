@@ -60,6 +60,10 @@ This repo is inteded for use with Python 3.9
 
    ```
    virtualenv --python=python3.9 .venv
+   ```   
+   Or:
+   ```
+   python3.9 -m venv .venv
    ```
 
 3. Activate the virtual environment
