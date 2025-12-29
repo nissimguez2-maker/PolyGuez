@@ -45,7 +45,7 @@ This code is free and publicly available under MIT License open source license (
 - Data sourcing from betting services, news providers, and web search
 - Comphrehensive LLM tools for prompt engineering
 
-# Getting started
+## Getting started
 
 This repo is inteded for use with Python 3.9
 
