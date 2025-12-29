@@ -241,6 +241,9 @@ class BlockRunLLM:
     Provides the same interface as ChatOpenAI so it can be used as a drop-in
     replacement in existing LangChain workflows.
 
+    Payment: USDC on Base network only. Ensure your wallet has USDC on Base.
+    Your private key is NEVER transmitted - only used locally for signing.
+
     Usage:
         llm = create_blockrun_llm(model="gpt-4o", temperature=0)
         result = llm.invoke([SystemMessage(content="..."), HumanMessage(content="...")])
@@ -324,6 +327,8 @@ def create_blockrun_llm(
 
     This is a drop-in replacement for ChatOpenAI that uses BlockRun's
     x402 micropayment system instead of API keys.
+
+    Payment: USDC on Base network only. Ensure your wallet has USDC on Base.
 
     Args:
         model: Model name (e.g., "gpt-4o", "gpt-3.5-turbo-16k")
