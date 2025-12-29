@@ -124,6 +124,57 @@ This repo is inteded for use with Python 3.9
    ./scripts/bash/run-docker-dev.sh
    ```
 
+## Using BlockRun (x402 Micropayments)
+
+BlockRun enables your Polymarket agent to pay for LLM calls with USDC micropayments instead of managing OpenAI API keys. Your agent pays directly with its wallet via the x402 protocol on Base.
+
+### Benefits
+
+- **No API key management** - Your agent's wallet handles payment
+- **31+ AI models** - Access GPT-4, Claude, Gemini, and more
+- **Pay-per-use** - Only pay for what you use
+- **0% markup** - Same pricing as official APIs during beta
+
+### Setup
+
+1. Set `BLOCKRUN_ENABLED=true` in your `.env` file:
+
+   ```
+   BLOCKRUN_ENABLED=true
+   BLOCKRUN_API_URL="https://api.blockrun.ai/v1"
+   ```
+
+2. Ensure your wallet has USDC on Base network
+
+3. That's it! Your agent will now use BlockRun for LLM calls
+
+### Using Different Models
+
+With BlockRun, you can use models from multiple providers:
+
+```python
+from agents.application.executor import Executor
+
+# Use GPT-4 (default behavior, but via BlockRun)
+executor = Executor(default_model='gpt-4o', use_blockrun=True)
+
+# Use Claude
+executor = Executor(default_model='claude-3-5-sonnet', use_blockrun=True)
+
+# Use Gemini
+executor = Executor(default_model='gemini-2.0-flash', use_blockrun=True)
+```
+
+### Available Models
+
+| Provider | Models |
+|----------|--------|
+| OpenAI | gpt-5, gpt-4o, gpt-4o-mini, gpt-4-turbo, gpt-3.5-turbo |
+| Anthropic | claude-3-5-sonnet, claude-3-5-haiku, claude-3-opus |
+| Google | gemini-2.0-flash, gemini-1.5-pro, gemini-1.5-flash |
+
+Learn more at [blockrun.ai](https://blockrun.ai)
+
 ## Architecture
 
 The Polymarket Agents architecture features modular components that can be maintained and extended by individual community members.

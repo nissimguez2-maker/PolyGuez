@@ -2,7 +2,7 @@ import os
 import json
 import ast
 import re
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 import math
 
@@ -12,6 +12,11 @@ from langchain_openai import ChatOpenAI
 
 from agents.polymarket.gamma import GammaMarketClient as Gamma
 from agents.connectors.chroma import PolymarketRAG as Chroma
+from agents.connectors.blockrun import (
+    create_blockrun_llm,
+    get_blockrun_model_name,
+    get_blockrun_token_limit,
+)
 from agents.utils.objects import SimpleEvent, SimpleMarket
 from agents.application.prompts import Prompter
 from agents.polymarket.polymarket import Polymarket
@@ -29,16 +34,56 @@ def retain_keys(data, keys_to_retain):
         return data
 
 class Executor:
-    def __init__(self, default_model='gpt-3.5-turbo-16k') -> None:
+    def __init__(
+        self,
+        default_model: str = 'gpt-3.5-turbo-16k',
+        use_blockrun: Optional[bool] = None,
+    ) -> None:
+        """
+        Initialize the Executor with LLM configuration.
+
+        Args:
+            default_model: Model to use for LLM calls
+            use_blockrun: If True, use BlockRun for LLM access via x402 USDC payments.
+                         If None, auto-detect based on BLOCKRUN_ENABLED env var.
+
+        BlockRun Mode:
+            When use_blockrun=True, agents pay for LLM calls with USDC micropayments
+            on Base via the x402 protocol. No OpenAI API key required.
+            Set BLOCKRUN_ENABLED=true in .env to enable by default.
+
+            Benefits:
+            - No API key management
+            - Access to 31+ models (GPT-4, Claude, Gemini, etc.)
+            - Pay-per-use with agent's own wallet
+            - 0% markup during beta
+
+            Learn more: https://blockrun.ai
+        """
         load_dotenv()
-        max_token_model = {'gpt-3.5-turbo-16k':15000, 'gpt-4-1106-preview':95000}
-        self.token_limit = max_token_model.get(default_model)
+
+        # Determine if BlockRun should be used
+        if use_blockrun is None:
+            use_blockrun = os.getenv("BLOCKRUN_ENABLED", "false").lower() == "true"
+
+        self.use_blockrun = use_blockrun
         self.prompter = Prompter()
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.llm = ChatOpenAI(
-            model=default_model, #gpt-3.5-turbo"
-            temperature=0,
-        )
+
+        if use_blockrun:
+            # Use BlockRun for LLM access via x402 micropayments
+            self.llm = create_blockrun_llm(model=default_model, temperature=0)
+            self.token_limit = get_blockrun_token_limit(default_model)
+            print(f"[BlockRun] Using {get_blockrun_model_name(default_model)} via x402")
+        else:
+            # Use standard OpenAI
+            max_token_model = {'gpt-3.5-turbo-16k': 15000, 'gpt-4-1106-preview': 95000}
+            self.token_limit = max_token_model.get(default_model, 15000)
+            self.openai_api_key = os.getenv("OPENAI_API_KEY")
+            self.llm = ChatOpenAI(
+                model=default_model,
+                temperature=0,
+            )
+
         self.gamma = Gamma()
         self.chroma = Chroma()
         self.polymarket = Polymarket()
