@@ -4,6 +4,8 @@ from devtools import pprint
 from agents.polymarket.polymarket import Polymarket
 from agents.connectors.chroma import PolymarketRAG
 from agents.connectors.news import News
+from agents.connectors.mediastack import MediaStackNews
+from agents.connectors.newsdata import NewsDataNews
 from agents.application.trade import Trader
 from agents.application.executor import Executor
 from agents.application.creator import Creator
@@ -11,6 +13,8 @@ from agents.application.creator import Creator
 app = typer.Typer()
 polymarket = Polymarket()
 newsapi_client = News()
+mediastack_client = MediaStackNews()
+newsdata_client = NewsDataNews()
 polymarket_rag = PolymarketRAG()
 
 
@@ -34,6 +38,24 @@ def get_relevant_news(keywords: str) -> None:
     Use NewsAPI to query the internet
     """
     articles = newsapi_client.get_articles_for_cli_keywords(keywords)
+    pprint(articles)
+
+
+@app.command()
+def get_mediastack_news(keywords: str) -> None:
+    """
+    Use MediaStack to query the internet
+    """
+    articles = mediastack_client.get_articles_for_cli_keywords(keywords)
+    pprint(articles)
+
+
+@app.command()
+def get_newsdata_news(keywords: str) -> None:
+    """
+    Use NewsData.io to query the internet
+    """
+    articles = newsdata_client.get_articles_for_cli_keywords(keywords)
     pprint(articles)
 
 
