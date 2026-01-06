@@ -163,6 +163,7 @@ Retrieve and display a list of markets from Polymarket, sorted by volume.
 - sort_by: The sorting criterion, either volume (default) or another valid attribute.
 
 # Contributing
+See [CONTRIBUTING.md](CONTRIBUTING.md) for detailed guidelines.
 
 If you would like to contribute to this project, please follow these steps:
 
