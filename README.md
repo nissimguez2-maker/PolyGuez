@@ -205,6 +205,13 @@ Enjoy using the CLI application! If you encounter any issues, feel free to open 
 
 [Terms of Service](https://polymarket.com/tos) prohibit US persons and persons from certain other jurisdictions from trading on Polymarket (via UI & API and including agents developed by persons in restricted jurisdictions), although data and information is viewable globally.
 
+## Project Overview
+
+This repository contains experimental agents designed to interact with
+Polymarket markets programmatically.
+
+The goal of the project is to explore automated strategies, data ingestion,
+and decision-making workflows around prediction markets.
 
 <!-- LINKS -->
 [contributors-shield]: https://img.shields.io/github/contributors/polymarket/agents?style=for-the-badge
