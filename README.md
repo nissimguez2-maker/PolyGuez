@@ -33,6 +33,8 @@
 <!-- CONTENT -->
 # Polymarket Agents
 
+> **Important Legal Notice:** Trading on Polymarket via this API or any agents is prohibited for U.S. persons and persons from certain other jurisdictions. Please review the full [Terms of Service](#terms-of-service) at the bottom of this document before proceeding.
+> 
 Polymarket Agents is a developer framework and set of utilities for building AI agents for Polymarket.
 
 This code is free and publicly available under MIT License open source license ([terms of service](#terms-of-service))!
