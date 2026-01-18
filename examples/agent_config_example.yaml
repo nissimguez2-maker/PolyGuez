@@ -1,0 +1,11 @@
+# Example agent configuration
+
+agent:
+  name: sample-agent
+  risk_level: low
+
+market:
+  poll_interval_seconds: 30
+
+strategy:
+  type: conservative
