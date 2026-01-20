@@ -1,0 +1,13 @@
+# Example agent configuration
+
+agent:
+  name: example-agent
+  strategy: basic
+  enabled: true
+
+market:
+  refresh_interval_seconds: 30
+  max_position_size: 100
+
+logging:
+  level: info
