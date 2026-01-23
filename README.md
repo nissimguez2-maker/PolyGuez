@@ -205,7 +205,20 @@ Enjoy using the CLI application! If you encounter any issues, feel free to open 
 
 [Terms of Service](https://polymarket.com/tos) prohibit US persons and persons from certain other jurisdictions from trading on Polymarket (via UI & API and including agents developed by persons in restricted jurisdictions), although data and information is viewable globally.
 
+## Project Structure
 
+This overview helps you navigate the repository:
+
+- **/agents**: Core logic for Polymarket AI agents.
+  - `polymarket/`: Clients for Gamma and CLOB APIs.
+  - `utils/`: Common utilities and data objects.
+- **/docs**: Additional guides and documentation.
+- **/scripts**: Useful scripts for interacting with the agents and APIs.
+- **/tests**: Suite of tests to ensure code reliability.
+- `Dockerfile`: Containerization setup for easy deployment.
+- `.env.example`: Template for required environment variables.
+
+  
 <!-- LINKS -->
 [contributors-shield]: https://img.shields.io/github/contributors/polymarket/agents?style=for-the-badge
 [contributors-url]: https://github.com/polymarket/agents/graphs/contributors
