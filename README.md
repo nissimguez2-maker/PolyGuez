@@ -217,3 +217,8 @@ Enjoy using the CLI application! If you encounter any issues, feel free to open 
 [issues-url]: https://github.com/polymarket/agents/issues
 [license-shield]: https://img.shields.io/github/license/polymarket/agents?style=for-the-badge
 [license-url]: https://github.com/polymarket/agents/blob/master/LICENSE.md
+
+### Useful Resources
+* [Polymarket API Documentation](https://docs.polymarket.com/)
+* [CLOB Trading Engine Guide](https://docs.polymarket.com/#clob-trading-engine)
+* [Py-Polymarket-SDK GitHub](https://github.com/Polymarket/python-sdk)
