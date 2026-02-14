@@ -1,0 +1,10 @@
+{
+    "folders": [
+        {
+            "path": "../polymarket_btc_bot/polymarket_btc_bot"
+        },
+        {
+            "path": "../polymarket_btc_bot/.venv"
+        }
+    ]
+}

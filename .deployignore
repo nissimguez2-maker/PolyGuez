@@ -1,0 +1,28 @@
+# Files and directories to exclude from deploy
+.git
+.gitignore
+.github/
+.env
+*.env
+venv/
+.venv/
+env/
+__pycache__/
+*.pyc
+local_markets_db/
+local_db*
+*.sqlite
+*.db
+logs/
+*.log
+*.pem
+*.key
+node_modules/
+coverage/
+dist/
+build/
+.idea/
+.vscode/
+*.egg-info/
+
+# Add any other local artifacts you don't want deployed
