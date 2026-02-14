@@ -1,3 +1,36 @@
+Debug endpoints
+---------------
+
+To enable debug/admin endpoints (only for trusted networks), set:
+
+```
+DEBUG_ENDPOINTS_ENABLED=1
+# optional:
+DEBUG_ENDPOINTS_TOKEN=your-secret-token
+```
+
+The subscriptions view requires the `X-Debug-Token` header when `DEBUG_ENDPOINTS_TOKEN` is set.
+
+BTC Up/Down timeframe (15m / 5m)
+--------------------------------
+
+Default: 15 minutes.
+
+Enable 5-minute markets via env:
+- `BTC_UPDOWN_TIMEFRAME_MINUTES=5`
+- optional safety toggle: `BTC_UPDOWN_ENABLE_5M=1`
+
+Timing guards (recommended defaults already set in `src/config/settings.py`):
+- `BTC_UPDOWN_ENTRY_DEADLINE_SECONDS` (only enter early in the window)
+- `BTC_UPDOWN_MIN_TIME_TO_END_SECONDS` (do not enter too close to window end)
+- `BTC_UPDOWN_AUTO_CLOSE_BUFFER_SECONDS` (auto-close shortly before window end)
+
+Example:
+```bash
+export BTC_UPDOWN_TIMEFRAME_MINUTES=5
+export BTC_UPDOWN_ENABLE_5M=1
+```
+
 <!-- PROJECT SHIELDS -->
 [![Contributors][contributors-shield]][contributors-url]
 [![Forks][forks-shield]][forks-url]

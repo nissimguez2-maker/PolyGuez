@@ -1,0 +1,63 @@
+name: Monitor & Rerun stuck CodeQL
+
+on:
+  schedule:
+    - cron: '*/10 * * * *' # every 10 minutes
+  workflow_dispatch:
+
+permissions:
+  actions: write
+
+jobs:
+  monitor:
+    name: Monitor CodeQL runs and rerun stuck jobs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Find CodeQL workflow and rerun stuck runs
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          THRESHOLD_MINUTES: 15
+          TARGET_WORKFLOW_NAME: "CodeQL"
+          TARGET_BRANCH: "automation/bot-auto-pr"
+        run: |
+          set -euo pipefail
+          API="https://api.github.com/repos/${GITHUB_REPOSITORY}"
+
+          echo "Looking up workflows..."
+          wf_list=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" "${API}/actions/workflows")
+          workflow_id=$(echo "$wf_list" | jq -r --arg NAME "$TARGET_WORKFLOW_NAME" '.workflows[] | select(.name == $NAME) | .id' | head -n 1)
+          if [ -z "$workflow_id" ] || [ "$workflow_id" = "null" ]; then
+            echo "Workflow '$TARGET_WORKFLOW_NAME' not found in repo."
+            exit 0
+          fi
+
+          echo "Workflow id: $workflow_id"
+          now_epoch=$(date -u +%s)
+          threshold_seconds=$(( THRESHOLD_MINUTES * 60 ))
+
+          echo "Listing in_progress and queued runs for branch $TARGET_BRANCH..."
+          runs=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" "${API}/actions/workflows/${workflow_id}/runs?branch=${TARGET_BRANCH}&status=in_progress")
+          runs_queued=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" "${API}/actions/workflows/${workflow_id}/runs?branch=${TARGET_BRANCH}&status=queued")
+          all_runs=$(jq -s '[.[0].workflow_runs[], .[1].workflow_runs[]] | unique_by(.id)' <(echo "$runs") <(echo "$runs_queued"))
+
+          echo "$all_runs" | jq -c '.[]' | while read -r run; do
+            run_id=$(echo "$run" | jq -r '.id')
+            created_at=$(echo "$run" | jq -r '.created_at')
+            created_epoch=$(date -u -d "$created_at" +%s)
+            age=$(( now_epoch - created_epoch ))
+            status=$(echo "$run" | jq -r '.status')
+            conclusion=$(echo "$run" | jq -r '.conclusion')
+
+            echo "Run $run_id status=$status conclusion=$conclusion age=${age}s"
+            if [ "$age" -gt "$threshold_seconds" ]; then
+              echo "Run $run_id is older than threshold (${THRESHOLD_MINUTES}m) — attempting rerun..."
+              resp=$(curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" "${API}/actions/runs/${run_id}/rerun" -w "%{http_code}" -o /dev/null || echo "err")
+              echo "Rerun request response: $resp"
+            fi
+          done
+

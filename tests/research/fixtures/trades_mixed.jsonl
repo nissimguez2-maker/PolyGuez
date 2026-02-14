@@ -1,0 +1,10 @@
+{"trade_id":"t1","utc_time":"2026-02-13T09:45:41.192465+00:00","realized_pnl":-0.0012263076730921196,"confidence":5,"mode":"live"}
+{"trade_id":"t2","utc_time":"2026-02-13T09:55:35.477936+00:00","realized_pnl":0.013628682972237294,"confidence":5,"mode":"live"}
+{"trade_id":"t3","utc_time":"2026-02-13T09:56:42.725670+00:00","realized_pnl":0.017690902215660942,"confidence":5,"mode":"live"}
+{"trade_id":"t4","utc_time":"2026-02-13T09:58:02.076416+00:00","realized_pnl":0.007001412090250403,"confidence":5,"mode":"live"}
+{"trade_id":"t5","utc_time":"2026-02-13T09:58:50.860865+00:00","realized_pnl":0.015338360045225707,"confidence":5,"mode":"live"}
+{"trade_id":"t6","utc_time":"2026-02-13T09:59:50.060695+00:00","realized_pnl":-0.008060826481878947,"confidence":5,"mode":"live"}
+{"trade_id":"t7","utc_time":"2026-02-13T10:04:52.322158+00:00","realized_pnl":0.00892595635251281,"confidence":5,"mode":"live"}
+{"trade_id":"t8","utc_time":"2026-02-13T10:06:32.906509+00:00","realized_pnl":-0.009696014075099568,"confidence":5,"mode":"live"}
+{"trade_id":"t9","utc_time":"2026-02-13T10:22:44.044868+00:00","realized_pnl":-0.01996803363175159,"confidence":5,"mode":"smoke","smoke":true}
+{"trade_id":"t10","utc_time":"2026-02-13T10:27:54.342198+00:00","realized_pnl":0.015702573562495714,"confidence":5,"mode":"smoke","smoke":true}
