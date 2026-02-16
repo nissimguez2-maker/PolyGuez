@@ -1,0 +1,10 @@
+# This file defines who is responsible for reviewing changes in specific paths.
+
+# Global owners (will be requested for any change)
+* @Polymarket
+
+# Documentation changes
+docs/   @Polymarket
+
+# Example agents
+examples/ @Polymarket
