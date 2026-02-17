@@ -1,29 +1,106 @@
+# Python
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+venv/
+ENV/
+env/
 .venv
-.env
-.idea
-.ipynb_checkpoints
-.mypy_cache
-.vscode
-__pycache__
-.pytest_cache
-htmlcov
-dist
-site
-.coverage
-coverage.xml
-.netlify
-test.db
-log.txt
-Pipfile.lock
 env3.*
-env
-docs_build
-site_build
-venv
-docs.zip
-archive.zip
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Credentials and secrets
+**/gdrive_credentials.json
+**/oauth_credentials.json
+**/oauth_token.pickle
+**/token.pickle
+**/credentials.json
+**/service-account*.json
+**/*secret*.json
+**/*key*.json
+
+# Logs
+logs/
+*.log
+log.txt
+paper_trades*.jsonl
+pending_confirmations.json
+trades.jsonl
+
+# Local databases
+local_db*/
+*.db
+test.db
+*.sqlite
+*.sqlite3
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
 *~
 .*.sw?
-.cache
+.ipynb_checkpoints
+
+# OS
 .DS_Store
-local_db*
+Thumbs.db
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+*.bak
+*.cache
+.cache
+
+# Coverage/testing
+.coverage
+coverage.xml
+htmlcov
+.pytest_cache
+
+# Documentation builds
+docs_build/
+site_build/
+docs.zip
+archive.zip
+
+# Ad-Scout specific
+ad-scout/output/
+ad-scout/config/*.json
+!ad-scout/config/schema.sql
+!ad-scout/config/*.template
+ad-scout/config/auth_*.txt
+
+# Node (for edge-tts skill)
+node_modules/
+package-lock.json
+
+# Other
+Pipfile.lock
+.netlify
