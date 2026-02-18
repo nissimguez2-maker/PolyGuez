@@ -126,6 +126,7 @@ pysha3==1.0.2
 pytest==8.3.2
 python-dateutil==2.9.0.post0
 python-dotenv==1.0.1
+python-telegram-bot==21.3
 python-multipart==0.0.9
 pyunormalize==15.1.0
 PyYAML==6.0.1

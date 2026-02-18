@@ -1,7 +1,6 @@
 import httpx
 import json
 
-from agents.polymarket.polymarket import Polymarket
 from agents.utils.objects import Market, PolymarketEvent, ClobReward, Tag
 
 
@@ -174,6 +173,42 @@ class GammaMarketClient:
             }
         )
 
+    def search_markets(self, query: str, limit: int = 20) -> list:
+        """Search active markets by keyword in question/description.
+
+        Fetches top 500 markets by volume and filters locally,
+        because the Gamma API text_query parameter doesn't work.
+        """
+        response = httpx.get(self.gamma_markets_endpoint, params={
+            "active": "true",
+            "closed": "false",
+            "limit": 500,
+            "order": "volume",
+            "ascending": "false",
+        }, timeout=30)
+
+        if response.status_code != 200:
+            return []
+
+        all_markets = response.json()
+        keywords = [kw.strip().lower() for kw in query.split() if len(kw.strip()) >= 2]
+
+        if not keywords:
+            return all_markets[:limit]
+
+        scored = []
+        for m in all_markets:
+            question = m.get("question", "").lower()
+            description = (m.get("description", "") or "").lower()
+            text = question + " " + description
+
+            score = sum(1 for kw in keywords if kw in text)
+            if score > 0:
+                scored.append((score, m))
+
+        scored.sort(key=lambda x: (x[0], float(x[1].get("volume", 0) or 0)), reverse=True)
+        return [m for _, m in scored[:limit]]
+
     def get_market(self, market_id: int) -> dict():
         url = self.gamma_markets_endpoint + "/" + str(market_id)
         print(url)
@@ -184,5 +219,6 @@ class GammaMarketClient:
 if __name__ == "__main__":
     gamma = GammaMarketClient()
     market = gamma.get_market("253123")
+    from agents.polymarket.polymarket import Polymarket
     poly = Polymarket()
-    object = poly.map_api_to_market(market)
+    obj = poly.map_api_to_market(market)

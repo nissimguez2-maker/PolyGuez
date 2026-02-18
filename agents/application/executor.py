@@ -14,7 +14,6 @@ from agents.polymarket.gamma import GammaMarketClient as Gamma
 from agents.connectors.chroma import PolymarketRAG as Chroma
 from agents.utils.objects import SimpleEvent, SimpleMarket
 from agents.application.prompts import Prompter
-from agents.polymarket.polymarket import Polymarket
 
 def retain_keys(data, keys_to_retain):
     if isinstance(data, dict):
@@ -28,20 +27,46 @@ def retain_keys(data, keys_to_retain):
     else:
         return data
 
-class Executor:
-    def __init__(self, default_model='gpt-3.5-turbo-16k') -> None:
-        load_dotenv()
-        max_token_model = {'gpt-3.5-turbo-16k':15000, 'gpt-4-1106-preview':95000}
-        self.token_limit = max_token_model.get(default_model)
-        self.prompter = Prompter()
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        self.llm = ChatOpenAI(
-            model=default_model, #gpt-3.5-turbo"
+
+def _build_executor_llm():
+    """Build LLM for Executor. Supports xAI or OpenAI."""
+    load_dotenv()
+    xai_key = os.getenv("XAI_API_KEY")
+    openai_key = os.getenv("OPENAI_API_KEY")
+
+    if xai_key:
+        model = os.getenv("XAI_MODEL", "grok-3-mini")
+        return ChatOpenAI(
+            model=model,
             temperature=0,
-        )
+            api_key=xai_key,
+            base_url="https://api.x.ai/v1",
+        ), 95000
+    elif openai_key:
+        model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo-16k")
+        max_token_model = {'gpt-3.5-turbo-16k': 15000, 'gpt-4-1106-preview': 95000}
+        token_limit = max_token_model.get(model, 15000)
+        return ChatOpenAI(model=model, temperature=0), token_limit
+    else:
+        raise ValueError("No LLM API key. Set XAI_API_KEY or OPENAI_API_KEY in .env")
+
+
+class Executor:
+    def __init__(self) -> None:
+        load_dotenv()
+        self.llm, self.token_limit = _build_executor_llm()
+        self.prompter = Prompter()
         self.gamma = Gamma()
         self.chroma = Chroma()
-        self.polymarket = Polymarket()
+
+        # Polymarket CLOB — optional, only if wallet key is set
+        self.polymarket = None
+        if os.getenv("POLYGON_WALLET_PRIVATE_KEY"):
+            try:
+                from agents.polymarket.polymarket import Polymarket
+                self.polymarket = Polymarket()
+            except Exception:
+                pass
 
     def get_llm_response(self, user_input: str) -> str:
         system_message = SystemMessage(content=str(self.prompter.market_analyst()))
@@ -143,8 +168,9 @@ class Executor:
             market_ids = data["metadata"]["markets"].split(",")
             for market_id in market_ids:
                 market_data = self.gamma.get_market(market_id)
-                formatted_market_data = self.polymarket.map_api_to_market(market_data)
-                markets.append(formatted_market_data)
+                if self.polymarket:
+                    formatted_market_data = self.polymarket.map_api_to_market(market_data)
+                    markets.append(formatted_market_data)
         return markets
 
     def filter_markets(self, markets) -> "list[tuple]":

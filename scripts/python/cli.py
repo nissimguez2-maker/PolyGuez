@@ -124,5 +124,27 @@ def run_autonomous_trader() -> None:
     trader.one_best_trade()
 
 
+@app.command()
+def agent() -> None:
+    """
+    Launch the interactive Polymarket agent. Talk to it in natural language
+    to browse markets, check your balance, place orders, get forecasts, etc.
+    """
+    from scripts.python.agent import main as agent_main
+
+    agent_main()
+
+
+@app.command()
+def telegram() -> None:
+    """
+    Launch the Polymarket agent as a Telegram bot.
+    Requires TELEGRAM_BOT_TOKEN in your .env file.
+    """
+    from scripts.python.telegram_bot import main as telegram_main
+
+    telegram_main()
+
+
 if __name__ == "__main__":
     app()
