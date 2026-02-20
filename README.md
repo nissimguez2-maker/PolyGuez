@@ -1,3 +1,36 @@
+Debug endpoints
+---------------
+
+To enable debug/admin endpoints (only for trusted networks), set:
+
+```
+DEBUG_ENDPOINTS_ENABLED=1
+# optional:
+DEBUG_ENDPOINTS_TOKEN=your-secret-token
+```
+
+The subscriptions view requires the `X-Debug-Token` header when `DEBUG_ENDPOINTS_TOKEN` is set.
+
+BTC Up/Down timeframe (15m / 5m)
+--------------------------------
+
+Default: 15 minutes.
+
+Enable 5-minute markets via env:
+- `BTC_UPDOWN_TIMEFRAME_MINUTES=5`
+- optional safety toggle: `BTC_UPDOWN_ENABLE_5M=1`
+
+Timing guards (recommended defaults already set in `src/config/settings.py`):
+- `BTC_UPDOWN_ENTRY_DEADLINE_SECONDS` (only enter early in the window)
+- `BTC_UPDOWN_MIN_TIME_TO_END_SECONDS` (do not enter too close to window end)
+- `BTC_UPDOWN_AUTO_CLOSE_BUFFER_SECONDS` (auto-close shortly before window end)
+
+Example:
+```bash
+export BTC_UPDOWN_TIMEFRAME_MINUTES=5
+export BTC_UPDOWN_ENABLE_5M=1
+```
+
 <!-- PROJECT SHIELDS -->
 [![Contributors][contributors-shield]][contributors-url]
 [![Forks][forks-shield]][forks-url]
@@ -123,6 +156,59 @@ This repo is inteded for use with Python 3.9
    ./scripts/bash/build-docker.sh
    ./scripts/bash/run-docker-dev.sh
    ```
+
+
+## Trading bot safety & verification
+
+### Required environment variables
+
+Use environment variables for credentials and **never commit secrets** to git:
+
+- `POLYGON_WALLET_PRIVATE_KEY`
+- `OPENAI_API_KEY`
+- `CLOB_API_KEY` / `CLOB_SECRET` (if live CLOB auth is used)
+
+Use `.env.example` as template and keep `.env` local only.
+
+### Feature flags (safe defaults)
+
+Core optional runtime paths are feature-flagged and should remain disabled unless explicitly testing:
+
+- `MARKET_DATA_WS_ENABLED=0` (disable WS stream; default flow keeps running via existing path)
+- `MARKET_DATA_RTDS_ENABLED=0` (disable RTDS stream)
+- `DEBUG_ENDPOINTS_ENABLED=0` (disable admin/debug endpoints)
+
+Boolean env values are parsed robustly (`0/1`, `true/false`, `yes/no`).
+
+### Verification commands
+
+Run these checks locally before deploying:
+
+```bash
+pytest -q
+curl -s http://127.0.0.1:5000/market-data/metrics
+curl -s http://127.0.0.1:5000/market-data/health
+```
+
+For a default safety smoke test, run with flags off:
+
+```bash
+export MARKET_DATA_WS_ENABLED=0
+export MARKET_DATA_RTDS_ENABLED=0
+python agents/application/trade.py
+```
+
+### Health endpoint semantics (`/market-data/health`)
+
+`/market-data/health` is a **trading-readiness** health, not just process liveness:
+
+- `ok=true` means market-data path is considered ready for trading decisions.
+- `ok=false` can be expected in offline/dev scenarios (e.g., no live WS traffic yet), even when the app process is stable.
+- `ws_connected` indicates websocket connectivity status.
+- `last_msg_age_s` indicates freshness of most recent market-data message.
+- `active_subscriptions` indicates current adapter subscription count.
+
+For operational monitoring, treat API reachability + `/market-data/metrics` availability as process-level health, and `/market-data/health.ok` as readiness-to-trade.
 
 ## Architecture
 

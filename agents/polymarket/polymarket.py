@@ -11,7 +11,12 @@ from dotenv import load_dotenv
 
 from web3 import Web3
 from web3.constants import MAX_INT
-from web3.middleware import geth_poa_middleware
+try:
+    # web3<7
+    from web3.middleware import geth_poa_middleware
+except ImportError:
+    # web3>=7
+    from web3.middleware import ExtraDataToPOAMiddleware as geth_poa_middleware
 
 import httpx
 from py_clob_client.client import ClobClient
@@ -333,7 +338,20 @@ class Polymarket:
         order = builder.build_signed_order(order_data)
         return order
 
-    def execute_order(self, price, size, side, token_id) -> str:
+    def execute_order(self, price, size, side, token_id, gate_checked: bool = False) -> str:
+        """
+        Execute order via CLOB client.
+        gate_checked: internal flag set by OrderExecutor to indicate gate was run.
+        When ENTRY_GATE_ENFORCE_POLY is enabled in settings, callers must set gate_checked=True.
+        """
+        try:
+            from src.config.settings import get_settings
+            settings = get_settings()
+            if getattr(settings, "ENTRY_GATE_ENFORCE_POLY", False) and not gate_checked:
+                raise RuntimeError("Direct execute_order calls are forbidden. Use OrderExecutor.place_entry_order_with_gate()")
+        except Exception:
+            # If settings import fails, proceed (fail-open)
+            pass
         return self.client.create_and_post_order(
             OrderArgs(price=price, size=size, side=side, token_id=token_id)
         )

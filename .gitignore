@@ -1,29 +1,33 @@
-.venv
+﻿# Runtime logs / state
+logs/
+*.log
+*.pid
+
+# Local environments / caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Local secrets / credentials
 .env
-.idea
-.ipynb_checkpoints
-.mypy_cache
-.vscode
-__pycache__
-.pytest_cache
-htmlcov
-dist
-site
-.coverage
-coverage.xml
-.netlify
-test.db
-log.txt
-Pipfile.lock
-env3.*
-env
-docs_build
-site_build
-venv
-docs.zip
-archive.zip
-*~
-.*.sw?
-.cache
-.DS_Store
-local_db*
+.env.*
+!.env.example
+gdrive_credentials.json
+oauth_credentials.json
+*.pem
+*.key
+*.p12
+
+# Runtime trade artifacts
+archive/
+paper_trades*.jsonl
+paper_decisions*.jsonl
+pending_confirmations.json
+position_state.json
+out.json
+
+# Keep test fixtures
+!tests/**/*.jsonl
+data/risk_state.json

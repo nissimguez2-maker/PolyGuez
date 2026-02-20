@@ -1,0 +1,59 @@
+name: Hourly Automation Summary
+
+on:
+  schedule:
+    - cron: '0 * * * *' # hourly at minute 0
+  workflow_dispatch:
+
+jobs:
+  summary:
+    name: Post hourly summary for automation PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install jq
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y jq
+
+      - name: Build summary and post comment to PR
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: automation/bot-auto-pr
+          API: https://api.github.com/repos/${{ github.repository }}
+        run: |
+          set -euo pipefail
+          owner_repo="${GITHUB_REPOSITORY}"
+          owner="${owner_repo%%/*}"
+
+          echo "Looking up open PR for head ${owner}:${BRANCH}..."
+          prs=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" "${API}/pulls?state=open&head=${owner}:${BRANCH}")
+          pr_number=$(echo "$prs" | jq -r '.[0].number // empty')
+          if [ -z "$pr_number" ]; then
+            echo "No open PR found for branch ${BRANCH}. Nothing to post."
+            exit 0
+          fi
+
+          echo "Found PR #${pr_number} — gathering workflow runs..."
+          runs=$(curl -sS -H "Authorization: token ${GITHUB_TOKEN}" "${API}/actions/runs?branch=${BRANCH}&per_page=50")
+          total_runs=$(echo "$runs" | jq '.workflow_runs | length')
+          in_progress=$(echo "$runs" | jq '[.workflow_runs[] | select(.status=="in_progress")] | length')
+          completed=$(echo "$runs" | jq '[.workflow_runs[] | select(.status=="completed")] | length')
+          failed=$(echo "$runs" | jq '[.workflow_runs[] | select(.conclusion=="failure")] | length')
+          success=$(echo "$runs" | jq '[.workflow_runs[] | select(.conclusion=="success")] | length')
+          pending=$(echo "$runs" | jq '[.workflow_runs[] | select(.status=="queued")] | length')
+
+          latest_codeql=$(echo "$runs" | jq -r '.workflow_runs[] | select(.name=="CodeQL") | .conclusion' | head -n1 || echo "none")
+
+          now=$(date -u +"%Y-%m-%d %H:%M UTC")
+          body="Hourly Automation Summary — ${now}\n\n"
+          body+="PR: #${pr_number}\n"
+          body+="Branch: ${BRANCH}\n\n"
+          body+="Workflow runs (recent 50): total=${total_runs}, completed=${completed}, in_progress=${in_progress}, queued=${pending}\n"
+          body+="Success: ${success}, Failed: ${failed}\n\n"
+          body+="Latest CodeQL conclusion: ${latest_codeql}\n\n"
+          body+="_This comment was posted automatically by the repository automation workflow._"
+
+          echo "Posting summary comment to PR #${pr_number}..."
+          post=$(jq -n --arg body "$body" '{body: $body}')
+          curl -sS -X POST -H "Authorization: token ${GITHUB_TOKEN}" -H "Content-Type: application/json" "${API}/issues/${pr_number}/comments" -d "$post" >/dev/null
+          echo "Posted."
