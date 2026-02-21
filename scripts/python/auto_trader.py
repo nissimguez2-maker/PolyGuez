@@ -506,6 +506,51 @@ class AutoTrader:
             if exit_trade:
                 exit_trades.append(exit_trade)
 
+        # Cash liberation: if balance is very low, sell profitable positions to free up capital
+        if self._cached_balance < 2.0 and not exit_trades:
+            # Sort remaining positions by: profit first, then by value (highest first)
+            sellable = []
+            for pos in positions:
+                size = float(pos.get("size", 0))
+                token_id = pos.get("asset", "")
+                cur_price = float(pos.get("curPrice", 0))
+                current_value = float(pos.get("currentValue", 0))
+                pnl_pct = float(pos.get("percentPnl", 0))
+
+                if size <= 0 or token_id in self._dead_markets or cur_price <= 0.005:
+                    continue  # skip dead/worthless positions
+
+                sellable.append((pos, pnl_pct, current_value))
+
+            # Sort: profitable first (highest PnL%), then highest value
+            sellable.sort(key=lambda x: (-x[1], -x[2]))
+
+            for pos, pnl_pct, current_value in sellable[:2]:  # sell up to 2 positions
+                if current_value < 0.50:
+                    continue  # not worth selling
+
+                token_id = pos.get("asset", "")
+                size = float(pos.get("size", 0))
+                cur_price = float(pos.get("curPrice", 0))
+                title = pos.get("title", "")
+
+                reason = (
+                    f"CASH-LIBERATION: saldo ${self._cached_balance:.2f} muito baixo. "
+                    f"Vendendo posição (PnL: {pnl_pct:+.1f}%, val: ${current_value:.2f}) pra liberar caixa"
+                )
+                exit_trades.append({
+                    "action": "SELL",
+                    "token_id": token_id,
+                    "market_question": title,
+                    "amount": size,
+                    "price": cur_price,
+                    "strategy": "CASH_LIBERATION",
+                    "reasoning": reason,
+                    "is_exit": True,
+                    "exit_reason": "CASH_LIBERATION",
+                })
+                logger.info(f"Cash liberation: selling '{title[:40]}' (val=${current_value:.2f}, PnL={pnl_pct:+.1f}%)")
+
         return exit_trades
 
     # ─── Direct Execution (No LLM) ───
