@@ -330,6 +330,19 @@ class AutoTrader:
         self.auto_trades_count = 0  # trades without LLM
         self.llm_trades_count = 0   # trades via LLM
 
+        # Balance-based bet sizing tiers
+        # Format: (min_balance, max_bet, multiplier_label)
+        # Bot adjusts bet size dynamically based on available USDC
+        self._cached_balance = 0.0
+        self._balance_tiers = [
+            (100.0,  25.0,  "🟢 Full"),     # $100+ → bet up to $25
+            (50.0,   10.0,  "🟡 Medium"),    # $50-100 → bet up to $10
+            (20.0,   5.0,   "🟠 Small"),     # $20-50 → bet up to $5
+            (5.0,    2.0,   "🔴 Micro"),     # $5-20 → bet up to $2
+            (1.0,    0.50,  "⚫ Survival"),  # $1-5 → bet up to $0.50
+            (0.0,    0.0,   "💀 No funds"),  # <$1 → no trading
+        ]
+
         logger.info(
             f"AutoTrader v2: fast_interval={self.fast_interval_sec}s, "
             f"deep_every={self.deep_interval_cycles} cycles, "
@@ -348,6 +361,61 @@ class AutoTrader:
                 await self._notify_callback(message)
             except Exception as e:
                 logger.error(f"Notification failed: {e}")
+
+    # ─── Balance-Based Bet Sizing ───
+
+    def _get_usdc_balance_sync(self) -> float:
+        """Get USDC balance from on-chain (Polygon)."""
+        try:
+            from web3 import Web3
+            w3 = Web3(Web3.HTTPProvider("https://polygon-bor-rpc.publicnode.com"))
+            wallet = Web3.to_checksum_address(self.agent.wallet_address)
+            usdc_address = Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
+            abi = '[{"inputs":[{"internalType":"address","name":"account","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]'
+            usdc = w3.eth.contract(address=usdc_address, abi=abi)
+            balance_raw = usdc.functions.balanceOf(wallet).call()
+            return float(balance_raw / 1e6)
+        except Exception as e:
+            logger.error(f"Error getting USDC balance: {e}")
+            return self._cached_balance  # return last known
+
+    def _get_bet_tier(self, balance: float) -> tuple:
+        """Get the bet tier for a given balance. Returns (max_bet, tier_label)."""
+        for min_bal, max_bet, label in self._balance_tiers:
+            if balance >= min_bal:
+                return max_bet, label
+        return 0.0, "💀 No funds"
+
+    def _adjust_amount_for_balance(self, amount: float, balance: float) -> float:
+        """Adjust trade amount based on current USDC balance using tiers.
+
+        Tiers:
+          $100+  → up to $25  (Full)
+          $50+   → up to $10  (Medium)
+          $20+   → up to $5   (Small)
+          $5+    → up to $2   (Micro)
+          $1+    → up to $0.50 (Survival)
+          <$1    → $0 (no trading)
+
+        Also ensures we never bet more than 40% of balance in a single trade.
+        """
+        max_bet, tier = self._get_bet_tier(balance)
+
+        if max_bet <= 0:
+            return 0.0
+
+        # Cap at tier max
+        adjusted = min(amount, max_bet)
+
+        # Never bet more than 40% of balance
+        safety_cap = balance * 0.40
+        adjusted = min(adjusted, safety_cap)
+
+        # Minimum viable bet on Polymarket
+        if adjusted < 0.10:
+            return 0.0
+
+        return round(adjusted, 2)
 
     # ─── Portfolio ───
 
@@ -516,6 +584,20 @@ class AutoTrader:
 
         if amount > self.max_trade_amount and strategy not in ("STOP_LOSS", "TAKE_PROFIT"):
             amount = self.max_trade_amount
+
+        # Dynamic bet sizing: adjust BUY amount based on USDC balance
+        if action == "BUY" and not self.dry_run:
+            loop = asyncio.get_event_loop()
+            balance = await loop.run_in_executor(None, self._get_usdc_balance_sync)
+            self._cached_balance = balance
+            original_amount = amount
+            amount = self._adjust_amount_for_balance(amount, balance)
+            if amount <= 0:
+                _, tier = self._get_bet_tier(balance)
+                return f"⏸️ SKIP BUY ${original_amount:.2f} — saldo ${balance:.2f} ({tier}), sem fundos suficientes"
+            if amount != original_amount:
+                _, tier = self._get_bet_tier(balance)
+                logger.info(f"Bet sizing: ${original_amount:.2f} → ${amount:.2f} (saldo: ${balance:.2f}, tier: {tier})")
 
         # Convert USDC amount to shares (for BUY)
         if action == "BUY":
@@ -768,14 +850,19 @@ class AutoTrader:
         """Send context to LLM for trade recommendations."""
         context_str = json.dumps(context, indent=2, default=str)
 
+        # Calculate bet tier for LLM context
+        max_bet, tier_label = self._get_bet_tier(self._cached_balance)
+
         user_msg = (
             f"Estado atual do Polymarket. Analise e recomende trades.\n\n"
             f"ESTADO ATUAL:\n{context_str}\n\n"
             f"RESTRIÇÕES:\n"
-            f"- Valor máximo por trade: ${self.max_trade_amount}\n"
+            f"- Saldo USDC disponível: ${self._cached_balance:.2f} ({tier_label})\n"
+            f"- Valor máximo por trade: ${max_bet:.2f} (ajustado pelo saldo)\n"
             f"- Máximo de trades neste ciclo: {self.max_trades_per_cycle}\n"
             f"- Use APENAS token IDs dos mercados listados acima\n"
             f"- Verifique posições existentes antes de recomendar\n"
+            f"- IMPORTANTE: ajuste amounts para o saldo disponível!\n"
         )
 
         if extra_instructions:
@@ -815,6 +902,13 @@ class AutoTrader:
         cycle_start = time.time()
         auto_trades = []
         exits = []
+
+        # 0. Update cached balance for bet sizing
+        try:
+            loop = asyncio.get_event_loop()
+            self._cached_balance = await loop.run_in_executor(None, self._get_usdc_balance_sync)
+        except Exception:
+            pass  # keep last known balance
 
         # 1. Manage positions (stop-loss, take-profit, trailing stop)
         try:
@@ -1199,10 +1293,13 @@ class AutoTrader:
         status = "RODANDO" if self.running else "PARADO"
         deep_sec = self.fast_interval_sec * self.deep_interval_cycles
 
+        # Bet tier info
+        max_bet, tier_label = self._get_bet_tier(self._cached_balance)
+
         lines = [
             f"🤖 Auto-Trader v2: {status} [{mode}]",
+            f"  💰 Saldo: ${self._cached_balance:.2f} → {tier_label} (max ${max_bet:.2f}/trade)",
             f"  ⚡ Fast: {self.fast_interval_sec}s | 🔄 Deep: {deep_sec}s",
-            f"  Max/trade: ${self.max_trade_amount} | Max/ciclo: {self.max_trades_per_cycle}",
             f"  📉 SL: -{self.position_manager.stop_loss_pct}% | 📈 TP: +{self.position_manager.take_profit_pct}%",
             f"  Ciclos: {self.cycle_count} deep + {self.fast_cycle_count} fast",
             f"  Trades: {self.auto_trades_count} auto + {self.llm_trades_count} LLM",
