@@ -387,7 +387,7 @@ class TelegramPolymarketBot:
             "⚠️ WARNING: This will use REAL MONEY to trade.\n"
             f"  Max per trade: ${trader.max_trade_amount}\n"
             f"  Max trades/cycle: {trader.max_trades_per_cycle}\n"
-            f"  Interval: every {trader.interval_minutes} min\n\n"
+            f"  ⚡ Fast: every {trader.fast_interval_sec}s | 🔄 Deep: every {trader.fast_interval_sec * trader.deep_interval_cycles}s\n\n"
             "Are you sure?",
             reply_markup=keyboard,
         )
