@@ -507,7 +507,9 @@ class AutoTrader:
                 exit_trades.append(exit_trade)
 
         # Cash liberation: if balance is very low, sell profitable positions to free up capital
-        if self._cached_balance < 2.0 and not exit_trades:
+        # Check if any non-dead-market exits exist (dead markets always fail, don't count)
+        real_exits = [t for t in exit_trades if t.get("token_id", "") not in self._dead_markets]
+        if self._cached_balance < 2.0 and not real_exits:
             # Sort remaining positions by: profit first, then by value (highest first)
             sellable = []
             for pos in positions:
