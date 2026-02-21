@@ -354,12 +354,20 @@ class AutoTrader:
     def set_notify_callback(self, callback):
         self._notify_callback = callback
 
+    async def _with_timeout(self, coro, timeout_sec=30, default=None, label="operation"):
+        """Run a coroutine with a timeout. Returns default on timeout."""
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout_sec)
+        except asyncio.TimeoutError:
+            logger.warning(f"Timeout ({timeout_sec}s) em {label}")
+            return default
+
     async def _notify(self, message: str):
         logger.info(f"AutoTrader: {message}")
         if self._notify_callback:
             try:
-                await self._notify_callback(message)
-            except Exception as e:
+                await asyncio.wait_for(self._notify_callback(message), timeout=10)
+            except (asyncio.TimeoutError, Exception) as e:
                 logger.error(f"Notification failed: {e}")
 
     # ─── Balance-Based Bet Sizing ───
@@ -950,48 +958,59 @@ class AutoTrader:
         auto_trades = []
         exits = []
 
-        # 0. Update cached balance for bet sizing
+        # 0. Update cached balance for bet sizing (timeout 10s)
         try:
             loop = asyncio.get_event_loop()
-            self._cached_balance = await loop.run_in_executor(None, self._get_usdc_balance_sync)
+            bal = await self._with_timeout(
+                loop.run_in_executor(None, self._get_usdc_balance_sync),
+                timeout_sec=10, default=None, label="balance_check"
+            )
+            if bal is not None:
+                self._cached_balance = bal
         except Exception:
             pass  # keep last known balance
 
-        # 1. Manage positions (stop-loss, take-profit, trailing stop)
+        # 1. Manage positions — stop-loss, take-profit, trailing stop (timeout 15s)
         try:
-            exit_trades = await self._manage_positions()
+            exit_trades = await self._with_timeout(
+                self._manage_positions(),
+                timeout_sec=15, default=[], label="manage_positions"
+            ) or []
             for trade in exit_trades:
-                result = await self._execute_trade(trade)
+                result = await self._with_timeout(
+                    self._execute_trade(trade),
+                    timeout_sec=15, default="❌ Timeout na execução", label="exit_trade"
+                )
                 exits.append({"trade": trade, "result": result})
         except Exception as e:
             logger.error(f"Position management error: {e}")
 
-        # 2. Quick strategy scan for obvious trades
+        # 2. Quick strategy scan for obvious trades (timeout 20s)
         try:
             if self.strategy_engine:
                 loop = asyncio.get_event_loop()
-                # Quick fetch: only crypto prices + top 50 markets
-                raw_markets = await loop.run_in_executor(
-                    None,
-                    lambda: self.agent.gamma.get_markets(querystring_params={
-                        "active": True, "closed": False,
-                        "limit": 50, "order": "volume", "ascending": False,
-                    })
-                )
-                strategy_results = await loop.run_in_executor(
-                    None,
-                    lambda: self.strategy_engine.run_all_strategies(raw_markets)
-                )
+                raw_markets = await self._with_timeout(
+                    loop.run_in_executor(None, lambda: self.agent.gamma.get_markets(
+                        querystring_params={"active": True, "closed": False,
+                                            "limit": 50, "order": "volume", "ascending": False}
+                    )),
+                    timeout_sec=15, default=[], label="fetch_markets"
+                ) or []
 
-                quick_context = {
-                    "strategy_signals": {
-                        "latency_arbitrage": strategy_results.get("latency_arbitrage", [])[:3],
-                        "parity_arbitrage": strategy_results.get("parity_arbitrage", [])[:3],
-                    },
-                    "crypto_prices": strategy_results.get("crypto_prices", {}),
-                }
+                if raw_markets:
+                    strategy_results = await self._with_timeout(
+                        loop.run_in_executor(None, lambda: self.strategy_engine.run_all_strategies(raw_markets)),
+                        timeout_sec=20, default={}, label="strategy_scan"
+                    ) or {}
 
-                auto_trades = await self._execute_obvious_trades(quick_context)
+                    quick_context = {
+                        "strategy_signals": {
+                            "latency_arbitrage": strategy_results.get("latency_arbitrage", [])[:3],
+                            "parity_arbitrage": strategy_results.get("parity_arbitrage", [])[:3],
+                        },
+                        "crypto_prices": strategy_results.get("crypto_prices", {}),
+                    }
+                    auto_trades = await self._execute_obvious_trades(quick_context)
         except Exception as e:
             logger.error(f"Fast cycle strategy error: {e}")
 
@@ -1049,28 +1068,40 @@ class AutoTrader:
                 await self._notify(msg)
                 return msg
 
-        # 1. Position management first
+        # 1. Position management first (timeout 20s)
         exit_trades = []
         try:
-            exits = await self._manage_positions()
+            exits = await self._with_timeout(
+                self._manage_positions(), timeout_sec=20, default=[], label="deep_positions"
+            ) or []
             for trade in exits:
-                result = await self._execute_trade(trade)
+                result = await self._with_timeout(
+                    self._execute_trade(trade), timeout_sec=15, default="❌ Timeout", label="deep_exit"
+                )
                 exit_trades.append(result)
         except Exception as e:
             logger.error(f"Position mgmt error: {e}")
 
-        # 2. Gather full context
+        # 2. Gather full context (timeout 30s)
         try:
-            context = await self._gather_context()
+            context = await self._with_timeout(
+                self._gather_context(), timeout_sec=30, default=None, label="gather_context"
+            )
+            if context is None:
+                msg = "⚠️ Timeout coletando dados, ciclo pulado"
+                await self._notify(msg)
+                return msg
         except Exception as e:
             msg = f"❌ Erro ao coletar dados: {e}"
             await self._notify(msg)
             return msg
 
-        # 3. Execute obvious trades (no LLM)
+        # 3. Execute obvious trades — no LLM (timeout 20s)
         auto_results = []
         try:
-            auto_results = await self._execute_obvious_trades(context)
+            auto_results = await self._with_timeout(
+                self._execute_obvious_trades(context), timeout_sec=20, default=[], label="obvious_trades"
+            ) or []
         except Exception as e:
             logger.error(f"Auto-trade error: {e}")
 
@@ -1115,9 +1146,16 @@ class AutoTrader:
                 f"(falta ${remaining:.2f})\n"
             )
 
-        # 5. Ask LLM
+        # 5. Ask LLM (timeout 60s)
         try:
-            recommendations = await self._ask_llm_for_trades(context, extra)
+            recommendations = await self._with_timeout(
+                self._ask_llm_for_trades(context, extra),
+                timeout_sec=60, default=None, label="llm_analysis"
+            )
+            if recommendations is None:
+                msg = "⚠️ LLM timeout (60s), ciclo sem trades LLM"
+                await self._notify(msg)
+                recommendations = {"analysis": "Timeout", "trades": [], "portfolio_notes": ""}
         except Exception as e:
             msg = f"❌ Erro LLM: {e}"
             await self._notify(msg)
@@ -1223,35 +1261,59 @@ class AutoTrader:
     # ─── Main Loop ───
 
     async def _loop(self):
-        """Dual-speed trading loop: fast every 30s, deep every N fast cycles."""
-        try:
-            # First cycle is always deep
-            logger.info("Auto-trader starting first DEEP cycle...")
-            await self.run_deep_cycle()
+        """Dual-speed trading loop with auto-restart on failure.
 
-            fast_count = 0
-            while self.running:
-                await asyncio.sleep(self.fast_interval_sec)
-                if not self.running:
-                    break
+        Automatically restarts on unhandled exceptions with 30s backoff.
+        Gives up after 50 consecutive restarts.
+        """
+        restart_count = 0
+        max_restarts = 50
 
-                fast_count += 1
+        while self.running and restart_count < max_restarts:
+            try:
+                # First cycle is always deep
+                logger.info("Auto-trader starting first DEEP cycle...")
+                await self.run_deep_cycle()
 
-                if fast_count >= self.deep_interval_cycles:
-                    # Deep cycle
-                    fast_count = 0
-                    await self.run_deep_cycle()
-                else:
-                    # Fast cycle
-                    await self.run_fast_cycle()
+                fast_count = 0
+                while self.running:
+                    await asyncio.sleep(self.fast_interval_sec)
+                    if not self.running:
+                        break
 
-        except asyncio.CancelledError:
-            logger.info("Auto-trader loop cancelled.")
-        except Exception as e:
-            logger.error(f"Auto-trader loop error: {e}")
-            logger.error(traceback.format_exc())
-            await self._notify(f"❌ Auto-trader crashou: {e}")
-            self.running = False
+                    fast_count += 1
+
+                    if fast_count >= self.deep_interval_cycles:
+                        fast_count = 0
+                        await self.run_deep_cycle()
+                    else:
+                        await self.run_fast_cycle()
+
+                # Clean exit (self.running set to False)
+                break
+
+            except asyncio.CancelledError:
+                logger.info("Auto-trader loop cancelled.")
+                break
+            except Exception as e:
+                restart_count += 1
+                logger.error(f"Auto-trader loop error #{restart_count}/{max_restarts}: {e}")
+                logger.error(traceback.format_exc())
+                try:
+                    await self._notify(
+                        f"⚠️ Auto-trader erro #{restart_count}, reiniciando em 30s...\n{str(e)[:200]}"
+                    )
+                except Exception:
+                    pass  # don't let notification failure prevent restart
+                await asyncio.sleep(30)  # backoff before restart
+
+        self.running = False
+        if restart_count >= max_restarts:
+            logger.error(f"Auto-trader stopped after {max_restarts} restarts.")
+            try:
+                await self._notify(f"❌ Auto-trader parou após {max_restarts} erros consecutivos.")
+            except Exception:
+                pass
 
     # ─── Control ───
 
