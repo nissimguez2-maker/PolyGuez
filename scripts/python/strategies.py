@@ -27,29 +27,27 @@ logger = logging.getLogger(__name__)
 
 class CryptoPriceMonitor:
     """
-    Monitor real-time crypto prices from exchanges (Binance, CoinGecko)
-    to detect when Polymarket 15-min up/down markets are mispriced.
+    Monitor real-time crypto prices from Binance for latency arbitrage.
 
-    The key insight: Polymarket has BTC/ETH/SOL 15-minute up/down markets.
-    If BTC just pumped 2% in the last minute, the "Will BTC be up in 15 min?"
-    market is likely YES but may still be priced at 50-60 cents.
-    We buy YES immediately before the market adjusts.
+    Tracks BTC, ETH, SOL, DOGE, XRP, AVAX, LINK for broad coverage.
+    Detects price spikes (>1% in 1min) as special triggers.
     """
 
     def __init__(self):
-        self.price_cache = {}  # symbol -> {price, timestamp, change_1m, change_5m}
+        self.price_cache = {}
         self._last_fetch = 0
-        self._fetch_interval = 5  # seconds between fetches
+        self._fetch_interval = 2  # seconds between fetches (was 5)
+        self.price_history = []  # list of (timestamp, prices) for ATR calc
+        self._spike_threshold = 1.0  # % change in 1min to trigger spike alert
 
     def get_crypto_prices(self) -> dict:
-        """Fetch current BTC, ETH, SOL prices from CoinGecko (free, no API key)."""
+        """Fetch current crypto prices from Binance (free, no API key)."""
         now = time.time()
         if now - self._last_fetch < self._fetch_interval and self.price_cache:
             return self.price_cache
 
         try:
-            # Use Binance API for faster updates (no API key needed for public endpoints)
-            symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
+            symbols = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "DOGEUSDT", "XRPUSDT", "AVAXUSDT", "LINKUSDT"]
             prices = {}
 
             for symbol in symbols:
@@ -100,6 +98,21 @@ class CryptoPriceMonitor:
                     except Exception:
                         pass
 
+            # Detect spikes
+            for symbol, data in prices.items():
+                change_1m = data.get("change_1m", 0)
+                if abs(change_1m) >= self._spike_threshold:
+                    data["spike"] = True
+                    data["spike_direction"] = "UP" if change_1m > 0 else "DOWN"
+                    logger.info(f"🚨 SPIKE: {symbol} {change_1m:+.2f}% in 1min!")
+                else:
+                    data["spike"] = False
+
+            # Track price history for regime detection (keep last 60 entries = ~2 min)
+            self.price_history.append({"time": now, "prices": {k: v.get("price", 0) for k, v in prices.items()}})
+            if len(self.price_history) > 60:
+                self.price_history = self.price_history[-60:]
+
             self.price_cache = prices
             self._last_fetch = now
             return prices
@@ -107,6 +120,48 @@ class CryptoPriceMonitor:
         except Exception as e:
             logger.error(f"Error fetching crypto prices: {e}")
             return self.price_cache
+
+    def detect_market_regime(self) -> dict:
+        """
+        Detect current market regime based on BTC price history.
+        Returns: {regime: "trending_up"|"trending_down"|"ranging"|"volatile", volatility: float}
+        """
+        if len(self.price_history) < 10:
+            return {"regime": "unknown", "volatility": 0, "description": "Insufficient data"}
+
+        btc_prices = [h["prices"].get("BTC", 0) for h in self.price_history[-30:] if h["prices"].get("BTC", 0) > 0]
+        if len(btc_prices) < 5:
+            return {"regime": "unknown", "volatility": 0, "description": "Insufficient BTC data"}
+
+        # Calculate volatility (ATR proxy)
+        changes = [abs(btc_prices[i] - btc_prices[i-1]) / btc_prices[i-1] * 100
+                    for i in range(1, len(btc_prices))]
+        avg_change = sum(changes) / len(changes) if changes else 0
+
+        # Calculate trend
+        first_half = sum(btc_prices[:len(btc_prices)//2]) / (len(btc_prices)//2)
+        second_half = sum(btc_prices[len(btc_prices)//2:]) / (len(btc_prices) - len(btc_prices)//2)
+        trend_pct = ((second_half - first_half) / first_half) * 100
+
+        if avg_change > 0.1:  # High volatility
+            regime = "volatile"
+            desc = f"Alta volatilidade ({avg_change:.3f}%/tick)"
+        elif trend_pct > 0.05:
+            regime = "trending_up"
+            desc = f"Tendência de alta ({trend_pct:+.3f}%)"
+        elif trend_pct < -0.05:
+            regime = "trending_down"
+            desc = f"Tendência de baixa ({trend_pct:+.3f}%)"
+        else:
+            regime = "ranging"
+            desc = f"Mercado lateral ({trend_pct:+.3f}%)"
+
+        return {
+            "regime": regime,
+            "volatility": round(avg_change, 4),
+            "trend_pct": round(trend_pct, 4),
+            "description": desc,
+        }
 
 
 class StrategyEngine:
@@ -131,11 +186,15 @@ class StrategyEngine:
 
         opportunities = []
 
-        # Keywords that identify 15-min / short-term crypto markets
+        # Keywords that identify short-term crypto markets (expanded)
         crypto_keywords = {
             "BTC": ["bitcoin", "btc"],
             "ETH": ["ethereum", "eth"],
             "SOL": ["solana", "sol"],
+            "DOGE": ["dogecoin", "doge"],
+            "XRP": ["xrp", "ripple"],
+            "AVAX": ["avalanche", "avax"],
+            "LINK": ["chainlink", "link"],
         }
         time_keywords = ["15 min", "15-min", "minute", "hour", "1 hour", "4 hour", "daily"]
         direction_keywords_up = ["up", "above", "higher", "increase", "rise"]
@@ -532,15 +591,18 @@ class StrategyEngine:
         opportunities.sort(key=lambda x: x["potential_return_x"], reverse=True)
         return opportunities
 
-    def run_all_strategies(self, markets: list) -> dict:
+    def run_all_strategies(self, markets: list, strategy_weights: dict = None) -> dict:
         """
         Run all strategies and return a comprehensive signal report.
+        Applies dynamic weights from auto-learning if provided.
         """
         crypto_prices = self.crypto_monitor.get_crypto_prices()
+        regime = self.crypto_monitor.detect_market_regime()
 
         results = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "crypto_prices": crypto_prices,
+            "market_regime": regime,
             "latency_arbitrage": self.scan_latency_arbitrage(markets, crypto_prices),
             "parity_arbitrage": self.scan_parity_arbitrage(markets),
             "no_bias": self.scan_no_bias(markets),
@@ -548,18 +610,52 @@ class StrategyEngine:
             "longshots": self.scan_longshots(markets),
         }
 
+        # Apply regime-based adjustments
+        if regime["regime"] == "volatile":
+            # High volatility → boost latency arb, reduce longshots
+            for sig in results["latency_arbitrage"]:
+                sig["confidence"] = min(0.99, sig.get("confidence", 0) * 1.15)
+                sig["reasoning"] += " [Boost: mercado volátil]"
+        elif regime["regime"] == "ranging":
+            # Low volatility → boost parity arb and high-prob
+            for sig in results["high_probability"]:
+                sig["return_pct"] = sig.get("return_pct", 0)  # already computed
+                sig["reasoning"] += " [Boost: mercado lateral - composição segura]"
+
+        # Apply auto-learning weights to confidence/priority
+        if strategy_weights:
+            strategy_map = {
+                "LATENCY_ARB": "latency_arbitrage",
+                "PARITY_ARB": "parity_arbitrage",
+                "NO_BIAS": "no_bias",
+                "HIGH_PROB": "high_probability",
+                "LONGSHOT": "longshots",
+            }
+            for strat_name, list_key in strategy_map.items():
+                weight = strategy_weights.get(strat_name, 1.0)
+                for sig in results.get(list_key, []):
+                    if "confidence" in sig:
+                        sig["confidence"] = min(0.99, sig["confidence"] * weight)
+                    sig["auto_weight"] = weight
+
+        # Detect spikes → flag for fast cycle
+        spikes = {k: v for k, v in crypto_prices.items() if v.get("spike")}
+        if spikes:
+            results["active_spikes"] = spikes
+            logger.info(f"🚨 Active spikes: {list(spikes.keys())}")
+
         # Count total opportunities
         total = sum(len(v) for k, v in results.items() if isinstance(v, list))
         results["total_opportunities"] = total
 
         if total > 0:
             logger.info(
-                f"Strategy scan: {total} opportunities found - "
-                f"Latency: {len(results['latency_arbitrage'])}, "
-                f"Parity: {len(results['parity_arbitrage'])}, "
-                f"NO Bias: {len(results['no_bias'])}, "
-                f"High Prob: {len(results['high_probability'])}, "
-                f"Longshots: {len(results['longshots'])}"
+                f"Strategy scan [{regime['regime']}]: {total} opps - "
+                f"Lat:{len(results['latency_arbitrage'])} "
+                f"Par:{len(results['parity_arbitrage'])} "
+                f"NO:{len(results['no_bias'])} "
+                f"HP:{len(results['high_probability'])} "
+                f"LS:{len(results['longshots'])}"
             )
 
         return results

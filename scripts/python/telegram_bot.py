@@ -221,13 +221,19 @@ class TelegramPolymarketBot:
             "  /events [limit] - List active events\n"
             "  /cancel <order_id> - Cancel an order\n"
             "  /cancel all - Cancel all orders\n\n"
-            "🤖 Auto-Trading:\n"
-            "  /autotrade - Start auto-trading (dry run mode)\n"
-            "  /autotrade_live - Start LIVE auto-trading (real money!)\n"
+            "🤖 Auto-Trading v2:\n"
+            "  /autotrade - Start auto-trading (dry run)\n"
+            "  /autotrade_live - Start LIVE auto-trading\n"
             "  /stop_autotrade - Stop auto-trading\n"
-            "  /trade_status - Current status & trade history\n"
-            "  /trade_now - Run one analysis+trade cycle now\n"
-            "  /trade_now_live - Run one LIVE cycle now\n\n"
+            "  /trade_status - Status + performance\n"
+            "  /trade_now - Run one cycle (dry)\n"
+            "  /trade_now_live - Run one LIVE cycle\n\n"
+            "📊 Performance & Config:\n"
+            "  /stats - Win rate, P&L, Sharpe ratio\n"
+            "  /strategies - Strategy ranking (auto-learning)\n"
+            "  /speed fast|normal - Set cycle speed\n"
+            "  /stoploss 30 - Set stop-loss (-30%)\n"
+            "  /takeprofit 15 - Set take-profit (+15%)\n\n"
             "💬 Or just type in natural language:\n"
             '  "search markets about AI"\n'
             '  "info on market 12345"\n'
@@ -471,6 +477,95 @@ class TelegramPolymarketBot:
             "Proceed?",
             reply_markup=keyboard,
         )
+
+    # ─── New v2 commands: stats, strategies, speed, stoploss, takeprofit ───
+
+    async def cmd_stats(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show trading performance statistics from SQLite."""
+        if not is_authorized(update.effective_user.id):
+            return
+        trader = self.auto_trader
+        if trader and trader.trade_db:
+            summary = trader.trade_db.get_stats_summary()
+            await self._send(update, summary)
+        else:
+            await self._send(update, "📊 Sem dados de trading ainda. Inicie o auto-trader primeiro.")
+
+    async def cmd_strategies(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show strategy performance ranking."""
+        if not is_authorized(update.effective_user.id):
+            return
+        trader = self.auto_trader
+        if trader and trader.trade_db:
+            report = trader.trade_db.get_strategy_report_for_llm()
+            weights = trader.trade_db.get_strategy_weights()
+            lines = [report, "", "📊 WEIGHTS (auto-learning):"]
+            for s, w in sorted(weights.items(), key=lambda x: x[1], reverse=True):
+                bar_len = int(w * 10)
+                bar = "█" * bar_len + "░" * (10 - bar_len)
+                lines.append(f"  {s}: [{bar}] {w:.2f}x")
+            await self._send(update, "\n".join(lines))
+        else:
+            await self._send(update, "📊 Sem dados. Inicie o auto-trader primeiro.")
+
+    async def cmd_speed(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Set trading speed: /speed fast or /speed normal."""
+        if not is_authorized(update.effective_user.id):
+            return
+        trader = self.auto_trader
+        if not trader:
+            await self._send(update, "❌ Auto-trader não inicializado.")
+            return
+        args = context.args
+        if args and args[0].lower() in ("fast", "normal"):
+            result = trader.set_speed(args[0].lower())
+            await self._send(update, result)
+        else:
+            mode = getattr(trader, 'speed_mode', 'fast')
+            await self._send(update, (
+                f"Modo atual: {mode}\n"
+                f"  ⚡ Fast: {trader.fast_interval_sec}s entre ciclos\n"
+                f"  🔄 Deep: a cada {trader.deep_interval_cycles} fast cycles\n\n"
+                f"Use: /speed fast ou /speed normal"
+            ))
+
+    async def cmd_stoploss(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Set stop-loss: /stoploss 30 (for -30%)."""
+        if not is_authorized(update.effective_user.id):
+            return
+        trader = self.auto_trader
+        if not trader:
+            await self._send(update, "❌ Auto-trader não inicializado.")
+            return
+        args = context.args
+        if args:
+            try:
+                pct = float(args[0])
+                result = trader.set_stop_loss(pct)
+                await self._send(update, result)
+            except ValueError:
+                await self._send(update, "Use: /stoploss 30 (para -30%)")
+        else:
+            await self._send(update, f"📉 Stop-loss atual: -{trader.position_manager.stop_loss_pct}%\nUse: /stoploss 30")
+
+    async def cmd_takeprofit(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Set take-profit: /takeprofit 15 (for +15%)."""
+        if not is_authorized(update.effective_user.id):
+            return
+        trader = self.auto_trader
+        if not trader:
+            await self._send(update, "❌ Auto-trader não inicializado.")
+            return
+        args = context.args
+        if args:
+            try:
+                pct = float(args[0])
+                result = trader.set_take_profit(pct)
+                await self._send(update, result)
+            except ValueError:
+                await self._send(update, "Use: /takeprofit 15 (para +15%)")
+        else:
+            await self._send(update, f"📈 Take-profit atual: +{trader.position_manager.take_profit_pct}%\nUse: /takeprofit 15")
 
     async def _start_auto_goal(self, update: Update, start_amount: float,
                                goal_amount: float, interval_min: int):
@@ -760,6 +855,13 @@ class TelegramPolymarketBot:
         app.add_handler(CommandHandler("trade_status", self.cmd_trade_status))
         app.add_handler(CommandHandler("trade_now", self.cmd_trade_now))
         app.add_handler(CommandHandler("trade_now_live", self.cmd_trade_now_live))
+
+        # v2 commands: stats, strategies, speed, stoploss, takeprofit
+        app.add_handler(CommandHandler("stats", self.cmd_stats))
+        app.add_handler(CommandHandler("strategies", self.cmd_strategies))
+        app.add_handler(CommandHandler("speed", self.cmd_speed))
+        app.add_handler(CommandHandler("stoploss", self.cmd_stoploss))
+        app.add_handler(CommandHandler("takeprofit", self.cmd_takeprofit))
 
         # Inline button callbacks
         app.add_handler(CallbackQueryHandler(self.handle_callback))
