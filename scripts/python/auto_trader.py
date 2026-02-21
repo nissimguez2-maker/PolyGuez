@@ -296,6 +296,9 @@ class AutoTrader:
         # Position manager
         self.position_manager = PositionManager(trade_db=self.trade_db)
 
+        # Blacklist: token_ids whose orderbook no longer exists (expired/resolved markets)
+        self._dead_markets: set = set()
+
         # Config
         self.fast_interval_sec = int(os.getenv("AUTOTRADE_FAST_INTERVAL_SEC", "30"))
         self.deep_interval_cycles = int(os.getenv("AUTOTRADE_DEEP_EVERY_N", "10"))  # deep every N fast cycles
@@ -412,6 +415,11 @@ class AutoTrader:
         for pos in positions:
             size = float(pos.get("size", 0))
             if size <= 0:
+                continue
+
+            # Skip markets whose orderbook no longer exists (expired/resolved)
+            token_id = pos.get("asset", "")
+            if token_id in self._dead_markets:
                 continue
 
             # Record snapshot for trailing stop tracking
@@ -585,6 +593,11 @@ class AutoTrader:
                 f"  [{strategy}] {reasoning[:60]}"
             )
         except Exception as e:
+            error_str = str(e)
+            # Detect expired/resolved markets — blacklist to avoid retrying every cycle
+            if "No orderbook exists" in error_str or "status_code=404" in error_str:
+                self._dead_markets.add(token_id)
+                logger.info(f"Market expired, blacklisted: {market_q[:40]} ({token_id[:20]}...)")
             error_msg = f"❌ {action} ${amount:.2f} @{price} - {e}"
             if self.trade_db:
                 self.trade_db.record_trade(
