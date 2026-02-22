@@ -591,12 +591,23 @@ class StrategyEngine:
         opportunities.sort(key=lambda x: x["potential_return_x"], reverse=True)
         return opportunities
 
-    def run_all_strategies(self, markets: list, strategy_weights: dict = None) -> dict:
+    def run_all_strategies(self, markets: list, strategy_weights: dict = None,
+                           crypto_prices_override: dict = None) -> dict:
         """
         Run all strategies and return a comprehensive signal report.
         Applies dynamic weights from auto-learning if provided.
+
+        If crypto_prices_override is provided (from PriceFeed WebSocket),
+        uses those instead of making HTTP calls — saving ~7s per cycle.
         """
-        crypto_prices = self.crypto_monitor.get_crypto_prices()
+        if crypto_prices_override:
+            crypto_prices = crypto_prices_override
+            # Also update the monitor cache so regime detection works
+            self.crypto_monitor.price_cache = crypto_prices
+            self.crypto_monitor._last_fetch = time.time()
+        else:
+            crypto_prices = self.crypto_monitor.get_crypto_prices()
+
         regime = self.crypto_monitor.detect_market_regime()
 
         results = {

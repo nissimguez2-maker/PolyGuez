@@ -1,20 +1,25 @@
 """
-Auto Trader Module v2 — Continuous Trading Engine with Auto-Learning
+Auto Trader Module v3 — Professional Trading Engine
 
 Architecture:
+  - ARB LOOP  (1-3s): Latency arbitrage on 15-min crypto markets (WebSocket-powered)
   - FAST CYCLE (30s): Position manager + crypto spikes + parity arb → direct execution
-  - DEEP CYCLE (5min): All 6 strategies + LLM analysis → intelligent trades
+  - DEEP CYCLE (5min): All strategies + LLM analysis → intelligent trades
   - AUTO-LEARNING: SQLite tracks every trade, adjusts strategy weights over time
 
-Modes:
-  1. Continuous auto-trading with dual-speed cycles
-  2. Goal-based trading (trade until portfolio hits target)
-  3. Turbo mode (30s cycles only, no LLM, pure strategy signals)
+Key Upgrades (v3):
+  - WebSocket price feed from Binance (real-time, ~100ms latency)
+  - Dedicated ARB loop for latency arbitrage (1-3s cycles)
+  - Parallel HTTP fallback (7x faster than sequential)
+  - Multi-timeframe analysis (1m, 5m, 15m, 1h)
+  - Whale tracking & copy trading signals
+  - Maker orders (0% fee + rebates)
 
 Flow:
-  1. FAST: Check positions → stop-loss/take-profit → crypto spikes → parity arb
-  2. DEEP: Full market scan → strategy engine → LLM analysis → execute trades
-  3. LEARN: Record results → update strategy weights → feedback to next cycle
+  1. ARB:  WebSocket price → detect lag vs Polymarket → instant trade
+  2. FAST: Check positions → stop-loss/take-profit → crypto spikes → parity arb
+  3. DEEP: Full market scan → strategy engine → LLM analysis → execute trades
+  4. LEARN: Record results → update strategy weights → feedback to next cycle
 """
 
 import os
@@ -296,8 +301,44 @@ class AutoTrader:
         # Position manager
         self.position_manager = PositionManager(trade_db=self.trade_db)
 
+        # Real-time price feed (WebSocket + parallel HTTP)
+        try:
+            from scripts.python.price_feed import PriceFeed
+            self.price_feed = PriceFeed()
+            logger.info("PriceFeed initialized (WebSocket + parallel HTTP)")
+        except ImportError:
+            try:
+                from price_feed import PriceFeed
+                self.price_feed = PriceFeed()
+                logger.info("PriceFeed initialized (relative import)")
+            except ImportError:
+                self.price_feed = None
+                logger.warning("PriceFeed not available — using legacy sequential HTTP")
+
+        # Whale tracker
+        try:
+            from scripts.python.whale_tracker import WhaleTracker
+            self.whale_tracker = WhaleTracker()
+            logger.info("WhaleTracker initialized")
+        except ImportError:
+            try:
+                from whale_tracker import WhaleTracker
+                self.whale_tracker = WhaleTracker()
+            except ImportError:
+                self.whale_tracker = None
+
         # Blacklist: token_ids whose orderbook no longer exists (expired/resolved markets)
         self._dead_markets: set = set()
+
+        # ARB loop state
+        self._arb_task: Optional[asyncio.Task] = None
+        self._arb_interval_sec: float = float(os.getenv("AUTOTRADE_ARB_INTERVAL_SEC", "2"))
+        self._arb_markets_cache: dict = {}  # {token_id: market_data} for 15-min markets
+        self._arb_last_market_refresh: float = 0
+        self._arb_market_refresh_interval: float = 60.0  # refresh 15-min market list every 60s
+        self._arb_trades_count: int = 0
+        self._arb_opportunities_found: int = 0
+        self._arb_opportunities_executed: int = 0
 
         # Config
         self.fast_interval_sec = int(os.getenv("AUTOTRADE_FAST_INTERVAL_SEC", "30"))
@@ -865,9 +906,14 @@ class AutoTrader:
         )
 
         # Strategy engine (reuses raw_markets already fetched above — no duplicate API call)
+        # Use PriceFeed cached prices if available (instant, no HTTP round-trips)
+        cached_prices = self.price_feed.get_prices() if self.price_feed else None
+
         if self.strategy_engine and raw_markets:
             try:
-                strategy_results = self.strategy_engine.run_all_strategies(raw_markets)
+                strategy_results = self.strategy_engine.run_all_strategies(
+                    raw_markets, crypto_prices_override=cached_prices
+                )
                 context["strategy_signals"] = {
                     "latency_arbitrage": strategy_results.get("latency_arbitrage", [])[:5],
                     "parity_arbitrage": strategy_results.get("parity_arbitrage", [])[:5],
@@ -879,6 +925,15 @@ class AutoTrader:
                 context["crypto_prices"] = strategy_results.get("crypto_prices", {})
             except Exception as e:
                 logger.error(f"Strategy engine error: {e}")
+
+        # Whale signals (if tracker available)
+        if self.whale_tracker:
+            try:
+                whale_signals = self.whale_tracker.get_signals()
+                if whale_signals:
+                    context["whale_signals"] = whale_signals
+            except Exception:
+                pass
 
         # Open orders
         try:
@@ -998,8 +1053,16 @@ class AutoTrader:
                 ) or []
 
                 if raw_markets:
+                    # Use PriceFeed's cached prices if available (instant, no HTTP)
+                    cached_prices = self.price_feed.get_prices() if self.price_feed else None
+
                     strategy_results = await self._with_timeout(
-                        loop.run_in_executor(None, lambda: self.strategy_engine.run_all_strategies(raw_markets)),
+                        loop.run_in_executor(
+                            None,
+                            lambda: self.strategy_engine.run_all_strategies(
+                                raw_markets, crypto_prices_override=cached_prices
+                            )
+                        ),
                         timeout_sec=20, default={}, label="strategy_scan"
                     ) or {}
 
@@ -1137,6 +1200,57 @@ class AutoTrader:
                             extra += f"    confidence: {s['confidence']}\n"
             extra += "\n"
 
+        # Few-shot learning: recent winning trades as examples
+        if self.trade_db:
+            try:
+                recent_wins = self.trade_db.get_recent_winning_trades(limit=5)
+                if recent_wins:
+                    extra += "EXEMPLOS DE TRADES QUE DERAM CERTO (use como referência):\n"
+                    for w in recent_wins:
+                        extra += (
+                            f"  ✅ {w.get('action', '')} '{w.get('market', '')[:40]}' "
+                            f"@{w.get('entry_price', 0):.2f} → PnL: ${w.get('pnl', 0):+.2f} "
+                            f"({w.get('strategy', '')})\n"
+                        )
+                    extra += "\n"
+            except Exception:
+                pass  # trade_db may not have this method yet
+
+        # Multi-timeframe data
+        if self.price_feed:
+            prices = self.price_feed.get_prices()
+            if prices:
+                extra += "MULTI-TIMEFRAME CRYPTO (via WebSocket real-time):\n"
+                for sym in ["BTC", "ETH", "SOL", "DOGE", "XRP"]:
+                    p = prices.get(sym, {})
+                    if p:
+                        extra += (
+                            f"  {sym}: ${p.get('price', 0):,.0f} "
+                            f"1m:{p.get('change_1m', 0):+.2f}% "
+                            f"5m:{p.get('change_5m', 0):+.2f}% "
+                            f"15m:{p.get('change_15m', 0):+.2f}% "
+                            f"1h:{p.get('change_1h', 0):+.2f}%\n"
+                        )
+                regime = self.price_feed.detect_market_regime()
+                extra += f"  Regime: {regime['description']}\n\n"
+
+        # Whale signals
+        if self.whale_tracker:
+            whale_signals = self.whale_tracker.get_signals()
+            if whale_signals:
+                extra += "🐋 SINAIS DE WHALES (últimos 10 min):\n"
+                for ws in whale_signals[-5:]:
+                    if ws["type"] == "CONSENSUS":
+                        extra += (
+                            f"  🐋🐋 CONSENSUS: {ws['bet_count']} whales em '{ws['title'][:40]}' "
+                            f"outcome={ws.get('outcome', '')} (${ws['total_size']:,.0f})\n"
+                        )
+                    elif ws["type"] == "NEW_POSITION":
+                        extra += (
+                            f"  🆕 {ws['whale']}: ${ws['size']:,.0f} em '{ws['title'][:40]}'\n"
+                        )
+                extra += "\n"
+
         # Goal mode
         if self.goal_mode:
             portfolio_value = await self._get_portfolio_value()
@@ -1260,14 +1374,229 @@ class AutoTrader:
 
     # ─── Main Loop ───
 
+    # ─── ARB Loop (1-3s latency arbitrage) ───
+
+    async def _refresh_arb_markets(self):
+        """Refresh the list of 15-min crypto markets for arb scanning."""
+        now = time.time()
+        if now - self._arb_last_market_refresh < self._arb_market_refresh_interval and self._arb_markets_cache:
+            return
+
+        try:
+            loop = asyncio.get_event_loop()
+            raw_markets = await self._with_timeout(
+                loop.run_in_executor(None, lambda: self.agent.gamma.get_markets(
+                    querystring_params={"active": True, "closed": False,
+                                        "limit": 100, "order": "volume", "ascending": False}
+                )),
+                timeout_sec=10, default=[], label="arb_market_refresh"
+            ) or []
+
+            import json as _json
+            cache = {}
+            time_keywords = ["15 min", "15-min", "minute", "5 min", "5-min"]
+            crypto_map = {
+                "BTC": ["bitcoin", "btc"], "ETH": ["ethereum", "eth"],
+                "SOL": ["solana", "sol"], "DOGE": ["dogecoin", "doge"],
+                "XRP": ["xrp", "ripple"], "AVAX": ["avalanche", "avax"],
+                "LINK": ["chainlink", "link"],
+            }
+
+            for m in raw_markets:
+                q = m.get("question", "").lower()
+                if not any(kw in q for kw in time_keywords):
+                    continue
+
+                matched_crypto = None
+                for symbol, keywords in crypto_map.items():
+                    if any(kw in q for kw in keywords):
+                        matched_crypto = symbol
+                        break
+                if not matched_crypto:
+                    continue
+
+                token_ids = m.get("clobTokenIds", "")
+                if isinstance(token_ids, str):
+                    try:
+                        token_ids = _json.loads(token_ids)
+                    except:
+                        continue
+                prices = m.get("outcomePrices", "")
+                if isinstance(prices, str):
+                    try:
+                        prices = _json.loads(prices)
+                    except:
+                        continue
+
+                if len(token_ids) >= 2 and len(prices) >= 2:
+                    is_up = any(kw in q for kw in ["up", "above", "higher", "increase", "rise"])
+                    is_down = any(kw in q for kw in ["down", "below", "lower", "decrease", "drop", "fall"])
+
+                    for tid in token_ids:
+                        if tid in self._dead_markets:
+                            continue
+                    cache[token_ids[0]] = {
+                        "question": m.get("question", ""),
+                        "crypto": matched_crypto,
+                        "is_up_market": is_up,
+                        "is_down_market": is_down,
+                        "yes_token": token_ids[0],
+                        "no_token": token_ids[1],
+                        "yes_price": float(prices[0]),
+                        "no_price": float(prices[1]),
+                    }
+
+            self._arb_markets_cache = cache
+            self._arb_last_market_refresh = now
+            if cache:
+                logger.info(f"ARB: Refreshed {len(cache)} 15-min crypto markets")
+        except Exception as e:
+            logger.error(f"ARB market refresh error: {e}")
+
+    async def _arb_loop(self):
+        """High-frequency arbitrage loop (1-3s). Detects Binance vs Polymarket price lag."""
+        logger.info(f"ARB loop started (interval: {self._arb_interval_sec}s)")
+
+        while self.running:
+            try:
+                # Refresh market list periodically
+                await self._refresh_arb_markets()
+
+                if not self._arb_markets_cache or not self.price_feed:
+                    await asyncio.sleep(self._arb_interval_sec)
+                    continue
+
+                # Get real-time prices from WebSocket feed
+                prices = self.price_feed.get_prices()
+                if not prices:
+                    await asyncio.sleep(self._arb_interval_sec)
+                    continue
+
+                # Scan each 15-min market for latency arb
+                for _token_id, market in self._arb_markets_cache.items():
+                    crypto = market["crypto"]
+                    price_data = prices.get(crypto)
+                    if not price_data:
+                        continue
+
+                    change_1m = price_data.get("change_1m", 0)
+                    change_5m = price_data.get("change_5m", 0)
+                    is_up = market["is_up_market"]
+                    is_down = market["is_down_market"]
+
+                    # Detect strong directional signal
+                    signal = None
+                    confidence = 0
+
+                    if is_up:
+                        if change_1m > 0.5 and market["yes_price"] < 0.70:
+                            signal = "BUY"
+                            token_id = market["yes_token"]
+                            price = market["yes_price"]
+                            confidence = min(0.98, 0.65 + abs(change_1m) * 0.15)
+                        elif change_1m < -0.5 and market["no_price"] < 0.70:
+                            signal = "BUY"
+                            token_id = market["no_token"]
+                            price = market["no_price"]
+                            confidence = min(0.98, 0.65 + abs(change_1m) * 0.15)
+                    elif is_down:
+                        if change_1m < -0.5 and market["yes_price"] < 0.70:
+                            signal = "BUY"
+                            token_id = market["yes_token"]
+                            price = market["yes_price"]
+                            confidence = min(0.98, 0.65 + abs(change_1m) * 0.15)
+                        elif change_1m > 0.5 and market["no_price"] < 0.70:
+                            signal = "BUY"
+                            token_id = market["no_token"]
+                            price = market["no_price"]
+                            confidence = min(0.98, 0.65 + abs(change_1m) * 0.15)
+
+                    # Boost with 5m momentum confirmation
+                    if signal and change_5m:
+                        same_direction = (
+                            (change_1m > 0 and change_5m > 0.3) or
+                            (change_1m < 0 and change_5m < -0.3)
+                        )
+                        if same_direction:
+                            confidence = min(0.99, confidence + 0.1)
+
+                    if signal and confidence >= 0.85 and not self.dry_run:
+                        self._arb_opportunities_found += 1
+
+                        # Adjust amount for balance
+                        amount = 2.0  # default arb bet
+                        balance = self._cached_balance
+                        amount = self._adjust_amount_for_balance(amount, balance)
+                        if amount <= 0:
+                            continue
+
+                        trade = {
+                            "action": signal,
+                            "token_id": token_id,
+                            "amount": amount,
+                            "price": price,
+                            "market_question": market["question"][:60],
+                            "strategy": "ARB_LATENCY",
+                        }
+
+                        result = await self._with_timeout(
+                            self._execute_trade(trade),
+                            timeout_sec=10, default="❌ ARB timeout", label="arb_trade"
+                        )
+
+                        self._arb_trades_count += 1
+                        self._arb_opportunities_executed += 1
+                        logger.info(f"⚡ ARB TRADE: {crypto} {change_1m:+.2f}% → {result}")
+
+                        # Notify (non-blocking)
+                        asyncio.create_task(self._notify(
+                            f"⚡ ARB: {crypto} {change_1m:+.2f}%/1m → {signal} ${amount:.2f} @{price:.2f}\n"
+                            f"  {market['question'][:50]}\n  {result}"
+                        ))
+
+                await asyncio.sleep(self._arb_interval_sec)
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"ARB loop error: {e}")
+                await asyncio.sleep(5)
+
+        logger.info("ARB loop stopped")
+
     async def _loop(self):
-        """Dual-speed trading loop with auto-restart on failure.
+        """Triple-speed trading loop with auto-restart on failure.
+
+        - ARB loop: 1-3s (latency arbitrage via WebSocket)
+        - FAST cycle: 30s (position management + quick strategies)
+        - DEEP cycle: every N fast cycles (LLM + full analysis)
 
         Automatically restarts on unhandled exceptions with 30s backoff.
         Gives up after 50 consecutive restarts.
         """
         restart_count = 0
         max_restarts = 50
+
+        # Start price feed
+        if self.price_feed:
+            try:
+                await self.price_feed.start()
+                logger.info("PriceFeed started successfully")
+            except Exception as e:
+                logger.error(f"PriceFeed start failed: {e}")
+
+        # Start whale tracker
+        if self.whale_tracker:
+            try:
+                await self.whale_tracker.start()
+                logger.info("WhaleTracker started")
+            except Exception as e:
+                logger.error(f"WhaleTracker start failed: {e}")
+
+        # Start ARB loop
+        if self.price_feed and not self.dry_run:
+            self._arb_task = asyncio.create_task(self._arb_loop())
+            logger.info("ARB loop task created")
 
         while self.running and restart_count < max_restarts:
             try:
@@ -1307,6 +1636,17 @@ class AutoTrader:
                     pass  # don't let notification failure prevent restart
                 await asyncio.sleep(30)  # backoff before restart
 
+        # Cleanup
+        if self._arb_task and not self._arb_task.done():
+            self._arb_task.cancel()
+        if self.price_feed:
+            await self.price_feed.stop()
+        if self.whale_tracker:
+            try:
+                await self.whale_tracker.stop()
+            except Exception:
+                pass
+
         self.running = False
         if restart_count >= max_restarts:
             logger.error(f"Auto-trader stopped after {max_restarts} restarts.")
@@ -1329,14 +1669,24 @@ class AutoTrader:
         deep_sec = self.fast_interval_sec * self.deep_interval_cycles
 
         msg_lines = [
-            f"🤖 Auto-trader v2 INICIADO [{mode}]",
+            f"🤖 Auto-trader v3 INICIADO [{mode}]",
             f"  ⚡ Fast: a cada {self.fast_interval_sec}s (posições + arbs)",
             f"  🔄 Deep: a cada {deep_sec}s (LLM + todas estratégias)",
+        ]
+
+        if self.price_feed and not self.dry_run:
+            msg_lines.append(f"  📡 ARB: a cada {self._arb_interval_sec}s (latency arb via WebSocket)")
+
+        if self.whale_tracker:
+            wc = self.whale_tracker.get_whale_count()
+            msg_lines.append(f"  🐋 Whales: {wc} monitorados")
+
+        msg_lines.extend([
             f"  💰 Max/trade: ${self.max_trade_amount}",
             f"  📊 Max trades/ciclo: {self.max_trades_per_cycle}",
             f"  📉 Stop-loss: -{self.position_manager.stop_loss_pct}%",
             f"  📈 Take-profit: +{self.position_manager.take_profit_pct}%",
-        ]
+        ])
 
         if self.goal_mode:
             msg_lines.extend([
@@ -1369,15 +1719,19 @@ class AutoTrader:
         return await self.start()
 
     async def stop(self):
-        """Stop the auto-trading loop."""
+        """Stop the auto-trading loop and all sub-loops."""
         if not self.running:
             return "Auto-trader não está rodando."
 
         self.running = False
         self.goal_mode = False
-        if self._task:
-            self._task.cancel()
-            self._task = None
+
+        # Cancel all tasks
+        for task in [self._task, self._arb_task]:
+            if task and not task.done():
+                task.cancel()
+        self._task = None
+        self._arb_task = None
 
         stats = ""
         if self.trade_db:
@@ -1387,11 +1741,15 @@ class AutoTrader:
                 f"PnL:${s['total_pnl']:+.2f}"
             )
 
+        arb_stats = ""
+        if self._arb_trades_count > 0:
+            arb_stats = f"\n  ⚡ ARB: {self._arb_trades_count} trades, {self._arb_opportunities_found} opp found"
+
         msg = (
             f"🛑 Auto-trader PARADO\n"
             f"  Deep: {self.cycle_count} | Fast: {self.fast_cycle_count}\n"
             f"  Auto: {self.auto_trades_count} | LLM: {self.llm_trades_count}"
-            f"{stats}"
+            f"{arb_stats}{stats}"
         )
         await self._notify(msg)
         return msg
@@ -1405,13 +1763,20 @@ class AutoTrader:
         # Bet tier info
         max_bet, tier_label = self._get_bet_tier(self._cached_balance)
 
+        # Price feed status
+        pf_status = "🔴 OFF"
+        if self.price_feed:
+            pf_status = "🟢 WS" if self.price_feed.is_connected else "🟡 HTTP"
+
         lines = [
-            f"🤖 Auto-Trader v2: {status} [{mode}]",
+            f"🤖 Auto-Trader v3: {status} [{mode}]",
             f"  💰 Saldo: ${self._cached_balance:.2f} → {tier_label} (max ${max_bet:.2f}/trade)",
-            f"  ⚡ Fast: {self.fast_interval_sec}s | 🔄 Deep: {deep_sec}s",
+            f"  ⚡ Fast: {self.fast_interval_sec}s | 🔄 Deep: {deep_sec}s | 📡 ARB: {self._arb_interval_sec}s",
+            f"  📡 PriceFeed: {pf_status} | 🐋 Whales: {self.whale_tracker.get_whale_count() if self.whale_tracker else 0}",
             f"  📉 SL: -{self.position_manager.stop_loss_pct}% | 📈 TP: +{self.position_manager.take_profit_pct}%",
             f"  Ciclos: {self.cycle_count} deep + {self.fast_cycle_count} fast",
-            f"  Trades: {self.auto_trades_count} auto + {self.llm_trades_count} LLM",
+            f"  Trades: {self.auto_trades_count} auto + {self.llm_trades_count} LLM + {self._arb_trades_count} arb",
+            f"  ARB: {self._arb_opportunities_found} found → {self._arb_opportunities_executed} exec | {len(self._arb_markets_cache)} markets",
         ]
 
         if self.goal_mode:

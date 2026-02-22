@@ -371,6 +371,11 @@ class TelegramPolymarketBot:
             await self._send(update, "❌ Failed to initialize auto-trader.")
             return
 
+        # If already running, restart it fresh
+        if trader.running:
+            await trader.stop()
+            await self._send(update, "🔄 Restarting auto-trader...")
+
         # Start LIVE immediately — no confirmation needed
         trader.set_dry_run(False)
         await self._send(
@@ -555,6 +560,108 @@ class TelegramPolymarketBot:
                 await self._send(update, "Use: /takeprofit 15 (para +15%)")
         else:
             await self._send(update, f"📈 Take-profit atual: +{trader.position_manager.take_profit_pct}%\nUse: /takeprofit 15")
+
+    # ─── v3 Commands ───
+
+    async def cmd_dashboard(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Full trading dashboard: /dashboard."""
+        if not is_authorized(update.effective_user.id):
+            return
+        trader = self.auto_trader
+        if not trader:
+            await self._send(update, "❌ Auto-trader não inicializado.")
+            return
+
+        status = await trader.get_status()
+
+        # Add price feed info
+        if trader.price_feed:
+            prices = trader.price_feed.get_prices()
+            if prices:
+                parts = []
+                for sym in ["BTC", "ETH", "SOL"]:
+                    p = prices.get(sym, {})
+                    price = p.get("price", 0)
+                    c1m = p.get("change_1m", 0)
+                    c15m = p.get("change_15m", 0)
+                    c1h = p.get("change_1h", 0)
+                    arrow = "🟢" if c1m > 0 else "🔴"
+                    parts.append(f"{arrow}{sym} ${price:,.0f} 1m:{c1m:+.2f}% 15m:{c15m:+.2f}% 1h:{c1h:+.2f}%")
+                status += "\n\n💹 PRICES (live):\n" + "\n".join(parts)
+
+                # Show regime
+                regime = trader.price_feed.detect_market_regime()
+                status += f"\n📊 Regime: {regime['description']}"
+
+        await self._send(update, status)
+
+    async def cmd_whales(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show whale tracking: /whales."""
+        if not is_authorized(update.effective_user.id):
+            return
+        trader = self.auto_trader
+        if not trader or not trader.whale_tracker:
+            await self._send(update, "🐋 Whale tracker não ativo.")
+            return
+
+        wt = trader.whale_tracker
+        signals = wt.get_recent_moves(15)
+
+        lines = [f"🐋 WHALE TRACKER ({wt.get_whale_count()} wallets)"]
+        if not signals:
+            lines.append("Nenhum movimento recente.")
+        else:
+            for s in signals[-10:]:
+                stype = s.get("type", "")
+                if stype == "CONSENSUS":
+                    lines.append(
+                        f"🐋🐋 CONSENSUS: {s['bet_count']} whales em '{s['title'][:40]}' "
+                        f"(${s['total_size']:,.0f})"
+                    )
+                elif stype == "NEW_POSITION":
+                    lines.append(
+                        f"🆕 {s['whale']}: ${s['size']:,.0f} em '{s['title'][:40]}'"
+                    )
+                elif stype == "SIZE_INCREASE":
+                    lines.append(
+                        f"📈 {s['whale']}: ${s['old_size']:,.0f}→${s['new_size']:,.0f} em '{s['title'][:35]}'"
+                    )
+                elif stype == "EXIT":
+                    lines.append(
+                        f"🚪 {s['whale']}: saiu de '{s['title'][:40]}' (${s['size']:,.0f})"
+                    )
+
+        await self._send(update, "\n".join(lines))
+
+    async def cmd_arb(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show ARB loop status: /arb."""
+        if not is_authorized(update.effective_user.id):
+            return
+        trader = self.auto_trader
+        if not trader:
+            await self._send(update, "❌ Auto-trader não inicializado.")
+            return
+
+        lines = [
+            f"⚡ ARB LOOP STATUS",
+            f"  Interval: {trader._arb_interval_sec}s",
+            f"  15-min markets: {len(trader._arb_markets_cache)}",
+            f"  Opp found: {trader._arb_opportunities_found}",
+            f"  Opp executed: {trader._arb_opportunities_executed}",
+            f"  Total trades: {trader._arb_trades_count}",
+        ]
+
+        if trader.price_feed:
+            lines.append(f"  PriceFeed: {'🟢 WS' if trader.price_feed.is_connected else '🟡 HTTP'}")
+
+        # Show current 15-min markets being monitored
+        if trader._arb_markets_cache:
+            lines.append(f"\n📡 Markets monitorados:")
+            for _tid, m in list(trader._arb_markets_cache.items())[:8]:
+                lines.append(f"  • {m['crypto']}: {m['question'][:50]}")
+                lines.append(f"    YES:{m['yes_price']:.2f} NO:{m['no_price']:.2f}")
+
+        await self._send(update, "\n".join(lines))
 
     async def _start_auto_goal(self, update: Update, start_amount: float,
                                goal_amount: float, interval_min: int):
@@ -851,6 +958,11 @@ class TelegramPolymarketBot:
         app.add_handler(CommandHandler("speed", self.cmd_speed))
         app.add_handler(CommandHandler("stoploss", self.cmd_stoploss))
         app.add_handler(CommandHandler("takeprofit", self.cmd_takeprofit))
+
+        # v3 commands: dashboard, whales, arb
+        app.add_handler(CommandHandler("dashboard", self.cmd_dashboard))
+        app.add_handler(CommandHandler("whales", self.cmd_whales))
+        app.add_handler(CommandHandler("arb", self.cmd_arb))
 
         # Inline button callbacks
         app.add_handler(CallbackQueryHandler(self.handle_callback))

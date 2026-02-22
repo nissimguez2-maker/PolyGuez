@@ -452,6 +452,23 @@ class TradeDB:
         finally:
             conn.close()
 
+    def get_recent_winning_trades(self, limit: int = 5) -> list:
+        """Get recent winning trades for few-shot LLM learning."""
+        conn = self._get_conn()
+        try:
+            rows = conn.execute(
+                """SELECT action, market_question as market, price as entry_price,
+                          pnl, strategy, timestamp
+                   FROM trades
+                   WHERE is_exit = 1 AND status = 'EXECUTED' AND pnl > 0
+                   ORDER BY timestamp DESC
+                   LIMIT ?""",
+                (limit,)
+            ).fetchall()
+            return [dict(r) for r in rows]
+        finally:
+            conn.close()
+
     def get_entry_trade_for_token(self, token_id: str) -> Optional[dict]:
         """Get the most recent BUY entry for a token (for matching exits)."""
         conn = self._get_conn()
