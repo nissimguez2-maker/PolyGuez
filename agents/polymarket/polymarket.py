@@ -11,7 +11,12 @@ from dotenv import load_dotenv
 
 from web3 import Web3
 from web3.constants import MAX_INT
-from web3.middleware import geth_poa_middleware
+
+# web3 v7 renamed the middleware
+try:
+    from web3.middleware import ExtraDataToPOAMiddleware as poa_middleware
+except ImportError:
+    from web3.middleware import geth_poa_middleware as poa_middleware
 
 import httpx
 from py_clob_client.client import ClobClient
@@ -44,7 +49,7 @@ class Polymarket:
 
         self.chain_id = 137  # POLYGON
         self.private_key = os.getenv("POLYGON_WALLET_PRIVATE_KEY")
-        self.polygon_rpc = "https://polygon-rpc.com"
+        self.polygon_rpc = "https://polygon-bor-rpc.publicnode.com"
         self.w3 = Web3(Web3.HTTPProvider(self.polygon_rpc))
 
         self.exchange_address = "0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e"
@@ -57,7 +62,8 @@ class Polymarket:
         self.ctf_address = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 
         self.web3 = Web3(Web3.HTTPProvider(self.polygon_rpc))
-        self.web3.middleware_onion.inject(geth_poa_middleware, layer=0)
+        if poa_middleware:
+            self.web3.middleware_onion.inject(poa_middleware, layer=0)
 
         self.usdc = self.web3.eth.contract(
             address=self.usdc_address, abi=self.erc20_approve
@@ -70,12 +76,21 @@ class Polymarket:
         self._init_approvals(False)
 
     def _init_api_keys(self) -> None:
+        # Check if using a proxy wallet (funder)
+        proxy_address = os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+        funder = proxy_address if proxy_address else None
+        # signature_type=1 (POLY_PROXY) when using proxy wallet, 0 (EOA) otherwise
+        sig_type = 1 if funder else 0
+
         self.client = ClobClient(
-            self.clob_url, key=self.private_key, chain_id=self.chain_id
+            self.clob_url,
+            key=self.private_key,
+            chain_id=self.chain_id,
+            funder=funder,
+            signature_type=sig_type,
         )
         self.credentials = self.client.create_or_derive_api_creds()
         self.client.set_api_creds(self.credentials)
-        # print(self.credentials)
 
     def _init_approvals(self, run: bool = False) -> None:
         if not run:
@@ -334,28 +349,116 @@ class Polymarket:
         return order
 
     def execute_order(self, price, size, side, token_id) -> str:
+        """Place a GTC limit order."""
         return self.client.create_and_post_order(
             OrderArgs(price=price, size=size, side=side, token_id=token_id)
         )
 
-    def execute_market_order(self, market, amount) -> str:
-        token_id = ast.literal_eval(market[0].dict()["metadata"]["clob_token_ids"])[1]
+    def execute_market_buy(self, token_id: str, amount: float) -> str:
+        """Execute a FOK (Fill or Kill) market order - fills immediately or cancels.
+
+        Args:
+            token_id: The CLOB token ID
+            amount: Amount in USDC to spend
+        """
         order_args = MarketOrderArgs(
             token_id=token_id,
             amount=amount,
         )
         signed_order = self.client.create_market_order(order_args)
-        print("Execute market order... signed_order ", signed_order)
         resp = self.client.post_order(signed_order, orderType=OrderType.FOK)
-        print(resp)
-        print("Done!")
         return resp
 
+    def execute_aggressive_order(self, token_id: str, side: str, amount: float) -> str:
+        """Place an aggressive limit order that crosses the spread for fast fill.
+
+        Reads the orderbook and places the order at the best available price
+        to maximize chance of immediate fill.
+
+        Args:
+            token_id: The CLOB token ID
+            side: 'BUY' or 'SELL'
+            amount: Amount in USDC to spend (for BUY) or shares to sell (for SELL)
+        """
+        ob = self.get_orderbook(token_id)
+
+        if side.upper() == "BUY":
+            # Buy at the best ask price (cross the spread)
+            if ob.asks and len(ob.asks) > 0:
+                best_ask = float(ob.asks[0].price)
+                # Use the ask price to guarantee fill
+                price = best_ask
+            else:
+                # No asks, use 0.99 as max
+                price = 0.99
+
+            size = round(amount / price, 2)
+            if size < 5:
+                size = 5
+        else:
+            # Sell at the best bid price (cross the spread)
+            if ob.bids and len(ob.bids) > 0:
+                best_bid = float(ob.bids[0].price)
+                price = best_bid
+            else:
+                price = 0.01
+
+            size = amount  # For sells, amount IS the number of shares
+
+        return self.client.create_and_post_order(
+            OrderArgs(price=price, size=size, side=side.upper(), token_id=token_id)
+        )
+
     def get_usdc_balance(self) -> float:
+        """Get USDC balance. Checks proxy wallet first, then EOA."""
+        proxy_address = os.getenv("POLYMARKET_WALLET_ADDRESS", "")
+        if proxy_address:
+            try:
+                proxy_checksum = Web3.to_checksum_address(proxy_address)
+                balance_res = self.usdc.functions.balanceOf(proxy_checksum).call()
+                return float(balance_res / 1e6)
+            except Exception:
+                pass
+        # Fallback to EOA
         balance_res = self.usdc.functions.balanceOf(
             self.get_address_for_private_key()
         ).call()
-        return float(balance_res / 10e5)
+        return float(balance_res / 1e6)
+
+    def get_positions(self, limit: int = 100, sort_by: str = "CURRENT") -> list:
+        """Fetch open positions from the Polymarket Data API."""
+        address = self.get_address_for_private_key()
+        params = {
+            "user": address,
+            "sizeThreshold": 0,
+            "limit": limit,
+            "sortBy": sort_by,
+            "sortDirection": "DESC",
+        }
+        res = httpx.get("https://data-api.polymarket.com/positions", params=params)
+        if res.status_code == 200:
+            return res.json()
+        return []
+
+    def get_open_orders(self, market: str = None, asset_id: str = None) -> list:
+        """Fetch open orders from the CLOB."""
+        params = {}
+        if market:
+            params["market"] = market
+        if asset_id:
+            params["asset_id"] = asset_id
+        try:
+            return self.client.get_orders(**params) if params else self.client.get_orders()
+        except Exception:
+            return []
+
+    def cancel_order(self, order_id: str) -> dict:
+        """Cancel a single order."""
+        return self.client.cancel(order_id)
+
+    def cancel_all_orders(self) -> dict:
+        """Cancel all open orders."""
+        return self.client.cancel_all()
 
 
 def test():
@@ -457,7 +560,7 @@ if __name__ == "__main__":
     
     """
 
-    # https://polygon-rpc.com
+    # https://polygon-bor-rpc.publicnode.com
 
     test_market_token_id = (
         "101669189743438912873361127612589311253202068943959811456820079057046819967115"
