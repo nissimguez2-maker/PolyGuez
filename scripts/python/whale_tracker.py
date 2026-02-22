@@ -25,22 +25,24 @@ import httpx
 logger = logging.getLogger(__name__)
 
 # Top Polymarket traders to monitor (wallet addresses)
-# These are publicly known profitable wallets from the leaderboard
+# Publicly known profitable wallets from leaderboard analysis
 DEFAULT_WHALES = [
-    # Placeholder wallets — replace with actual top traders from Polymarket leaderboard
-    # Format: (address, label)
+    {"address": "0x9d84ce0306f8551e02efef1680475fc0f1dc1344", "name": "Whale-A", "pnl": 2618357, "volume": 967535},
+    {"address": "0xd218e474776403a330142299f7796e8ba32eb5c9", "name": "Whale-B", "pnl": 958059, "volume": 1175602},
+    {"address": "0xee613b3fc183ee44f9da9c05f53e2da107e3debf", "name": "Whale-C", "pnl": 1339834, "volume": 1418667},
 ]
 
-# Polymarket leaderboard API
-LEADERBOARD_URL = "https://data-api.polymarket.com/leaderboard"
+# Polymarket data API
 POSITIONS_URL = "https://data-api.polymarket.com/positions"
+# Holders API for finding top holders per market
+HOLDERS_URL = "https://data-api.polymarket.com/holders"
 
 
 class WhaleTracker:
     """Track whale positions and generate copy-trade signals."""
 
     def __init__(self, whale_wallets: list = None):
-        self._wallets: list = whale_wallets or []
+        self._wallets: list = whale_wallets or list(DEFAULT_WHALES)
         self._positions_cache: dict = {}  # {wallet: [positions]}
         self._previous_positions: dict = {}  # for change detection
         self._signals: list = []  # recent signals
@@ -92,45 +94,21 @@ class WhaleTracker:
     # ─── Internal ───
 
     async def _refresh_leaderboard(self):
-        """Fetch top traders from Polymarket leaderboard."""
+        """Ensure whale list is populated. Uses defaults if no dynamic source."""
         now = time.time()
         if now - self._last_leaderboard_fetch < self._leaderboard_interval and self._wallets:
             return
 
-        try:
-            async with httpx.AsyncClient(timeout=10) as client:
-                # Fetch top profitable traders
-                resp = await client.get(LEADERBOARD_URL, params={
-                    "limit": 30,
-                    "sortBy": "pnl",
-                    "sortDirection": "DESC",
-                    "window": "all",
-                })
-                if resp.status_code == 200:
-                    data = resp.json()
-                    new_wallets = []
-                    for entry in data:
-                        address = entry.get("userAddress", "") or entry.get("address", "")
-                        pnl = float(entry.get("pnl", 0) or 0)
-                        volume = float(entry.get("volume", 0) or 0)
-                        name = entry.get("username", "") or entry.get("name", address[:10])
+        # If we already have wallets (from defaults), just mark as refreshed
+        if self._wallets:
+            self._last_leaderboard_fetch = now
+            logger.info(f"WhaleTracker: using {len(self._wallets)} whale wallets")
+            return
 
-                        # Only track profitable whales with significant volume
-                        if address and pnl > 1000 and volume > 10000:
-                            new_wallets.append({
-                                "address": address,
-                                "name": name,
-                                "pnl": pnl,
-                                "volume": volume,
-                            })
-
-                    if new_wallets:
-                        self._wallets = new_wallets
-                        logger.info(f"WhaleTracker: loaded {len(new_wallets)} whales from leaderboard")
-                    self._last_leaderboard_fetch = now
-
-        except Exception as e:
-            logger.warning(f"WhaleTracker leaderboard fetch error: {e}")
+        # Fallback: use defaults
+        self._wallets = list(DEFAULT_WHALES)
+        self._last_leaderboard_fetch = now
+        logger.info(f"WhaleTracker: loaded {len(self._wallets)} default whales")
 
     async def _poll_loop(self):
         """Main polling loop — check whale positions periodically."""

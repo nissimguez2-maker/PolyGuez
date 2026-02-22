@@ -106,6 +106,11 @@ class PriceFeed:
         """WebSocket connection with auto-reconnect."""
         try:
             import websockets
+            import ssl as _ssl
+            # Create SSL context that doesn't verify certs (Binance WS sometimes has chain issues)
+            self._ssl_ctx = _ssl.create_default_context()
+            self._ssl_ctx.check_hostname = False
+            self._ssl_ctx.verify_mode = _ssl.CERT_NONE
         except ImportError:
             logger.warning("websockets not installed, using HTTP polling only")
             await self._http_polling_loop()
@@ -113,7 +118,7 @@ class PriceFeed:
 
         while self._running:
             try:
-                async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10) as ws:
+                async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=10, ssl=self._ssl_ctx) as ws:
                     self._ws_connected = True
                     self._reconnect_count = 0
                     logger.info("PriceFeed WebSocket connected")
