@@ -376,7 +376,7 @@ class AutoTrader:
         """Get USDC balance from on-chain (Polygon)."""
         try:
             from web3 import Web3
-            w3 = Web3(Web3.HTTPProvider("https://polygon-bor-rpc.publicnode.com"))
+            w3 = Web3(Web3.HTTPProvider("https://polygon-bor-rpc.publicnode.com", request_kwargs={"timeout": 10}))
             wallet = Web3.to_checksum_address(self.agent.wallet_address)
             usdc_address = Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
             abi = '[{"inputs":[{"internalType":"address","name":"account","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]'
@@ -432,7 +432,7 @@ class AutoTrader:
         total = 0.0
         try:
             from web3 import Web3
-            w3 = Web3(Web3.HTTPProvider("https://polygon-bor-rpc.publicnode.com"))
+            w3 = Web3(Web3.HTTPProvider("https://polygon-bor-rpc.publicnode.com", request_kwargs={"timeout": 10}))
             wallet = Web3.to_checksum_address(self.agent.wallet_address)
             usdc_address = Web3.to_checksum_address("0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174")
             abi = '[{"inputs":[{"internalType":"address","name":"account","type":"address"}],"name":"balanceOf","outputs":[{"internalType":"uint256","name":"","type":"uint256"}],"stateMutability":"view","type":"function"}]'
@@ -450,6 +450,7 @@ class AutoTrader:
                     "https://data-api.polymarket.com/positions",
                     params={"user": wallet, "sizeThreshold": 0, "limit": 100,
                             "sortBy": "CURRENT", "sortDirection": "DESC"},
+                    timeout=10,
                 )
                 if res.status_code == 200:
                     for p in res.json():
@@ -475,6 +476,7 @@ class AutoTrader:
                 "https://data-api.polymarket.com/positions",
                 params={"user": wallet, "sizeThreshold": 0, "limit": 50,
                         "sortBy": "CURRENT", "sortDirection": "DESC"},
+                timeout=10,
             )
             if res.status_code == 200:
                 return res.json()
@@ -782,6 +784,7 @@ class AutoTrader:
                     "https://data-api.polymarket.com/positions",
                     params={"user": wallet, "sizeThreshold": 0, "limit": 50,
                             "sortBy": "CURRENT", "sortDirection": "DESC"},
+                    timeout=10,
                 )
                 if res.status_code == 200:
                     for p in res.json():
@@ -800,6 +803,7 @@ class AutoTrader:
             logger.error(f"Error fetching positions: {e}")
 
         # Markets (top 200 by volume)
+        raw_markets = []
         try:
             raw_markets = self.agent.gamma.get_markets(querystring_params={
                 "active": True, "closed": False,
@@ -860,14 +864,10 @@ class AutoTrader:
             key=lambda x: x.get("profit_pct", 0), reverse=True
         )
 
-        # Strategy engine
-        if self.strategy_engine:
+        # Strategy engine (reuses raw_markets already fetched above — no duplicate API call)
+        if self.strategy_engine and raw_markets:
             try:
-                raw_for_strategies = self.agent.gamma.get_markets(querystring_params={
-                    "active": True, "closed": False,
-                    "limit": 200, "order": "volume", "ascending": False,
-                })
-                strategy_results = self.strategy_engine.run_all_strategies(raw_for_strategies)
+                strategy_results = self.strategy_engine.run_all_strategies(raw_markets)
                 context["strategy_signals"] = {
                     "latency_arbitrage": strategy_results.get("latency_arbitrage", [])[:5],
                     "parity_arbitrage": strategy_results.get("parity_arbitrage", [])[:5],

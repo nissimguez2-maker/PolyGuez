@@ -75,7 +75,7 @@ class GammaMarketClient:
                 'Cannot use "parse_pydantic" and "local_file" params simultaneously.'
             )
 
-        response = httpx.get(self.gamma_markets_endpoint, params=querystring_params)
+        response = httpx.get(self.gamma_markets_endpoint, params=querystring_params, timeout=10)
         if response.status_code == 200:
             data = response.json()
             if local_file_path is not None:
