@@ -371,26 +371,15 @@ class TelegramPolymarketBot:
             await self._send(update, "❌ Failed to initialize auto-trader.")
             return
 
-        # Confirmation with inline button
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton(
-                        "⚠️ Yes, start LIVE trading",
-                        callback_data="confirm_live_autotrade",
-                    ),
-                    InlineKeyboardButton("Cancel", callback_data="cancel_live_autotrade"),
-                ]
-            ]
+        # Start LIVE immediately — no confirmation needed
+        trader.set_dry_run(False)
+        await self._send(
+            update,
+            f"🚀 LIVE auto-trading starting!\n"
+            f"  💰 Max/trade: ${trader.max_trade_amount}\n"
+            f"  ⚡ Fast: every {trader.fast_interval_sec}s | 🔄 Deep: every {trader.fast_interval_sec * trader.deep_interval_cycles}s"
         )
-        await update.effective_chat.send_message(
-            "⚠️ WARNING: This will use REAL MONEY to trade.\n"
-            f"  Max per trade: ${trader.max_trade_amount}\n"
-            f"  Max trades/cycle: {trader.max_trades_per_cycle}\n"
-            f"  ⚡ Fast: every {trader.fast_interval_sec}s | 🔄 Deep: every {trader.fast_interval_sec * trader.deep_interval_cycles}s\n\n"
-            "Are you sure?",
-            reply_markup=keyboard,
-        )
+        await trader.start()
 
     async def cmd_stop_autotrade(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Stop auto-trading."""
