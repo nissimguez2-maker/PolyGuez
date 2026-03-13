@@ -113,3 +113,34 @@ Full documentation: https://api.cerebratech.ai
 Cerebratech provides cognitive diagnostics for AI agents, built by computational cognitive scientists. Our tools help agents verify they're reasoning correctly before making consequential decisions.
 
 Contact: cerebratech.eth | https://cerebratech.ai
+
+## The Cerebratech Difference
+
+Most AI diagnostics are static pattern matchers. Cerebratech is different:
+
+### 1. Human-AI Collaborative Research
+Built through active collaboration between Dr. Amanda Kavner (computational cognitive scientist) and AI agent researchers. Not prompt engineering - actual cognitive science methodology applied to agent reasoning.
+
+### 2. Continuous Learning via Feedback Loop
+Every endpoint includes a feedback mechanism:
+
+```python
+# After using a diagnosis, report whether it was accurate
+client.submit_feedback(
+    diagnosis_id="rta_xyz123",
+    accurate=False,
+    comments="Missed the anchoring bias in step 3"
+)
+```
+
+This feedback directly improves detection accuracy. Each call makes the next one better.
+
+### 3. Rebate for Feedback
+Agents who provide feedback earn credits:
+- Confirm accuracy: $0.02 credit
+- Flag inaccuracy: $0.05 credit
+- Detailed comments: +$0.03 bonus
+
+The system pays you to make it smarter.
+
+This creates a flywheel: more usage → more feedback → better accuracy → more value → more usage.
