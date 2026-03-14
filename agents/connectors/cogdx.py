@@ -162,7 +162,7 @@ class CogDxClient:
                 - approved: bool
                 - validity_score: float
                 - issues: list of detected problems
-                - recommendation: 'proceed' | 'review' | 'reject'
+                - recommendation: 'proceed' | 'review' | 'reject' | 'skip' (on error)
         """
         result = self.analyze_reasoning(reasoning)
         
@@ -198,7 +198,11 @@ class CogDxClient:
         }
 
 
-def verify_trade_reasoning(reasoning: str, wallet: str = None) -> bool:
+def verify_trade_reasoning(
+    reasoning: str, 
+    coupon: str = None, 
+    wallet: str = None
+) -> bool:
     """
     Convenience function for quick trade verification.
     
@@ -210,9 +214,15 @@ def verify_trade_reasoning(reasoning: str, wallet: str = None) -> bool:
         else:
             print("Reasoning flagged for review")
     
-    Returns True if reasoning passes verification, False otherwise.
-    Note: Returns False if API is unavailable (fails closed).
+    Args:
+        reasoning: The reasoning trace to verify
+        coupon: Optional coupon code for credits
+        wallet: Optional wallet address for credits
+    
+    Returns:
+        True if reasoning passes verification, False otherwise.
+        Note: Returns False if API is unavailable (fails closed).
     """
-    client = CogDxClient(wallet=wallet)
+    client = CogDxClient(coupon=coupon, wallet=wallet)
     result = client.verify_before_trade(reasoning)
     return result.get("approved", False)
