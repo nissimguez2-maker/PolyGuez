@@ -1,11 +1,11 @@
 """
-Cerebratech CogDx Connector
+CogDx Connector
 Cognitive Diagnostics for Prediction Market Agents
 
-Provides reasoning verification before trade execution.
-Free pilot: Use coupon code MERCURY-PILOT-2026 for $5 credit.
+Optional reasoning verification before trade execution.
+Detects logical fallacies, calibration issues, and cognitive biases.
 
-Docs: https://api.cerebratech.ai
+API: https://api.cerebratech.ai
 """
 
 import os
@@ -27,7 +27,7 @@ class CogDxClient:
         Initialize CogDx client.
         
         Args:
-            coupon: Pilot coupon code (e.g., 'MERCURY-PILOT-2026' for $5 credit)
+            coupon: Optional coupon code for credits
             wallet: Ethereum wallet address for credit-based payments
         """
         self.coupon = coupon or os.getenv("COGDX_COUPON")
@@ -167,16 +167,19 @@ class CogDxClient:
         result = self.analyze_reasoning(reasoning)
         
         if result.get("error"):
-            # On error, default to proceed but flag for review
+            # On error, fail closed (don't approve unverified trades)
             return {
-                "approved": True,
+                "approved": False,
                 "validity_score": None,
                 "issues": [f"CogDx unavailable: {result.get('error')}"],
-                "recommendation": "proceed_with_caution"
+                "recommendation": "skip"
             }
         
-        validity = result.get("logical_validity", 0)
-        flaws = result.get("flaws_detected", [])
+        # Handle null values explicitly (dict.get returns None for null, not default)
+        validity = result.get("logical_validity")
+        if validity is None:
+            validity = 0
+        flaws = result.get("flaws_detected") or []
         
         approved = validity >= min_validity and len(flaws) == 0
         
@@ -195,20 +198,21 @@ class CogDxClient:
         }
 
 
-def verify_trade_reasoning(reasoning: str, coupon: str = None) -> bool:
+def verify_trade_reasoning(reasoning: str, wallet: str = None) -> bool:
     """
     Convenience function for quick trade verification.
     
     Usage:
         from agents.connectors.cogdx import verify_trade_reasoning
         
-        if verify_trade_reasoning(my_reasoning, coupon="MERCURY-PILOT-2026"):
+        if verify_trade_reasoning(my_reasoning):
             execute_trade()
         else:
             print("Reasoning flagged for review")
     
     Returns True if reasoning passes verification, False otherwise.
+    Note: Returns False if API is unavailable (fails closed).
     """
-    client = CogDxClient(coupon=coupon)
+    client = CogDxClient(wallet=wallet)
     result = client.verify_before_trade(reasoning)
     return result.get("approved", False)

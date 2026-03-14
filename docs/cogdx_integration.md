@@ -2,7 +2,9 @@
 
 ## Overview
 
-This integration adds optional cognitive diagnostics to the Polymarket trading pipeline. Before executing trades, agents can verify their reasoning for logical fallacies and calibration issues.
+This connector provides optional cognitive diagnostics for trading pipelines. Agents can verify their reasoning for logical fallacies and calibration issues before executing trades.
+
+**Note:** This is an optional third-party integration. All verification is opt-in and the trading pipeline functions normally if the service is unavailable.
 
 ## Why This Matters
 
@@ -13,7 +15,7 @@ Prediction market agents make high-stakes decisions based on probabilistic reaso
 - **Overconfidence**: Stated certainty exceeding actual accuracy
 - **Logical fallacies**: Invalid reasoning chains leading to incorrect conclusions
 
-CogDx provides external verification to catch these issues before they become losses.
+External verification can catch these issues before they become losses.
 
 ## Quick Start
 
@@ -23,7 +25,7 @@ from agents.connectors.cogdx import verify_trade_reasoning
 # In your trade pipeline
 reasoning = agent.source_best_trade(market)
 
-if verify_trade_reasoning(reasoning, coupon="MERCURY-PILOT-2026"):
+if verify_trade_reasoning(reasoning):
     polymarket.execute_market_order(market, amount)
 else:
     print("Trade reasoning flagged - manual review recommended")
@@ -34,7 +36,7 @@ else:
 ```python
 from agents.connectors.cogdx import CogDxClient
 
-client = CogDxClient(coupon="MERCURY-PILOT-2026")
+client = CogDxClient()
 
 # Analyze reasoning for fallacies
 result = client.analyze_reasoning("""
@@ -51,7 +53,7 @@ print(result)
 #   "recommendations": ["No obvious fallacies detected"]
 # }
 
-# Pre-trade verification gate
+# Pre-trade verification gate (fails closed on errors)
 gate = client.verify_before_trade(reasoning, min_validity=0.7)
 
 if gate["approved"]:
@@ -70,7 +72,6 @@ Track prediction accuracy over time:
 predictions = [
     {"prompt": "Will X happen?", "response": "Yes (75%)", "confidence": 0.75},
     {"prompt": "Will Y happen?", "response": "No (60%)", "confidence": 0.60},
-    # ... more predictions with actual outcomes
 ]
 
 audit = client.calibration_audit(
@@ -84,63 +85,22 @@ print(audit["calibration_score"])  # 0.0-1.0, higher = better calibrated
 ## Environment Variables
 
 ```bash
-# Option 1: Pilot coupon (free trial)
-COGDX_COUPON=MERCURY-PILOT-2026
-
-# Option 2: Wallet-based credits
+# Wallet-based credits
 COGDX_WALLET=0x...
 
-# Option 3: Pass directly to client
-client = CogDxClient(coupon="MERCURY-PILOT-2026")
+# Or pass directly to client
+client = CogDxClient(wallet="0x...")
 ```
 
-## Pricing
+## Safety Design
 
-| Endpoint | Cost |
-|----------|------|
-| `/reasoning_trace_analysis` | $0.03 |
-| `/calibration_audit` | $0.06 |
-| `/bias_scan` | $0.10 |
-
-Free pilot: `MERCURY-PILOT-2026` provides $5 credit (~80 reasoning checks).
+- **Fails closed**: If the API is unavailable, `verify_before_trade` returns `approved: False` (does not auto-approve unverified trades)
+- **Optional**: The integration is entirely opt-in and can be disabled without affecting core trading logic
+- **No data retention**: Reasoning traces are processed and discarded; not stored beyond the request
+- **Graceful degradation**: If you choose not to use verification, trades proceed normally
 
 ## API Reference
 
-Full documentation: https://api.cerebratech.ai
+Endpoint: `https://api.cerebratech.ai`
 
-## About Cerebratech
-
-Cerebratech provides cognitive diagnostics for AI agents, built by computational cognitive scientists. Our tools help agents verify they're reasoning correctly before making consequential decisions.
-
-Contact: cerebratech.eth | https://cerebratech.ai
-
-## The Cerebratech Difference
-
-Most AI diagnostics are static pattern matchers. Cerebratech is different:
-
-### 1. Human-AI Collaborative Research
-Built through active collaboration between Dr. Amanda Kavner (computational cognitive scientist) and AI agent researchers. Not prompt engineering - actual cognitive science methodology applied to agent reasoning.
-
-### 2. Continuous Learning via Feedback Loop
-Every endpoint includes a feedback mechanism:
-
-```python
-# After using a diagnosis, report whether it was accurate
-client.submit_feedback(
-    diagnosis_id="rta_xyz123",
-    accurate=False,
-    comments="Missed the anchoring bias in step 3"
-)
-```
-
-This feedback directly improves detection accuracy. Each call makes the next one better.
-
-### 3. Rebate for Feedback
-Agents who provide feedback earn credits:
-- Confirm accuracy: $0.02 credit
-- Flag inaccuracy: $0.05 credit
-- Detailed comments: +$0.03 bonus
-
-The system pays you to make it smarter.
-
-This creates a flywheel: more usage → more feedback → better accuracy → more value → more usage.
+See API documentation for full endpoint details and authentication.
