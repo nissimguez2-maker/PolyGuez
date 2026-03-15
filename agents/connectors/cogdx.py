@@ -70,6 +70,14 @@ class CogDxClient:
                     "logical_validity": None
                 }
             
+            # Handle other HTTP errors (500, 403, 429, etc.)
+            if not response.ok:
+                return {
+                    "error": f"http_{response.status_code}",
+                    "message": f"API returned status {response.status_code}",
+                    "logical_validity": None
+                }
+            
             return response.json()
             
         except Exception as e:
@@ -190,10 +198,18 @@ class CogDxClient:
         else:
             recommendation = "reject"
         
+        # Handle flaws as either dicts or strings
+        issues = []
+        for f in flaws:
+            if isinstance(f, dict):
+                issues.append(f.get("name", str(f)))
+            else:
+                issues.append(str(f))
+        
         return {
             "approved": approved,
             "validity_score": validity,
-            "issues": [f.get("name", str(f)) for f in flaws],
+            "issues": issues,
             "recommendation": recommendation
         }
 
