@@ -203,7 +203,8 @@ class CogDxClient:
         
         approved = validity >= min_validity and len(flaws) == 0
         
-        if validity >= min_validity and len(flaws) == 0:
+        # Use approved variable to avoid duplicated logic
+        if approved:
             recommendation = "proceed"
         elif validity >= 0.5:
             recommendation = "review"
@@ -301,6 +302,11 @@ class CogDxClient:
                 json=payload,
                 timeout=30
             )
+            
+            if response.status_code == 402:
+                return {"error": "payment_required", "received": False}
+            if not response.ok:
+                return {"error": f"http_{response.status_code}", "received": False}
             
             return response.json()
             
