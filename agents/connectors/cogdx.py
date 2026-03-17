@@ -112,9 +112,15 @@ class CogDxClient:
                 },
                 timeout=30
             )
+            
+            if response.status_code == 402:
+                return {"error": "payment_required", "calibration_score": None}
+            if not response.ok:
+                return {"error": f"http_{response.status_code}", "calibration_score": None}
+            
             return response.json()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "calibration_score": None}
     
     def bias_scan(
         self,
@@ -147,9 +153,15 @@ class CogDxClient:
                 },
                 timeout=30
             )
+            
+            if response.status_code == 402:
+                return {"error": "payment_required", "biases_detected": None}
+            if not response.ok:
+                return {"error": f"http_{response.status_code}", "biases_detected": None}
+            
             return response.json()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "biases_detected": None}
     
     def verify_before_trade(
         self,
@@ -212,37 +224,7 @@ class CogDxClient:
             "issues": issues,
             "recommendation": recommendation
         }
-
-
-def verify_trade_reasoning(
-    reasoning: str, 
-    coupon: str = None, 
-    wallet: str = None
-) -> bool:
-    """
-    Convenience function for quick trade verification.
     
-    Usage:
-        from agents.connectors.cogdx import verify_trade_reasoning
-        
-        if verify_trade_reasoning(my_reasoning):
-            execute_trade()
-        else:
-            print("Reasoning flagged for review")
-    
-    Args:
-        reasoning: The reasoning trace to verify
-        coupon: Optional coupon code for credits
-        wallet: Optional wallet address for credits
-    
-    Returns:
-        True if reasoning passes verification, False otherwise.
-        Note: Returns False if API is unavailable (fails closed).
-    """
-    client = CogDxClient(coupon=coupon, wallet=wallet)
-    result = client.verify_before_trade(reasoning)
-    return result.get("approved", False)
-
     def submit_feedback(
         self,
         endpoint: str,
@@ -258,6 +240,9 @@ def verify_trade_reasoning(
     ) -> Dict[str, Any]:
         """
         Submit feedback on a diagnosis to improve detection and earn credits.
+        
+        Feedback builds shared reality across agents. Network effects improve
+        consensus and detection accuracy for everyone.
         
         Binary core (required):
             - endpoint: Which endpoint was diagnosed
@@ -321,3 +306,33 @@ def verify_trade_reasoning(
             
         except Exception as e:
             return {"error": str(e), "received": False}
+
+
+def verify_trade_reasoning(
+    reasoning: str, 
+    coupon: str = None, 
+    wallet: str = None
+) -> bool:
+    """
+    Convenience function for quick trade verification.
+    
+    Usage:
+        from agents.connectors.cogdx import verify_trade_reasoning
+        
+        if verify_trade_reasoning(my_reasoning):
+            execute_trade()
+        else:
+            print("Reasoning flagged for review")
+    
+    Args:
+        reasoning: The reasoning trace to verify
+        coupon: Optional coupon code for credits
+        wallet: Optional wallet address for credits
+    
+    Returns:
+        True if reasoning passes verification, False otherwise.
+        Note: Returns False if API is unavailable (fails closed).
+    """
+    client = CogDxClient(coupon=coupon, wallet=wallet)
+    result = client.verify_before_trade(reasoning)
+    return result.get("approved", False)
