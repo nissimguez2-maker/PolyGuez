@@ -242,3 +242,82 @@ def verify_trade_reasoning(
     client = CogDxClient(coupon=coupon, wallet=wallet)
     result = client.verify_before_trade(reasoning)
     return result.get("approved", False)
+
+    def submit_feedback(
+        self,
+        endpoint: str,
+        agent_id: str,
+        accurate: bool,
+        confidence: Optional[float] = None,
+        severity: Optional[int] = None,
+        accuracy_score: Optional[float] = None,
+        outcome: Optional[str] = None,
+        reasoning: Optional[str] = None,
+        diagnosis_id: Optional[str] = None,
+        wallet: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Submit feedback on a diagnosis to improve detection and earn credits.
+        
+        Binary core (required):
+            - endpoint: Which endpoint was diagnosed
+            - agent_id: Your agent identifier  
+            - accurate: Was the detection correct? (True/False)
+        
+        Numerical enrichment (optional - increases signal + credits):
+            - confidence: 0.0-1.0 - How sure are you about this feedback?
+            - severity: 1-5 - If bias was real, how impactful?
+            - accuracy_score: 0.0-1.0 - Partial credit (mostly right, slightly off)
+        
+        Structured context (optional):
+            - outcome: "win" | "loss" | "neutral" | "unknown"
+            - reasoning: Why was detection right/wrong?
+            - diagnosis_id: ID from original diagnosis
+            - wallet: Earn credits to this wallet (0x...)
+        
+        Returns:
+            dict with:
+                - received: bool
+                - feedback_id: str
+                - signal_strength: float (1.0-2.0x learning value)
+                - credits: {awarded, new_balance, wallet} if wallet provided
+                - network_contribution: impact on shared reality
+        """
+        try:
+            payload = {
+                "endpoint": endpoint,
+                "agent_id": agent_id,
+                "accurate": accurate,
+            }
+            
+            # Optional numerical enrichment
+            if confidence is not None:
+                payload["confidence"] = confidence
+            if severity is not None:
+                payload["severity"] = severity
+            if accuracy_score is not None:
+                payload["accuracy_score"] = accuracy_score
+            
+            # Optional structured context
+            if outcome:
+                payload["outcome"] = outcome
+            if reasoning:
+                payload["reasoning"] = reasoning
+            if diagnosis_id:
+                payload["diagnosis_id"] = diagnosis_id
+            if wallet:
+                payload["wallet"] = wallet
+            elif self.wallet:
+                payload["wallet"] = self.wallet
+            
+            response = requests.post(
+                f"{self.BASE_URL}/feedback",
+                headers=self._headers(),
+                json=payload,
+                timeout=30
+            )
+            
+            return response.json()
+            
+        except Exception as e:
+            return {"error": str(e), "received": False}
