@@ -11,7 +11,11 @@ from dotenv import load_dotenv
 
 from web3 import Web3
 from web3.constants import MAX_INT
-from web3.middleware import geth_poa_middleware
+try:
+    from web3.middleware import ExtraDataToPOAMiddleware as poa_middleware
+except ImportError:
+    # Eğer web3 sürümün çok eskiyse eski adı kullan
+    from web3.middleware import geth_poa_middleware as poa_middleware
 
 import httpx
 from py_clob_client.client import ClobClient
@@ -44,6 +48,7 @@ class Polymarket:
 
         self.chain_id = 137  # POLYGON
         self.private_key = os.getenv("POLYGON_WALLET_PRIVATE_KEY")
+        self.proxy_address = os.getenv("PROXY_ADDRESS")
         self.polygon_rpc = "https://polygon-rpc.com"
         self.w3 = Web3(Web3.HTTPProvider(self.polygon_rpc))
 
@@ -57,7 +62,7 @@ class Polymarket:
         self.ctf_address = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 
         self.web3 = Web3(Web3.HTTPProvider(self.polygon_rpc))
-        self.web3.middleware_onion.inject(geth_poa_middleware, layer=0)
+        self.w3.middleware_onion.inject(poa_middleware, layer=0)
 
         self.usdc = self.web3.eth.contract(
             address=self.usdc_address, abi=self.erc20_approve
@@ -65,14 +70,25 @@ class Polymarket:
         self.ctf = self.web3.eth.contract(
             address=self.ctf_address, abi=self.erc1155_set_approval
         )
+        
+        self.creds = ApiCreds(
+                api_key=os.getenv('POLY_API_KEY').strip() if os.getenv('POLY_API_KEY') else "",
+                api_secret=os.getenv('POLY_API_SECRET').strip() if os.getenv('POLY_API_SECRET') else "",
+                api_passphrase=os.getenv('POLY_API_PASSPHRASE').strip() if os.getenv('POLY_API_PASSPHRASE') else ""  
+            )
 
         self._init_api_keys()
         self._init_approvals(False)
 
     def _init_api_keys(self) -> None:
         self.client = ClobClient(
-            self.clob_url, key=self.private_key, chain_id=self.chain_id
-        )
+                host=self.clob_url,
+                key=self.private_key,
+                chain_id=self.chain_id,
+                signature_type=2, 
+                funder=self.proxy_address,
+                creds=self.creds 
+            )
         self.credentials = self.client.create_or_derive_api_creds()
         self.client.set_api_creds(self.credentials)
         # print(self.credentials)
@@ -338,11 +354,12 @@ class Polymarket:
             OrderArgs(price=price, size=size, side=side, token_id=token_id)
         )
 
-    def execute_market_order(self, market, amount) -> str:
+    def execute_market_order(self, market, amount, side = "BUY") -> str:
         token_id = ast.literal_eval(market[0].dict()["metadata"]["clob_token_ids"])[1]
         order_args = MarketOrderArgs(
             token_id=token_id,
             amount=amount,
+            side='BUY' if side.upper() == "BUY" else 'SELL'
         )
         signed_order = self.client.create_market_order(order_args)
         print("Execute market order... signed_order ", signed_order)
