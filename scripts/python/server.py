@@ -141,6 +141,6 @@ async def websocket_endpoint(websocket: WebSocket, secret: str = Query(default="
                     break
             else:
                 await websocket.send_text(json.dumps({"error": "Runner not active"}))
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.3)
     except (WebSocketDisconnect, Exception):
         pass

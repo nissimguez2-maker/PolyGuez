@@ -282,7 +282,7 @@ class PolyGuezConfig(BaseModel):
     market_question_pattern: str = Field(default="Bitcoin Up or Down", description="Question text pattern for market matching")
 
     # CLOB polling
-    clob_poll_interval: float = Field(default=1.0, description="Seconds between CLOB orderbook polls")
+    clob_poll_interval: float = Field(default=0.5, description="Seconds between CLOB orderbook polls")
 
     # Mode: dry-run, paper, live
     mode: str = Field(default="dry-run")
