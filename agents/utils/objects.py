@@ -292,7 +292,7 @@ class PolyGuezConfig(BaseModel):
     binance_ws_url: str = Field(default="wss://stream.binance.com:9443/ws/btcusdt@trade", description="Direct Binance WS (fallback only)")
     coinbase_ws_url: str = Field(default="wss://ws-feed.exchange.coinbase.com")
     btc_feed_connect_timeout: float = Field(default=5.0)
-    btc_buffer_min_seconds: float = Field(default=30.0)
+    btc_buffer_min_seconds: float = Field(default=10.0)
 
     # Dashboard
     dashboard_secret: str = Field(default="", description="Shared secret for dashboard auth")

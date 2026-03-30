@@ -1,10 +1,14 @@
-"""Price feed manager — Polymarket RTDS primary, direct Binance fallback.
+"""Price feed manager — direct Binance primary + RTDS Chainlink.
 
-RTDS provides both Binance spot and Chainlink oracle prices via WebSocket.
-Binance prices arrive on topic "crypto_prices", Chainlink on
-"crypto_prices_chainlink".  Payload contains a data[] array:
-  {"topic": ..., "type": "update", "timestamp": ...,
-   "payload": {"data": [{"timestamp": ..., "value": 67234.5}, ...], "symbol": "btcusdt"}}
+Two parallel WebSocket connections:
+  1. Direct Binance: wss://stream.binance.com:9443/ws/btcusdt@trade
+     Individual trade events, ~20-50/sec, parsed from {"p": "67329.99", "T": ms}.
+     Downsampled to 1 entry per 100ms to keep buffer manageable.
+  2. RTDS Chainlink only: wss://ws-live-data.polymarket.com
+     Subscribes to crypto_prices_chainlink, ~1 update/sec.
+     Payload: {"data": [{"timestamp": ms, "value": 67234.5}, ...], "symbol": "btc/usd"}
+
+If direct Binance fails, falls back to RTDS Binance (crypto_prices topic).
 """
 
 import asyncio
@@ -18,20 +22,11 @@ from agents.utils.logger import get_logger, log_event
 
 logger = get_logger("polyguez.price_feed")
 
-# RTDS protocol constants
+_BINANCE_DIRECT_URL = "wss://stream.binance.com:9443/ws/btcusdt@trade"
+
 _RTDS_PING_INTERVAL = 5.0
 
-# Binance: topic "crypto_prices", filters must be a JSON-encoded object
-_RTDS_SUBSCRIBE_BINANCE = json.dumps({
-    "action": "subscribe",
-    "subscriptions": [{
-        "topic": "crypto_prices",
-        "type": "*",
-        "filters": json.dumps({"symbol": "btcusdt"}),
-    }],
-})
-
-# Chainlink: topic "crypto_prices_chainlink", filters is a JSON-encoded object
+# RTDS: Chainlink only
 _RTDS_SUBSCRIBE_CHAINLINK = json.dumps({
     "action": "subscribe",
     "subscriptions": [{
@@ -41,40 +36,64 @@ _RTDS_SUBSCRIBE_CHAINLINK = json.dumps({
     }],
 })
 
+# RTDS: Binance fallback (only used if direct Binance fails)
+_RTDS_SUBSCRIBE_BINANCE_FALLBACK = json.dumps({
+    "action": "subscribe",
+    "subscriptions": [{
+        "topic": "crypto_prices",
+        "type": "*",
+        "filters": json.dumps({"symbol": "btcusdt"}),
+    }],
+})
+
 
 class PriceFeedManager:
-    """Async dual-price streamer: Binance spot + Chainlink oracle via RTDS."""
+    """Async dual-price streamer: direct Binance + RTDS Chainlink."""
 
     def __init__(self, config):
         self._config = config
-        # Binance buffer: (timestamp, price)
+        # Binance buffer: (timestamp, price) — downsampled to ~10/sec
         self._binance_buffer = deque(maxlen=3000)
         # Chainlink buffer: (timestamp, price)
         self._chainlink_buffer = deque(maxlen=3000)
         # Gap tracking: (timestamp, gap) for narrowing/widening detection
         self._gap_buffer = deque(maxlen=60)
 
-        self._ws = None
-        self._connected = False
-        self._source = ""  # "rtds" or "binance-direct"
-        self._task = None
-        self._ping_task = None
+        self._binance_ws = None
+        self._rtds_ws = None
+        self._binance_connected = False
+        self._rtds_connected = False
+        self._binance_source = ""  # "binance-direct" or "rtds-fallback"
+        self._binance_task = None
+        self._rtds_task = None
+        self._rtds_ping_task = None
         self._stop = asyncio.Event()
-        self._reconnect_delay = 1.0
-        self._rtds_msg_count = 0
-        self._last_buffer_log = 0.0
+        self._reconnect_delay_binance = 1.0
+        self._reconnect_delay_rtds = 1.0
+
+        # Downsampling: only buffer 1 price per 100ms window
+        self._last_binance_buffer_ts = 0.0
+
+        # Feed stats for latency logging
+        self._binance_msg_count = 0
+        self._chainlink_msg_count = 0
+        self._last_binance_msg_time = 0.0
+        self._last_chainlink_msg_time = 0.0
         self._last_rtds_msg_time = 0.0
-        self._last_pong_time = 0.0
+        self._last_stats_log = 0.0
+        self._binance_msg_count_window = 0
+        self._chainlink_msg_count_window = 0
+        self._stats_window_start = 0.0
 
     # -- Public API: Binance -------------------------------------------------
 
     @property
     def is_connected(self):
-        return self._connected
+        return self._binance_connected or self._rtds_connected
 
     @property
     def source(self):
-        return self._source
+        return self._binance_source or ("rtds" if self._rtds_connected else "")
 
     def is_ready(self):
         """True when Binance buffer spans >= btc_buffer_min_seconds."""
@@ -134,7 +153,6 @@ class PriceFeedManager:
         if len(self._gap_buffer) < 2:
             return "unknown"
         recent = list(self._gap_buffer)
-        # Compare last 5 gap values vs previous 5
         if len(recent) < 10:
             old_avg = abs(recent[0][1])
             new_avg = abs(recent[-1][1])
@@ -146,166 +164,124 @@ class PriceFeedManager:
     # -- Lifecycle -----------------------------------------------------------
 
     async def start(self):
-        """Start streaming in the background."""
+        """Start both feeds in parallel as separate tasks."""
         self._stop.clear()
-        self._task = asyncio.create_task(self._run_loop())
+        self._stats_window_start = time.time()
+        self._binance_task = asyncio.create_task(self._binance_loop())
+        self._rtds_task = asyncio.create_task(self._rtds_loop())
 
     async def stop(self):
         """Gracefully stop all feeds."""
         self._stop.set()
-        if self._ping_task:
-            self._ping_task.cancel()
-        if self._ws:
-            await self._ws.close()
-        if self._task:
-            self._task.cancel()
-            try:
-                await self._task
-            except asyncio.CancelledError:
-                pass
-        self._connected = False
+        if self._rtds_ping_task:
+            self._rtds_ping_task.cancel()
+        for ws in (self._binance_ws, self._rtds_ws):
+            if ws:
+                try:
+                    await ws.close()
+                except Exception:
+                    pass
+        for task in (self._binance_task, self._rtds_task):
+            if task:
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+        self._binance_connected = False
+        self._rtds_connected = False
 
-    # -- Internal: RTDS (primary) -------------------------------------------
+    # -- Internal: Direct Binance (primary) ---------------------------------
 
-    async def _run_loop(self):
+    async def _binance_loop(self):
+        """Reconnect loop for direct Binance WebSocket."""
         while not self._stop.is_set():
             try:
-                await self._connect_rtds()
-            except (
-                websockets.ConnectionClosed,
-                websockets.InvalidURI,
-                OSError,
-                asyncio.TimeoutError,
-            ) as exc:
-                self._connected = False
-                rtds_url = self._config.rtds_ws_url
-                log_event(logger, "feed_disconnect",
-                    f"RTDS connection failed: {type(exc).__name__}: {exc} "
-                    f"(url={rtds_url}), trying Binance fallback",
-                    level=40)
-                try:
-                    await self._connect_binance_direct()
-                except Exception as fb_exc:
-                    binance_url = self._config.binance_ws_url
-                    log_event(logger, "feed_disconnect",
-                        f"Binance fallback also failed: {type(fb_exc).__name__}: {fb_exc} "
-                        f"(url={binance_url})",
-                        level=40)
-                    await self._backoff_sleep()
-            except Exception as exc:
-                self._connected = False
-                log_event(logger, "feed_error",
-                    f"Unexpected feed error: {type(exc).__name__}: {exc}",
-                    level=40)
-                await self._backoff_sleep()
+                await self._connect_binance_direct()
             except asyncio.CancelledError:
                 break
+            except Exception as exc:
+                self._binance_connected = False
+                log_event(logger, "binance_disconnect",
+                    f"Binance direct failed: {type(exc).__name__}: {exc}",
+                    level=40)
+                # Fall back to RTDS Binance if direct fails
+                try:
+                    await self._connect_binance_via_rtds()
+                except Exception as fb_exc:
+                    log_event(logger, "binance_fallback_fail",
+                        f"RTDS Binance fallback also failed: {type(fb_exc).__name__}: {fb_exc}",
+                        level=40)
+                delay = min(self._reconnect_delay_binance, 30.0)
+                log_event(logger, "binance_reconnect", f"Reconnecting Binance in {delay:.1f}s")
+                await asyncio.sleep(delay)
+                self._reconnect_delay_binance = min(self._reconnect_delay_binance * 2, 30.0)
 
-    async def _connect_rtds(self):
-        """Connect to Polymarket RTDS and subscribe to both feeds."""
-        self._ws = await asyncio.wait_for(
+    async def _connect_binance_direct(self):
+        """Connect directly to Binance trade stream."""
+        url = self._config.binance_ws_url
+        self._binance_ws = await asyncio.wait_for(
+            websockets.connect(url),
+            timeout=self._config.btc_feed_connect_timeout,
+        )
+        self._binance_source = "binance-direct"
+        self._binance_connected = True
+        self._reconnect_delay_binance = 1.0
+        log_event(logger, "binance_connected", f"Connected to direct Binance: {url}")
+
+        async for raw in self._binance_ws:
+            if self._stop.is_set():
+                break
+            try:
+                msg = json.loads(raw)
+                price = float(msg["p"])
+                ts = msg.get("T", time.time() * 1000) / 1000.0
+            except (KeyError, ValueError, TypeError, json.JSONDecodeError):
+                continue
+
+            self._binance_msg_count += 1
+            self._binance_msg_count_window += 1
+            self._last_binance_msg_time = time.time()
+
+            # Downsample: only buffer 1 price per 100ms
+            if ts - self._last_binance_buffer_ts >= 0.1:
+                self._binance_buffer.append((ts, price))
+                self._last_binance_buffer_ts = ts
+                self._update_gap()
+
+            self._maybe_log_stats()
+
+    async def _connect_binance_via_rtds(self):
+        """Fallback: get Binance prices from RTDS relay."""
+        ws = await asyncio.wait_for(
             websockets.connect(self._config.rtds_ws_url),
             timeout=self._config.btc_feed_connect_timeout,
         )
-        self._source = "rtds"
-        self._connected = True
-        self._reconnect_delay = 1.0
-        log_event(logger, "feed_connected", "Connected to Polymarket RTDS")
+        self._binance_source = "rtds-fallback"
+        self._binance_connected = True
+        log_event(logger, "binance_fallback", "Using RTDS for Binance prices (fallback)")
 
-        # Subscribe: Binance on crypto_prices, Chainlink on crypto_prices_chainlink
-        await self._ws.send(_RTDS_SUBSCRIBE_BINANCE)
-        log_event(logger, "rtds_subscribe", f"Binance sub: {_RTDS_SUBSCRIBE_BINANCE}")
-        await self._ws.send(_RTDS_SUBSCRIBE_CHAINLINK)
-        log_event(logger, "rtds_subscribe", f"Chainlink sub: {_RTDS_SUBSCRIBE_CHAINLINK}")
-        self._rtds_msg_count = 0
+        await ws.send(_RTDS_SUBSCRIBE_BINANCE_FALLBACK)
 
-        # Start keepalive ping
-        self._ping_task = asyncio.create_task(self._rtds_ping_loop())
-
-        await self._listen_rtds()
-
-    async def _rtds_ping_loop(self):
-        """Send PING every 5 seconds and force reconnect if stale."""
-        try:
-            while not self._stop.is_set():
-                await asyncio.sleep(_RTDS_PING_INTERVAL)
-                if self._ws and self._ws.open:
-                    await self._ws.send("PING")
-                    log_event(logger, "rtds_ping", "PING sent")
-
-                    # Check for stale connection: no message in 15s → force reconnect
-                    if self._last_rtds_msg_time > 0:
-                        silence = time.time() - self._last_rtds_msg_time
-                        if silence > 15.0:
-                            log_event(logger, "rtds_stale",
-                                f"No RTDS message for {silence:.1f}s — forcing reconnect",
-                                level=40)
-                            await self._ws.close()
-                            break
-        except asyncio.CancelledError:
-            pass
-
-    async def _listen_rtds(self):
-        """Listen to RTDS messages and route to appropriate buffer.
-
-        RTDS message format (per Polymarket docs):
-          {
-            "topic": "crypto_prices",
-            "type": "update",
-            "timestamp": 1753314088421,
-            "payload": {"symbol": "btcusdt", "timestamp": 1753314088395, "value": 67234.50}
-          }
-        Chainlink uses topic "crypto_prices_chainlink" with same payload shape.
-        """
-        async for raw in self._ws:
+        async for raw in ws:
             if self._stop.is_set():
                 break
-
-            self._last_rtds_msg_time = time.time()
-
             if raw == "PONG":
-                self._last_pong_time = time.time()
-                log_event(logger, "rtds_pong", "PONG received")
                 continue
-
-            self._rtds_msg_count += 1
-
-            # Log first 10 raw messages
-            if self._rtds_msg_count <= 10:
-                log_event(logger, "rtds_raw_msg", f"[MSG #{self._rtds_msg_count}] {raw[:500]}")
-
-            # Periodic buffer status (every 10s)
-            now = time.time()
-            if now - self._last_buffer_log >= 10.0:
-                self._last_buffer_log = now
-                since_last = now - self._last_rtds_msg_time if self._last_rtds_msg_time else 0
-                last5_b = [(round(p, 2),) for _, p in list(self._binance_buffer)[-5:]]
-                last5_c = [(round(p, 2),) for _, p in list(self._chainlink_buffer)[-5:]]
-                log_event(logger, "buffer_status", (
-                    f"Binance={len(self._binance_buffer)} Chainlink={len(self._chainlink_buffer)} "
-                    f"msgs={self._rtds_msg_count} vel={self.get_velocity():.6f} "
-                    f"last_msg={since_last:.1f}s_ago"
-                ), {"binance_last5": last5_b, "chainlink_last5": last5_c})
-
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:
                 continue
 
-            topic = msg.get("topic", "")
             payload = msg.get("payload")
-
-            # Payload can be a dict (single update) or potentially absent
             if not payload or not isinstance(payload, dict):
-                # Some messages (ack, error, etc.) have no payload
-                if self._rtds_msg_count <= 10:
-                    log_event(logger, "rtds_no_payload", f"No payload in msg: {str(msg)[:300]}")
                 continue
 
             symbol = (payload.get("symbol") or "").lower()
+            if symbol != "btcusdt":
+                continue
 
-            # RTDS sends prices in a "data" array: [{"timestamp":..,"value":..}, ...]
-            # Iterate ALL entries so backfill populates the buffer immediately.
+            now = time.time()
             data_arr = payload.get("data")
             if isinstance(data_arr, list) and data_arr:
                 for entry in data_arr:
@@ -318,42 +294,123 @@ class PriceFeedManager:
                     ts = entry.get("timestamp", now)
                     if isinstance(ts, (int, float)) and ts > 1e12:
                         ts = ts / 1000.0
-                    if topic == "crypto_prices_chainlink" or symbol in ("btc/usd", "btcusd"):
-                        self._chainlink_buffer.append((ts, price))
-                    elif topic == "crypto_prices" or symbol == "btcusdt":
-                        self._binance_buffer.append((ts, price))
+                    self._binance_buffer.append((ts, price))
+                self._binance_msg_count += 1
+                self._binance_msg_count_window += 1
+                self._last_binance_msg_time = time.time()
                 self._update_gap()
+        await ws.close()
+
+    # -- Internal: RTDS Chainlink -------------------------------------------
+
+    async def _rtds_loop(self):
+        """Reconnect loop for RTDS Chainlink WebSocket."""
+        while not self._stop.is_set():
+            try:
+                await self._connect_rtds_chainlink()
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                self._rtds_connected = False
+                log_event(logger, "rtds_disconnect",
+                    f"RTDS Chainlink failed: {type(exc).__name__}: {exc}",
+                    level=40)
+                delay = min(self._reconnect_delay_rtds, 30.0)
+                log_event(logger, "rtds_reconnect", f"Reconnecting RTDS in {delay:.1f}s")
+                await asyncio.sleep(delay)
+                self._reconnect_delay_rtds = min(self._reconnect_delay_rtds * 2, 30.0)
+
+    async def _connect_rtds_chainlink(self):
+        """Connect to RTDS and subscribe to Chainlink only."""
+        self._rtds_ws = await asyncio.wait_for(
+            websockets.connect(self._config.rtds_ws_url),
+            timeout=self._config.btc_feed_connect_timeout,
+        )
+        self._rtds_connected = True
+        self._reconnect_delay_rtds = 1.0
+        log_event(logger, "rtds_connected", "Connected to RTDS for Chainlink")
+
+        await self._rtds_ws.send(_RTDS_SUBSCRIBE_CHAINLINK)
+        log_event(logger, "rtds_subscribe", f"Chainlink sub: {_RTDS_SUBSCRIBE_CHAINLINK}")
+
+        # Start keepalive ping
+        self._rtds_ping_task = asyncio.create_task(self._rtds_ping_loop())
+
+        async for raw in self._rtds_ws:
+            if self._stop.is_set():
+                break
+
+            self._last_rtds_msg_time = time.time()
+
+            if raw == "PONG":
                 continue
 
-            # Flat payload fallback (value/price/p at top level)
-            price = None
-            for key in ("value", "price", "p"):
-                if key in payload:
+            try:
+                msg = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+
+            payload = msg.get("payload")
+            if not payload or not isinstance(payload, dict):
+                continue
+
+            now = time.time()
+            data_arr = payload.get("data")
+            if isinstance(data_arr, list) and data_arr:
+                for entry in data_arr:
                     try:
-                        price = float(payload[key])
-                        break
-                    except (ValueError, TypeError):
+                        price = float(entry["value"])
+                    except (KeyError, ValueError, TypeError):
                         continue
-            ts = payload.get("timestamp") or now
-
-            if not price:
-                if self._rtds_msg_count <= 10:
-                    log_event(logger, "rtds_no_price", f"No price in payload: {str(payload)[:300]}")
-                continue
-
-            if isinstance(ts, (int, float)) and ts > 1e12:
-                ts = ts / 1000.0  # milliseconds → seconds
-
-            # Route by topic first, then symbol as fallback
-            if topic == "crypto_prices_chainlink" or symbol in ("btc/usd", "btcusd"):
-                self._chainlink_buffer.append((ts, price))
-                self._update_gap()
-            elif topic == "crypto_prices" or symbol == "btcusdt":
-                self._binance_buffer.append((ts, price))
+                    if price <= 0:
+                        continue
+                    ts = entry.get("timestamp", now)
+                    if isinstance(ts, (int, float)) and ts > 1e12:
+                        ts = ts / 1000.0
+                    self._chainlink_buffer.append((ts, price))
+                self._chainlink_msg_count += 1
+                self._chainlink_msg_count_window += 1
+                self._last_chainlink_msg_time = time.time()
                 self._update_gap()
             else:
-                if self._rtds_msg_count <= 10:
-                    log_event(logger, "rtds_unrouted", f"topic={topic} symbol={symbol}: {str(payload)[:300]}")
+                # Flat payload fallback
+                for key in ("value", "price"):
+                    if key in payload:
+                        try:
+                            price = float(payload[key])
+                            ts = payload.get("timestamp", now)
+                            if isinstance(ts, (int, float)) and ts > 1e12:
+                                ts = ts / 1000.0
+                            self._chainlink_buffer.append((ts, price))
+                            self._chainlink_msg_count += 1
+                            self._chainlink_msg_count_window += 1
+                            self._last_chainlink_msg_time = time.time()
+                            self._update_gap()
+                            break
+                        except (ValueError, TypeError):
+                            continue
+
+    async def _rtds_ping_loop(self):
+        """Send PING every 5 seconds and force reconnect if stale."""
+        try:
+            while not self._stop.is_set():
+                await asyncio.sleep(_RTDS_PING_INTERVAL)
+                if self._rtds_ws and self._rtds_ws.open:
+                    await self._rtds_ws.send("PING")
+
+                    # Force reconnect if no message in 15s
+                    if self._last_rtds_msg_time > 0:
+                        silence = time.time() - self._last_rtds_msg_time
+                        if silence > 15.0:
+                            log_event(logger, "rtds_stale",
+                                f"No RTDS message for {silence:.1f}s — forcing reconnect",
+                                level=40)
+                            await self._rtds_ws.close()
+                            break
+        except asyncio.CancelledError:
+            pass
+
+    # -- Shared helpers -----------------------------------------------------
 
     def _update_gap(self):
         """Record the current Binance-Chainlink gap for trend tracking."""
@@ -361,37 +418,33 @@ class PriceFeedManager:
         if gap != 0.0:
             self._gap_buffer.append((time.time(), gap))
 
-    # -- Internal: Direct Binance (fallback) --------------------------------
+    def _maybe_log_stats(self):
+        """Log feed latency stats every 10 seconds."""
+        now = time.time()
+        if now - self._last_stats_log < 10.0:
+            return
+        self._last_stats_log = now
 
-    async def _connect_binance_direct(self):
-        """Fallback: connect directly to Binance WebSocket."""
-        self._ws = await asyncio.wait_for(
-            websockets.connect(self._config.binance_ws_url),
-            timeout=self._config.btc_feed_connect_timeout,
-        )
-        self._source = "binance-direct"
-        self._connected = True
-        self._reconnect_delay = 1.0
-        log_event(logger, "feed_connected", "Connected to Binance WS (fallback, no Chainlink)")
-        await self._listen_binance()
+        elapsed = now - self._stats_window_start if self._stats_window_start else 1.0
+        if elapsed < 1.0:
+            elapsed = 1.0
+        b_rate = self._binance_msg_count_window / elapsed
+        c_rate = self._chainlink_msg_count_window / elapsed
 
-    async def _listen_binance(self):
-        """Listen to direct Binance trade stream."""
-        async for raw in self._ws:
-            if self._stop.is_set():
-                break
-            try:
-                msg = json.loads(raw)
-                price = float(msg["p"])
-                ts = msg.get("T", time.time() * 1000) / 1000.0
-                self._binance_buffer.append((ts, price))
-            except (KeyError, ValueError, TypeError):
-                continue
+        b_ago = (now - self._last_binance_msg_time) * 1000 if self._last_binance_msg_time else -1
+        c_ago = (now - self._last_chainlink_msg_time) * 1000 if self._last_chainlink_msg_time else -1
 
-    # -- Shared helpers -----------------------------------------------------
+        gap = self.get_binance_chainlink_gap()
 
-    async def _backoff_sleep(self):
-        delay = min(self._reconnect_delay, 30.0)
-        log_event(logger, "feed_reconnect", f"Reconnecting in {delay:.1f}s")
-        await asyncio.sleep(delay)
-        self._reconnect_delay = min(self._reconnect_delay * 2, 30.0)
+        log_event(logger, "feed_stats", (
+            f"Binance: {b_rate:.1f} msgs/sec, last={b_ago:.0f}ms ago | "
+            f"Chainlink: {c_rate:.1f} msgs/sec, last={c_ago:.0f}ms ago | "
+            f"Gap: ${gap:.2f} | "
+            f"Buf: B={len(self._binance_buffer)} C={len(self._chainlink_buffer)} | "
+            f"Src: {self._binance_source}"
+        ))
+
+        # Reset window
+        self._binance_msg_count_window = 0
+        self._chainlink_msg_count_window = 0
+        self._stats_window_start = now
