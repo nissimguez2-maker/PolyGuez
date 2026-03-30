@@ -48,7 +48,7 @@ async def get_state(secret: str = Query(default="")):
     _check_auth(secret)
     if _runner is None:
         return JSONResponse({"error": "Runner not active"}, status_code=503)
-    return JSONResponse(json.loads(_runner.get_snapshot().json()))
+    return JSONResponse(json.loads(_runner.get_snapshot().model_dump_json()))
 
 
 @app.get("/api/config")
@@ -56,7 +56,7 @@ async def get_config(secret: str = Query(default="")):
     _check_auth(secret)
     if _runner is None:
         return JSONResponse({"error": "Runner not active"}, status_code=503)
-    return JSONResponse(json.loads(_runner.config.json()))
+    return JSONResponse(json.loads(_runner.config.model_dump_json()))
 
 
 @app.post("/api/config")
@@ -66,7 +66,7 @@ async def update_config(request: Request, secret: str = Query(default="")):
         return JSONResponse({"error": "Runner not active"}, status_code=503)
     body = await request.json()
     await _runner.update_config(body)
-    return JSONResponse({"status": "ok", "config": json.loads(_runner.config.json())})
+    return JSONResponse({"status": "ok", "config": json.loads(_runner.config.model_dump_json())})
 
 
 @app.post("/api/kill")
@@ -83,7 +83,7 @@ async def get_trades(secret: str = Query(default="")):
     _check_auth(secret)
     if _runner is None:
         return JSONResponse({"error": "Runner not active"}, status_code=503)
-    trades = [json.loads(t.json()) for t in _runner._rolling_stats.trades]
+    trades = [json.loads(t.model_dump_json()) for t in _runner._rolling_stats.trades]
     return JSONResponse(trades)
 
 
@@ -128,7 +128,7 @@ async def websocket_endpoint(websocket: WebSocket, secret: str = Query(default="
         while True:
             if _runner:
                 snapshot = _runner.get_snapshot()
-                await websocket.send_text(snapshot.json())
+                await websocket.send_text(snapshot.model_dump_json())
             else:
                 await websocket.send_text(json.dumps({"error": "Runner not active"}))
             await asyncio.sleep(1)

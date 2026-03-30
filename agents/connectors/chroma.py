@@ -60,7 +60,7 @@ class PolymarketRAG:
         if not os.path.isdir(local_events_directory):
             os.mkdir(local_events_directory)
         local_file_path = f"{local_events_directory}/events.json"
-        dict_events = [x.dict() for x in events]
+        dict_events = [x.model_dump() for x in events]
         with open(local_file_path, "w+") as output_file:
             json.dump(dict_events, output_file)
 

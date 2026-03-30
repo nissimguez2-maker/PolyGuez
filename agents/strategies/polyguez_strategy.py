@@ -374,13 +374,13 @@ def save_rolling_stats(stats):
     """Persist RollingStats to data/trade_history.json."""
     os.makedirs(_DATA_DIR, exist_ok=True)
     with open(_HISTORY_FILE, "w") as f:
-        f.write(stats.json(indent=2))
+        f.write(stats.model_dump_json(indent=2))
 
 
 def load_rolling_stats():
     """Load RollingStats from disk, or return fresh instance."""
     try:
         with open(_HISTORY_FILE, "r") as f:
-            return RollingStats.parse_raw(f.read())
+            return RollingStats.model_validate_json(f.read())
     except (FileNotFoundError, json.JSONDecodeError, Exception):
         return RollingStats()

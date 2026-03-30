@@ -84,7 +84,7 @@ class PolyGuezRunner:
     async def update_config(self, partial):
         """Update config from dashboard. Takes effect next cycle."""
         async with self._config_lock:
-            current = self.config.dict()
+            current = self.config.model_dump()
             current.update(partial)
             self.config = PolyGuezConfig(**current)
             # Update BTC feed config reference
@@ -708,7 +708,7 @@ def start_runner(mode="dry-run", live=False):
         "coinbase_ws_url": os.getenv("COINBASE_WS_URL", config.coinbase_ws_url),
         "dashboard_secret": os.getenv("DASHBOARD_SECRET", ""),
     }
-    config = config.copy(update=env_overrides)
+    config = config.model_copy(update=env_overrides)
 
     runner = PolyGuezRunner(config=config)
     asyncio.run(runner.run())

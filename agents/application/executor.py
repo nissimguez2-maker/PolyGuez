@@ -139,7 +139,7 @@ class Executor:
     ) -> "list[SimpleMarket]":
         markets = []
         for e in filtered_events:
-            data = json.loads(e[0].json())
+            data = json.loads(e[0].model_dump_json())
             market_ids = data["metadata"]["markets"].split(",")
             for market_id in market_ids:
                 market_data = self.gamma.get_market(market_id)
