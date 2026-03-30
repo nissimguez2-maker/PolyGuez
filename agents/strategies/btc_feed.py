@@ -63,6 +63,8 @@ class PriceFeedManager:
         self._reconnect_delay = 1.0
         self._rtds_msg_count = 0
         self._last_buffer_log = 0.0
+        self._last_rtds_msg_time = 0.0
+        self._last_pong_time = 0.0
 
     # -- Public API: Binance -------------------------------------------------
 
@@ -223,12 +225,23 @@ class PriceFeedManager:
         await self._listen_rtds()
 
     async def _rtds_ping_loop(self):
-        """Send PING every 5 seconds to keep RTDS connection alive."""
+        """Send PING every 5 seconds and force reconnect if stale."""
         try:
             while not self._stop.is_set():
                 await asyncio.sleep(_RTDS_PING_INTERVAL)
                 if self._ws and self._ws.open:
                     await self._ws.send("PING")
+                    log_event(logger, "rtds_ping", "PING sent")
+
+                    # Check for stale connection: no message in 15s → force reconnect
+                    if self._last_rtds_msg_time > 0:
+                        silence = time.time() - self._last_rtds_msg_time
+                        if silence > 15.0:
+                            log_event(logger, "rtds_stale",
+                                f"No RTDS message for {silence:.1f}s — forcing reconnect",
+                                level=40)
+                            await self._ws.close()
+                            break
         except asyncio.CancelledError:
             pass
 
@@ -247,7 +260,12 @@ class PriceFeedManager:
         async for raw in self._ws:
             if self._stop.is_set():
                 break
+
+            self._last_rtds_msg_time = time.time()
+
             if raw == "PONG":
+                self._last_pong_time = time.time()
+                log_event(logger, "rtds_pong", "PONG received")
                 continue
 
             self._rtds_msg_count += 1
@@ -260,11 +278,13 @@ class PriceFeedManager:
             now = time.time()
             if now - self._last_buffer_log >= 10.0:
                 self._last_buffer_log = now
+                since_last = now - self._last_rtds_msg_time if self._last_rtds_msg_time else 0
                 last5_b = [(round(p, 2),) for _, p in list(self._binance_buffer)[-5:]]
                 last5_c = [(round(p, 2),) for _, p in list(self._chainlink_buffer)[-5:]]
                 log_event(logger, "buffer_status", (
                     f"Binance={len(self._binance_buffer)} Chainlink={len(self._chainlink_buffer)} "
-                    f"msgs={self._rtds_msg_count} vel={self.get_velocity():.6f}"
+                    f"msgs={self._rtds_msg_count} vel={self.get_velocity():.6f} "
+                    f"last_msg={since_last:.1f}s_ago"
                 ), {"binance_last5": last5_b, "chainlink_last5": last5_c})
 
             try:
