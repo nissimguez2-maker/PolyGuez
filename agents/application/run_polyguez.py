@@ -292,38 +292,52 @@ class PolyGuezRunner:
         if entered and self._position:
             await self._hold_loop(expiry_dt)
 
-        # Wait for settlement
+        # Wait for settlement — short wait for Gamma to mark market as closed
         if expiry_dt:
             wait = (expiry_dt - datetime.now(timezone.utc)).total_seconds()
             if wait > 0:
-                await asyncio.sleep(min(wait + 5, 60))
+                log_event(logger, "settlement_wait", f"Waiting {min(wait + 2, 15):.0f}s for market to settle")
+                await asyncio.sleep(min(wait + 2, 15))
+            else:
+                # Market already expired, brief wait for settlement data
+                await asyncio.sleep(3)
 
         # Check settlement
         if self._position:
             await self._settle(market_id)
 
-        # Persist stats
+        # Persist stats and reset for next cycle
         save_rolling_stats(self._rolling_stats)
+        old_question = self._current_market.get("question", "") if self._current_market else ""
         self._current_market = None
         self._current_signal = None
         self._last_llm_verdict = ""
         self._last_llm_reason = ""
         self._price_to_beat = 0.0
+        log_event(logger, "cycle_complete", f"Market cycle complete: {old_question}. Looking for next market...")
 
     # -- Sub-loops ---------------------------------------------------------
 
     async def _entry_window(self, market_id, yes_token, no_token, expiry_dt):
         """Evaluate entry signal every ~1s during the entry window."""
+        window_start = time.time()
+
         while not self._killed:
             if expiry_dt:
                 remaining = (expiry_dt - datetime.now(timezone.utc)).total_seconds()
                 elapsed = 300.0 - remaining
                 if remaining < 30:
-                    # Too close to expiry, skip
-                    log_event(logger, "entry_skip", "Too close to expiry, skipping entry")
+                    log_event(logger, "entry_skip", f"Too close to expiry ({remaining:.0f}s remaining), skipping entry")
+                    return False
+                if remaining <= 0:
+                    log_event(logger, "market_expired", f"Market {market_id} has expired")
                     return False
             else:
-                elapsed = 0.0
+                # No expiry info — use wall-clock timeout (6 minutes max)
+                elapsed = time.time() - window_start
+                if elapsed > 360:
+                    log_event(logger, "entry_timeout", f"Entry window timed out after {elapsed:.0f}s (no expiry data)")
+                    return False
 
             # Poll CLOB prices
             yes_price, no_price, spread = await self._poll_clob(yes_token, no_token)
@@ -590,14 +604,14 @@ class PolyGuezRunner:
         loop = asyncio.get_event_loop()
         try:
             if self._polymarket:
-                log_event(logger, "clob_poll", f"Polling CLOB: yes_token={yes_token}, no_token={no_token}")
+                log_event(logger, "clob_poll", f"Polling CLOB: yes_token={yes_token[:16]}..., no_token={no_token[:16]}...")
                 yes_price = await loop.run_in_executor(
-                    None, self._polymarket.get_orderbook_price, yes_token,
+                    None, self._get_clob_price_with_log, yes_token, "UP",
                 )
                 no_price = await loop.run_in_executor(
-                    None, self._polymarket.get_orderbook_price, no_token,
+                    None, self._get_clob_price_with_log, no_token, "DOWN",
                 )
-                log_event(logger, "clob_prices", f"CLOB prices: YES={yes_price:.4f}, NO={no_price:.4f}")
+                log_event(logger, "clob_prices", f"CLOB prices: UP={yes_price:.4f}, DOWN={no_price:.4f}")
             else:
                 # Fallback without wallet — use Gamma API outcomePrices
                 yes_price = 0.50
@@ -622,6 +636,22 @@ class PolyGuezRunner:
             self._clob_ok = False
             log_event(logger, "clob_error", f"CLOB poll failed: {exc}", level=40)
             return (0.0, 0.0, 1.0)  # spread=1.0 will fail the spread check → safe
+
+    def _get_clob_price_with_log(self, token_id, label):
+        """Fetch CLOB price for a token and log the raw API response."""
+        try:
+            raw_price = self._polymarket.client.get_price(token_id)
+            price = float(raw_price)
+            log_event(logger, "clob_raw", f"CLOB {label} raw response: {raw_price} → {price:.4f}", {
+                "token_id": token_id[:24] + "...",
+                "raw": str(raw_price),
+            })
+            return price
+        except Exception as exc:
+            log_event(logger, "clob_price_error", f"CLOB {label} price fetch failed: {exc}", {
+                "token_id": token_id[:24] + "...",
+            })
+            return 0.0
 
     async def _get_clob_depth(self, token_id):
         """Get CLOB depth summary: top-of-book + depth within $0.05 per side."""

@@ -17,18 +17,17 @@ logger = get_logger("polyguez.price_feed")
 
 # RTDS protocol constants
 _RTDS_PING_INTERVAL = 5.0
-_RTDS_SUBSCRIBE_BINANCE = json.dumps({
+# RTDS sends both Binance and Chainlink on the same "crypto_prices" topic,
+# distinguished by the "symbol" field in each data entry.  A single
+# subscription with type "*" captures both btcusdt and btc/usd.
+_RTDS_SUBSCRIBE = json.dumps({
     "action": "subscribe",
     "subscriptions": [{
         "topic": "crypto_prices",
         "type": "*",
         "filters": json.dumps({"symbol": "btcusdt"}),
-    }],
-})
-_RTDS_SUBSCRIBE_CHAINLINK = json.dumps({
-    "action": "subscribe",
-    "subscriptions": [{
-        "topic": "crypto_prices_chainlink",
+    }, {
+        "topic": "crypto_prices",
         "type": "*",
         "filters": json.dumps({"symbol": "btc/usd"}),
     }],
@@ -189,11 +188,9 @@ class PriceFeedManager:
         self._reconnect_delay = 1.0
         log_event(logger, "feed_connected", "Connected to Polymarket RTDS")
 
-        # Subscribe to both Binance and Chainlink topics
-        await self._ws.send(_RTDS_SUBSCRIBE_BINANCE)
-        log_event(logger, "rtds_subscribe", f"Sent Binance subscription: {_RTDS_SUBSCRIBE_BINANCE}")
-        await self._ws.send(_RTDS_SUBSCRIBE_CHAINLINK)
-        log_event(logger, "rtds_subscribe", f"Sent Chainlink subscription: {_RTDS_SUBSCRIBE_CHAINLINK}")
+        # Single subscription captures both Binance (btcusdt) and Chainlink (btc/usd)
+        await self._ws.send(_RTDS_SUBSCRIBE)
+        log_event(logger, "rtds_subscribe", f"Sent subscription: {_RTDS_SUBSCRIBE}")
         self._rtds_msg_count = 0
 
         # Start keepalive ping
@@ -212,7 +209,17 @@ class PriceFeedManager:
             pass
 
     async def _listen_rtds(self):
-        """Listen to RTDS messages and route to appropriate buffer."""
+        """Listen to RTDS messages and route to appropriate buffer.
+
+        RTDS message format:
+          {"topic": "crypto_prices", "payload": {"data": [
+              {"symbol": "btcusdt", "timestamp": 1700000000, "value": 87000.5},
+              {"symbol": "btc/usd", "timestamp": 1700000000, "value": 86998.2},
+          ]}}
+        Or flat: {"topic": "crypto_prices", "data": {...}}
+        Each entry has {symbol, timestamp, value} or {symbol, price}.
+        Route by symbol: "btcusdt" → Binance buffer, "btc/usd" → Chainlink buffer.
+        """
         async for raw in self._ws:
             if self._stop.is_set():
                 break
@@ -243,36 +250,48 @@ class PriceFeedManager:
 
             try:
                 msg = json.loads(raw)
-                topic = msg.get("topic", "")
-                data = msg.get("data", msg)
 
-                if topic == "crypto_prices" or "btcusdt" in str(data).lower():
-                    price = self._extract_price(data)
-                    if price:
-                        self._binance_buffer.append((time.time(), price))
-                        self._update_gap()
-                    elif self._rtds_msg_count <= 20:
-                        log_event(logger, "rtds_no_price", f"Could not extract price from Binance msg: {data}")
-                elif topic == "crypto_prices_chainlink" or "btc/usd" in str(data).lower():
-                    price = self._extract_price(data)
-                    if price:
-                        self._chainlink_buffer.append((time.time(), price))
-                        self._update_gap()
-                    elif self._rtds_msg_count <= 20:
-                        log_event(logger, "rtds_no_price", f"Could not extract price from Chainlink msg: {data}")
-                elif isinstance(data, dict) and "price" in data:
-                    # Backfill or untagged message — try to classify
-                    symbol = data.get("symbol", "").lower()
-                    price = self._extract_price(data)
-                    if price:
-                        if "btc/usd" in symbol:
-                            self._chainlink_buffer.append((time.time(), price))
-                        elif "btcusdt" in symbol:
-                            self._binance_buffer.append((time.time(), price))
-                        self._update_gap()
+                # Extract the data entries — RTDS uses payload.data[] or data directly
+                entries = []
+                payload = msg.get("payload") or msg
+                data = payload.get("data", payload)
+
+                if isinstance(data, list):
+                    entries = data
+                elif isinstance(data, dict):
+                    entries = [data]
                 else:
                     if self._rtds_msg_count <= 20:
-                        log_event(logger, "rtds_unrouted", f"Unrouted msg topic='{topic}': {str(data)[:300]}")
+                        log_event(logger, "rtds_unrouted", f"Unknown data shape: {str(msg)[:300]}")
+                    continue
+
+                for entry in entries:
+                    if not isinstance(entry, dict):
+                        continue
+                    symbol = (entry.get("symbol") or "").lower()
+                    price = self._extract_price(entry)
+                    if not price:
+                        continue
+
+                    ts = entry.get("timestamp") or time.time()
+                    if isinstance(ts, (int, float)) and ts > 1e12:
+                        ts = ts / 1000.0  # milliseconds → seconds
+
+                    if symbol == "btcusdt" or symbol == "btc-usdt":
+                        self._binance_buffer.append((ts, price))
+                    elif symbol in ("btc/usd", "btcusd", "btc-usd"):
+                        self._chainlink_buffer.append((ts, price))
+                    elif "btcusdt" in symbol:
+                        self._binance_buffer.append((ts, price))
+                    elif "btc" in symbol and "usd" in symbol:
+                        self._chainlink_buffer.append((ts, price))
+                    else:
+                        if self._rtds_msg_count <= 20:
+                            log_event(logger, "rtds_unknown_symbol", f"Unknown symbol '{symbol}': {entry}")
+                        continue
+
+                self._update_gap()
+
             except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
                 if self._rtds_msg_count <= 20:
                     log_event(logger, "rtds_parse_error", f"Parse error on msg #{self._rtds_msg_count}: {exc}, raw={raw[:200]}")
@@ -281,7 +300,7 @@ class PriceFeedManager:
     def _extract_price(self, data):
         """Extract a float price from various RTDS message formats."""
         if isinstance(data, dict):
-            for key in ("price", "p", "mid_price", "last_price"):
+            for key in ("value", "price", "p", "mid_price", "last_price"):
                 if key in data:
                     try:
                         return float(data[key])

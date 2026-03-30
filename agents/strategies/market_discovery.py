@@ -73,9 +73,17 @@ class MarketDiscovery:
             log_event(logger, "market_no_markets", f"Event {slug} has no markets array")
             return None
 
-        # Pick the first market that has order book enabled and is not closed
+        # Pick the first market that has order book enabled, is not closed,
+        # and hasn't passed its endDate
         for m in markets:
             if m.get("closed"):
+                continue
+            # Skip markets whose endDate has already passed
+            expiry = MarketDiscovery.get_market_expiry(m)
+            if expiry and expiry <= datetime.now(timezone.utc):
+                log_event(logger, "market_expired_skip", f"Skipping expired market: {m.get('question', '')}", {
+                    "endDate": m.get("endDate"),
+                })
                 continue
             # Enrich the market dict with the event slug for reference
             m["_event_slug"] = event.get("slug", slug)
