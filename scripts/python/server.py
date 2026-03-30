@@ -134,12 +134,13 @@ async def websocket_endpoint(websocket: WebSocket, secret: str = Query(default="
     try:
         while True:
             if _runner:
-                snapshot = _runner.get_snapshot()
-                await websocket.send_text(snapshot.model_dump_json())
+                try:
+                    snapshot = _runner.get_snapshot()
+                    await websocket.send_text(snapshot.model_dump_json())
+                except Exception:
+                    break
             else:
                 await websocket.send_text(json.dumps({"error": "Runner not active"}))
             await asyncio.sleep(1)
-    except WebSocketDisconnect:
-        pass
-    except Exception:
+    except (WebSocketDisconnect, Exception):
         pass
