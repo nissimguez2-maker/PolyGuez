@@ -26,7 +26,7 @@ _RTDS_SUBSCRIBE_BINANCE = json.dumps({
     "action": "subscribe",
     "subscriptions": [{
         "topic": "crypto_prices",
-        "type": "update",
+        "type": "*",
         "filters": json.dumps({"symbol": "btcusdt"}),
     }],
 })
