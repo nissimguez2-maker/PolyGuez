@@ -1,7 +1,10 @@
 """Price feed manager — Polymarket RTDS primary, direct Binance fallback.
 
-RTDS provides both Binance spot and Chainlink oracle prices from a single
-WebSocket, which is the exact data source Polymarket uses for resolution.
+RTDS provides both Binance spot and Chainlink oracle prices via WebSocket.
+Binance prices arrive on topic "crypto_prices", Chainlink on
+"crypto_prices_chainlink".  Each message is a flat object:
+  {"topic": ..., "type": "update", "timestamp": ...,
+   "payload": {"symbol": "btcusdt", "timestamp": ..., "value": 67234.5}}
 """
 
 import asyncio
@@ -17,17 +20,22 @@ logger = get_logger("polyguez.price_feed")
 
 # RTDS protocol constants
 _RTDS_PING_INTERVAL = 5.0
-# RTDS sends both Binance and Chainlink on the same "crypto_prices" topic,
-# distinguished by the "symbol" field in each data entry.  A single
-# subscription with type "*" captures both btcusdt and btc/usd.
-_RTDS_SUBSCRIBE = json.dumps({
+
+# Binance: topic "crypto_prices", filters is a plain comma-separated string
+_RTDS_SUBSCRIBE_BINANCE = json.dumps({
     "action": "subscribe",
     "subscriptions": [{
         "topic": "crypto_prices",
-        "type": "*",
-        "filters": json.dumps({"symbol": "btcusdt"}),
-    }, {
-        "topic": "crypto_prices",
+        "type": "update",
+        "filters": "btcusdt",
+    }],
+})
+
+# Chainlink: topic "crypto_prices_chainlink", filters is a JSON-encoded object
+_RTDS_SUBSCRIBE_CHAINLINK = json.dumps({
+    "action": "subscribe",
+    "subscriptions": [{
+        "topic": "crypto_prices_chainlink",
         "type": "*",
         "filters": json.dumps({"symbol": "btc/usd"}),
     }],
@@ -53,8 +61,8 @@ class PriceFeedManager:
         self._ping_task = None
         self._stop = asyncio.Event()
         self._reconnect_delay = 1.0
-        self._rtds_msg_count = 0  # verbose logging counter
-        self._last_buffer_log = 0.0  # periodic buffer size logging
+        self._rtds_msg_count = 0
+        self._last_buffer_log = 0.0
 
     # -- Public API: Binance -------------------------------------------------
 
@@ -188,9 +196,11 @@ class PriceFeedManager:
         self._reconnect_delay = 1.0
         log_event(logger, "feed_connected", "Connected to Polymarket RTDS")
 
-        # Single subscription captures both Binance (btcusdt) and Chainlink (btc/usd)
-        await self._ws.send(_RTDS_SUBSCRIBE)
-        log_event(logger, "rtds_subscribe", f"Sent subscription: {_RTDS_SUBSCRIBE}")
+        # Subscribe: Binance on crypto_prices, Chainlink on crypto_prices_chainlink
+        await self._ws.send(_RTDS_SUBSCRIBE_BINANCE)
+        log_event(logger, "rtds_subscribe", f"Binance sub: {_RTDS_SUBSCRIBE_BINANCE}")
+        await self._ws.send(_RTDS_SUBSCRIBE_CHAINLINK)
+        log_event(logger, "rtds_subscribe", f"Chainlink sub: {_RTDS_SUBSCRIBE_CHAINLINK}")
         self._rtds_msg_count = 0
 
         # Start keepalive ping
@@ -211,14 +221,14 @@ class PriceFeedManager:
     async def _listen_rtds(self):
         """Listen to RTDS messages and route to appropriate buffer.
 
-        RTDS message format:
-          {"topic": "crypto_prices", "payload": {"data": [
-              {"symbol": "btcusdt", "timestamp": 1700000000, "value": 87000.5},
-              {"symbol": "btc/usd", "timestamp": 1700000000, "value": 86998.2},
-          ]}}
-        Or flat: {"topic": "crypto_prices", "data": {...}}
-        Each entry has {symbol, timestamp, value} or {symbol, price}.
-        Route by symbol: "btcusdt" → Binance buffer, "btc/usd" → Chainlink buffer.
+        RTDS message format (per Polymarket docs):
+          {
+            "topic": "crypto_prices",
+            "type": "update",
+            "timestamp": 1753314088421,
+            "payload": {"symbol": "btcusdt", "timestamp": 1753314088395, "value": 67234.50}
+          }
+        Chainlink uses topic "crypto_prices_chainlink" with same payload shape.
         """
         async for raw in self._ws:
             if self._stop.is_set():
@@ -228,88 +238,65 @@ class PriceFeedManager:
 
             self._rtds_msg_count += 1
 
-            # Log first 20 raw messages for debugging
-            if self._rtds_msg_count <= 20:
+            # Log first 10 raw messages
+            if self._rtds_msg_count <= 10:
                 log_event(logger, "rtds_raw_msg", f"[MSG #{self._rtds_msg_count}] {raw[:500]}")
 
-            # Periodic buffer status log (every 10 seconds)
+            # Periodic buffer status (every 10s)
             now = time.time()
             if now - self._last_buffer_log >= 10.0:
                 self._last_buffer_log = now
-                last5_binance = [(round(t, 1), round(p, 2)) for t, p in list(self._binance_buffer)[-5:]]
-                last5_chainlink = [(round(t, 1), round(p, 2)) for t, p in list(self._chainlink_buffer)[-5:]]
+                last5_b = [(round(p, 2),) for _, p in list(self._binance_buffer)[-5:]]
+                last5_c = [(round(p, 2),) for _, p in list(self._chainlink_buffer)[-5:]]
                 log_event(logger, "buffer_status", (
-                    f"Binance buf={len(self._binance_buffer)}, "
-                    f"Chainlink buf={len(self._chainlink_buffer)}, "
-                    f"total msgs={self._rtds_msg_count}"
-                ), {
-                    "last5_binance": last5_binance,
-                    "last5_chainlink": last5_chainlink,
-                    "velocity": round(self.get_velocity(), 6),
-                })
+                    f"Binance={len(self._binance_buffer)} Chainlink={len(self._chainlink_buffer)} "
+                    f"msgs={self._rtds_msg_count} vel={self.get_velocity():.6f}"
+                ), {"binance_last5": last5_b, "chainlink_last5": last5_c})
 
             try:
                 msg = json.loads(raw)
-
-                # Extract the data entries — RTDS uses payload.data[] or data directly
-                entries = []
-                payload = msg.get("payload") or msg
-                data = payload.get("data", payload)
-
-                if isinstance(data, list):
-                    entries = data
-                elif isinstance(data, dict):
-                    entries = [data]
-                else:
-                    if self._rtds_msg_count <= 20:
-                        log_event(logger, "rtds_unrouted", f"Unknown data shape: {str(msg)[:300]}")
-                    continue
-
-                for entry in entries:
-                    if not isinstance(entry, dict):
-                        continue
-                    symbol = (entry.get("symbol") or "").lower()
-                    price = self._extract_price(entry)
-                    if not price:
-                        continue
-
-                    ts = entry.get("timestamp") or time.time()
-                    if isinstance(ts, (int, float)) and ts > 1e12:
-                        ts = ts / 1000.0  # milliseconds → seconds
-
-                    if symbol == "btcusdt" or symbol == "btc-usdt":
-                        self._binance_buffer.append((ts, price))
-                    elif symbol in ("btc/usd", "btcusd", "btc-usd"):
-                        self._chainlink_buffer.append((ts, price))
-                    elif "btcusdt" in symbol:
-                        self._binance_buffer.append((ts, price))
-                    elif "btc" in symbol and "usd" in symbol:
-                        self._chainlink_buffer.append((ts, price))
-                    else:
-                        if self._rtds_msg_count <= 20:
-                            log_event(logger, "rtds_unknown_symbol", f"Unknown symbol '{symbol}': {entry}")
-                        continue
-
-                self._update_gap()
-
-            except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
-                if self._rtds_msg_count <= 20:
-                    log_event(logger, "rtds_parse_error", f"Parse error on msg #{self._rtds_msg_count}: {exc}, raw={raw[:200]}")
+            except json.JSONDecodeError:
                 continue
 
-    def _extract_price(self, data):
-        """Extract a float price from various RTDS message formats."""
-        if isinstance(data, dict):
-            for key in ("value", "price", "p", "mid_price", "last_price"):
-                if key in data:
+            topic = msg.get("topic", "")
+            payload = msg.get("payload")
+
+            # Payload can be a dict (single update) or potentially absent
+            if not payload or not isinstance(payload, dict):
+                # Some messages (ack, error, etc.) have no payload
+                if self._rtds_msg_count <= 10:
+                    log_event(logger, "rtds_no_payload", f"No payload in msg: {str(msg)[:300]}")
+                continue
+
+            symbol = (payload.get("symbol") or "").lower()
+            price = None
+            for key in ("value", "price", "p"):
+                if key in payload:
                     try:
-                        return float(data[key])
+                        price = float(payload[key])
+                        break
                     except (ValueError, TypeError):
                         continue
-            # Nested data field
-            if "data" in data and isinstance(data["data"], dict):
-                return self._extract_price(data["data"])
-        return None
+
+            if not price:
+                if self._rtds_msg_count <= 10:
+                    log_event(logger, "rtds_no_price", f"No price in payload: {payload}")
+                continue
+
+            ts = payload.get("timestamp") or now
+            if isinstance(ts, (int, float)) and ts > 1e12:
+                ts = ts / 1000.0  # milliseconds → seconds
+
+            # Route by topic first, then symbol as fallback
+            if topic == "crypto_prices_chainlink" or symbol in ("btc/usd", "btcusd"):
+                self._chainlink_buffer.append((ts, price))
+                self._update_gap()
+            elif topic == "crypto_prices" or symbol == "btcusdt":
+                self._binance_buffer.append((ts, price))
+                self._update_gap()
+            else:
+                if self._rtds_msg_count <= 10:
+                    log_event(logger, "rtds_unrouted", f"topic={topic} symbol={symbol}: {payload}")
 
     def _update_gap(self):
         """Record the current Binance-Chainlink gap for trend tracking."""

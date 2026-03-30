@@ -156,7 +156,10 @@ def run_polyguez(
     mode: str = typer.Option("dry-run", help="Mode: dry-run, paper, or live"),
     live: bool = typer.Option(False, "--live", help="Shortcut for --mode live"),
     dashboard: bool = typer.Option(True, help="Start dashboard server"),
-    port: int = typer.Option(8080, help="Dashboard port"),
+    dashboard_port: int = typer.Option(
+        None, "--dashboard-port", "--port",
+        help="Dashboard port (default: $PORT or 8080)",
+    ),
 ) -> None:
     """
     Run the PolyGuez Momentum strategy.
@@ -169,6 +172,9 @@ def run_polyguez(
     from agents.utils.objects import PolyGuezConfig
     import os
 
+    # Resolve port: CLI flag > $PORT env (Railway) > default 8080
+    port = dashboard_port or int(os.getenv("PORT", "8080"))
+
     effective_mode = "live" if live else mode
     if effective_mode not in ("dry-run", "paper", "live"):
         print(f"Invalid mode: {effective_mode}. Using dry-run.")
@@ -176,6 +182,7 @@ def run_polyguez(
 
     config = PolyGuezConfig(
         mode=effective_mode,
+        rtds_ws_url=os.getenv("POLYMARKET_RTDS_URL", PolyGuezConfig().rtds_ws_url),
         binance_ws_url=os.getenv("BINANCE_WS_URL", PolyGuezConfig().binance_ws_url),
         coinbase_ws_url=os.getenv("COINBASE_WS_URL", PolyGuezConfig().coinbase_ws_url),
         dashboard_secret=os.getenv("DASHBOARD_SECRET", ""),
@@ -194,7 +201,7 @@ def run_polyguez(
 
         t = threading.Thread(target=_start_dashboard, daemon=True)
         t.start()
-        print(f"Dashboard running at http://localhost:{port}")
+        print(f"Dashboard running on port {port}")
 
     print(f"PolyGuez starting in [{effective_mode.upper()}] mode")
     asyncio.run(runner.run())

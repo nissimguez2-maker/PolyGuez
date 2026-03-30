@@ -638,17 +638,16 @@ class PolyGuezRunner:
             return (0.0, 0.0, 1.0)  # spread=1.0 will fail the spread check → safe
 
     def _get_clob_price_with_log(self, token_id, label):
-        """Fetch CLOB price for a token and log the raw API response."""
+        """Fetch CLOB midpoint price for a token and log the raw response."""
         try:
-            raw_price = self._polymarket.client.get_price(token_id)
-            price = float(raw_price)
-            log_event(logger, "clob_raw", f"CLOB {label} raw response: {raw_price} → {price:.4f}", {
+            raw_mid = self._polymarket.client.get_midpoint(token_id)
+            price = float(raw_mid)
+            log_event(logger, "clob_raw", f"CLOB {label} midpoint: {raw_mid} → {price:.4f}", {
                 "token_id": token_id[:24] + "...",
-                "raw": str(raw_price),
             })
             return price
         except Exception as exc:
-            log_event(logger, "clob_price_error", f"CLOB {label} price fetch failed: {exc}", {
+            log_event(logger, "clob_price_error", f"CLOB {label} midpoint failed: {exc}", {
                 "token_id": token_id[:24] + "...",
             })
             return 0.0

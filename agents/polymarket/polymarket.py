@@ -299,7 +299,9 @@ class Polymarket:
         return self.client.get_order_book(token_id)
 
     def get_orderbook_price(self, token_id: str) -> float:
-        return float(self.client.get_price(token_id))
+        """Get the mid-market price for a token. Uses /midpoint endpoint."""
+        mid = self.client.get_midpoint(token_id)
+        return float(mid)
 
     def get_address_for_private_key(self):
         account = self.w3.eth.account.from_key(str(self.private_key))

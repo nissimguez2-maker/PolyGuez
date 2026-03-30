@@ -31,6 +31,13 @@ def _check_auth(secret: str = ""):
         raise HTTPException(status_code=403, detail="Invalid dashboard secret")
 
 
+# -- Health check (Railway / load balancer) --------------------------------
+
+@app.get("/health")
+async def health():
+    return JSONResponse({"status": "ok", "runner_active": _runner is not None})
+
+
 # -- HTML dashboard --------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
