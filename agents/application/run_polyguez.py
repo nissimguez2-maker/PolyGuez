@@ -191,15 +191,21 @@ class PolyGuezRunner:
         try:
             loop = asyncio.get_event_loop()
             self._polymarket = await loop.run_in_executor(None, Polymarket)
-            log_event(logger, "wallet_connected", f"Polymarket client initialized (mode={self.config.mode})")
+            log_event(logger, "wallet_connected",
+                f"Polymarket client initialized (mode={self.config.mode}, "
+                f"rpc={self._polymarket.polygon_rpc})")
         except Exception as exc:
-            log_event(logger, "wallet_error", f"Failed to init Polymarket: {exc}", level=40)
+            log_event(logger, "wallet_error",
+                f"Failed to init Polymarket: {type(exc).__name__}: {exc}",
+                level=40)
             self._polymarket = None
             if self.config.mode == "live":
                 log_event(logger, "runner_halt", "Cannot run live without wallet")
                 return
             else:
-                log_event(logger, "wallet_fallback", "Continuing without wallet — CLOB prices and balance will use fallbacks")
+                log_event(logger, "wallet_fallback",
+                    "Continuing without wallet — CLOB prices will use Gamma outcomePrices, "
+                    "balance will be simulated $100")
 
         # Start BTC price feed
         await self._btc_feed.start()
@@ -592,11 +598,18 @@ class PolyGuezRunner:
             market = await loop.run_in_executor(
                 None, self._discovery.find_active_btc_5min_market, self.config,
             )
-            self._gamma_ok = True
+            if market:
+                self._gamma_ok = True
+                log_event(logger, "market_found", f"Found: {market.get('question', 'unknown')}")
+            else:
+                self._gamma_ok = True  # API worked, just no market right now
+                log_event(logger, "market_none", "No active BTC 5-min market found in current/adjacent windows")
             return market
         except Exception as exc:
             self._gamma_ok = False
-            log_event(logger, "gamma_error", f"Market discovery failed: {exc}", level=40)
+            log_event(logger, "gamma_error",
+                f"Market discovery failed: {type(exc).__name__}: {exc}",
+                level=40)
             return None
 
     async def _poll_clob(self, yes_token, no_token):
@@ -701,11 +714,14 @@ class PolyGuezRunner:
                 log_event(logger, "balance_real", f"Real USDC balance: ${real_balance:.2f}")
                 return
             except Exception as exc:
-                log_event(logger, "balance_error", f"Balance fetch failed: {exc}", level=40)
-        # Fallback: simulated balance only if we truly have no wallet
-        if self._usdc_balance == 0.0:
+                log_event(logger, "balance_error",
+                    f"Balance fetch failed: {type(exc).__name__}: {exc}",
+                    level=40)
+                # Fall through to simulated balance
+        # Simulated balance for dry-run when wallet is unavailable or errored
+        if self._usdc_balance <= 0.0:
             self._usdc_balance = 100.0
-            log_event(logger, "balance_simulated", "No wallet available — using simulated $100")
+            log_event(logger, "balance_simulated", "Using simulated $100 balance")
 
     def _apply_cooldown(self):
         """Set cooldown_until based on adaptive cooldown logic."""

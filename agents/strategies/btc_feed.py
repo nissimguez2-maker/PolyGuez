@@ -176,12 +176,26 @@ class PriceFeedManager:
                 asyncio.TimeoutError,
             ) as exc:
                 self._connected = False
-                log_event(logger, "feed_disconnect", f"RTDS disconnected: {exc}, trying fallback")
+                rtds_url = self._config.rtds_ws_url
+                log_event(logger, "feed_disconnect",
+                    f"RTDS connection failed: {type(exc).__name__}: {exc} "
+                    f"(url={rtds_url}), trying Binance fallback",
+                    level=40)
                 try:
                     await self._connect_binance_direct()
                 except Exception as fb_exc:
-                    log_event(logger, "feed_disconnect", f"Binance fallback also failed: {fb_exc}")
+                    binance_url = self._config.binance_ws_url
+                    log_event(logger, "feed_disconnect",
+                        f"Binance fallback also failed: {type(fb_exc).__name__}: {fb_exc} "
+                        f"(url={binance_url})",
+                        level=40)
                     await self._backoff_sleep()
+            except Exception as exc:
+                self._connected = False
+                log_event(logger, "feed_error",
+                    f"Unexpected feed error: {type(exc).__name__}: {exc}",
+                    level=40)
+                await self._backoff_sleep()
             except asyncio.CancelledError:
                 break
 

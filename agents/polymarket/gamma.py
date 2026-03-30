@@ -10,6 +10,11 @@ class GammaMarketClient:
         self.gamma_url = "https://gamma-api.polymarket.com"
         self.gamma_markets_endpoint = self.gamma_url + "/markets"
         self.gamma_events_endpoint = self.gamma_url + "/events"
+        self._http_headers = {
+            "User-Agent": "PolyGuez/1.0",
+            "Accept": "application/json",
+        }
+        self._http_timeout = 15.0
 
     def parse_pydantic_market(self, market_object: dict) -> Market:
         try:
@@ -76,7 +81,11 @@ class GammaMarketClient:
                 'Cannot use "parse_pydantic" and "local_file" params simultaneously.'
             )
 
-        response = httpx.get(self.gamma_markets_endpoint, params=querystring_params)
+        url = self.gamma_markets_endpoint
+        response = httpx.get(
+            url, params=querystring_params,
+            headers=self._http_headers, timeout=self._http_timeout,
+        )
         if response.status_code == 200:
             data = response.json()
             if local_file_path is not None:
@@ -90,8 +99,10 @@ class GammaMarketClient:
                     markets.append(self.parse_pydantic_market(market_object))
                 return markets
         else:
-            print(f"Error response returned from api: HTTP {response.status_code}")
-            raise Exception()
+            raise Exception(
+                f"Gamma markets API HTTP {response.status_code}: "
+                f"GET {url}?{querystring_params} → {response.text[:200]}"
+            )
 
     def get_events(
         self, querystring_params={}, parse_pydantic=False, local_file_path=None
@@ -101,7 +112,11 @@ class GammaMarketClient:
                 'Cannot use "parse_pydantic" and "local_file" params simultaneously.'
             )
 
-        response = httpx.get(self.gamma_events_endpoint, params=querystring_params)
+        url = self.gamma_events_endpoint
+        response = httpx.get(
+            url, params=querystring_params,
+            headers=self._http_headers, timeout=self._http_timeout,
+        )
         if response.status_code == 200:
             data = response.json()
             if local_file_path is not None:
@@ -115,7 +130,10 @@ class GammaMarketClient:
                     events.append(self.parse_event(market_event_obj))
                 return events
         else:
-            raise Exception()
+            raise Exception(
+                f"Gamma events API HTTP {response.status_code}: "
+                f"GET {url}?{querystring_params} → {response.text[:200]}"
+            )
 
     def get_all_markets(self, limit=2) -> "list[Market]":
         return self.get_markets(querystring_params={"limit": limit})
@@ -176,8 +194,9 @@ class GammaMarketClient:
 
     def get_market(self, market_id: int) -> dict():
         url = self.gamma_markets_endpoint + "/" + str(market_id)
-        print(url)
-        response = httpx.get(url)
+        response = httpx.get(url, headers=self._http_headers, timeout=self._http_timeout)
+        if response.status_code != 200:
+            raise Exception(f"Gamma market API HTTP {response.status_code}: GET {url}")
         return response.json()
 
 

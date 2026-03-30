@@ -57,11 +57,14 @@ class MarketDiscovery:
     def _query_event_by_slug(self, slug):
         """Query GET /events?slug=... and extract the first market."""
         try:
+            log_event(logger, "market_query", f"Querying Gamma: GET /events?slug={slug}")
             events = self._gamma.get_events(
                 querystring_params={"slug": slug}
             )
         except Exception as exc:
-            log_event(logger, "market_discovery_error", f"Gamma events API error: {exc}")
+            log_event(logger, "market_discovery_error",
+                f"Gamma events API error for slug={slug}: {type(exc).__name__}: {exc}",
+                level=40)
             return None
 
         if not events:

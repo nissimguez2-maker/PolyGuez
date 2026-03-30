@@ -33,6 +33,14 @@ from agents.utils.objects import SimpleMarket, SimpleEvent
 load_dotenv()
 
 
+_POLYGON_RPC_URLS = [
+    os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com"),
+    "https://rpc.ankr.com/polygon",
+    "https://polygon.llamarpc.com",
+    "https://polygon.drpc.org",
+]
+
+
 class Polymarket:
     def __init__(self) -> None:
         self.gamma_url = "https://gamma-api.polymarket.com"
@@ -44,8 +52,27 @@ class Polymarket:
 
         self.chain_id = 137  # POLYGON
         self.private_key = os.getenv("POLYGON_WALLET_PRIVATE_KEY")
-        self.polygon_rpc = "https://polygon-rpc.com"
-        self.w3 = Web3(Web3.HTTPProvider(self.polygon_rpc))
+
+        # Try multiple Polygon RPCs — some return 401 from certain hosting providers
+        self.polygon_rpc = None
+        self.w3 = None
+        for rpc_url in _POLYGON_RPC_URLS:
+            try:
+                w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 10}))
+                chain_id = w3.eth.chain_id  # Quick connectivity check
+                self.polygon_rpc = rpc_url
+                self.w3 = w3
+                print(f"[Polymarket] Connected to Polygon RPC: {rpc_url} (chain={chain_id})")
+                break
+            except Exception as rpc_exc:
+                print(f"[Polymarket] RPC {rpc_url} failed: {rpc_exc}")
+                continue
+
+        if not self.w3:
+            raise Exception(
+                f"All Polygon RPCs failed: {_POLYGON_RPC_URLS}. "
+                "Set POLYGON_RPC_URL env var to a working endpoint."
+            )
 
         self.exchange_address = "0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e"
         self.neg_risk_exchange_address = "0xC5d563A36AE78145C45a50134d48A1215220f80a"
@@ -56,7 +83,7 @@ class Polymarket:
         self.usdc_address = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174"
         self.ctf_address = "0x4D97DCd97eC945f40cF65F87097ACe5EA0476045"
 
-        self.web3 = Web3(Web3.HTTPProvider(self.polygon_rpc))
+        self.web3 = Web3(Web3.HTTPProvider(self.polygon_rpc, request_kwargs={"timeout": 10}))
         self.web3.middleware_onion.inject(geth_poa_middleware, layer=0)
 
         self.usdc = self.web3.eth.contract(
