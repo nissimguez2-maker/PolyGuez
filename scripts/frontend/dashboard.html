@@ -79,11 +79,17 @@ canvas{width:100%;height:120px}
 <h3>Live Market</h3>
 <div id="marketQuestion" style="font-size:13px;color:#aab;margin-bottom:6px">Waiting for market...</div>
 <div style="display:flex;justify-content:space-between;align-items:baseline">
-  <div><span class="big-num mono" id="btcPrice">--</span> <span style="color:#8899aa">BTC/USD</span></div>
+  <div><span class="big-num mono" id="btcPrice">--</span> <span style="color:#8899aa">Binance</span></div>
+  <div class="mono" style="text-align:right">
+    <div>Chainlink: $<span id="chainlinkPrice">--</span></div>
+    <div style="font-size:11px;color:#8899aa">P2B: $<span id="priceTobeat">--</span></div>
+  </div>
   <div class="mono">Expiry: <span id="expiry">--:--</span></div>
 </div>
-<div style="margin-top:6px;display:flex;gap:24px;font-size:13px" class="mono">
-  <div>Velocity: <span id="velocity">0.000000</span> <span id="velArrow"></span></div>
+<div style="margin-top:6px;display:flex;gap:16px;font-size:13px;flex-wrap:wrap" class="mono">
+  <div>Vel: <span id="velocity">0.000000</span> <span id="velArrow"></span></div>
+  <div>Gap: <span id="oracleGap">0.00</span> (<span id="gapDir">--</span>)</div>
+  <div>CL vs P2B: <span id="clVsPtb">0.00</span></div>
   <div>YES: <span id="yesPrice">0.0000</span></div>
   <div>NO: <span id="noPrice">0.0000</span></div>
   <div>Spread: <span id="spread">0.0000</span></div>
@@ -99,6 +105,8 @@ canvas{width:100%;height:120px}
 <h3>Signal Conditions</h3>
 <div id="signalList">
   <div class="signal-row"><span class="icon" id="s_velocity">-</span> Velocity above threshold</div>
+  <div class="signal-row"><span class="icon" id="s_oraclegap">-</span> Oracle gap sufficient</div>
+  <div class="signal-row"><span class="icon" id="s_clobmisprice">-</span> CLOB mispricing detected</div>
   <div class="signal-row"><span class="icon" id="s_edge">-</span> Edge above required</div>
   <div class="signal-row"><span class="icon" id="s_spread">-</span> Spread below max</div>
   <div class="signal-row"><span class="icon" id="s_nopos">-</span> No open position</div>
@@ -185,6 +193,7 @@ canvas{width:100%;height:120px}
     <div class="cfg-row"><label>Min Edge</label><input type="number" step="0.001" id="cfg_min_edge"></div>
     <div class="cfg-row"><label>Max Spread</label><input type="number" step="0.01" id="cfg_max_spread"></div>
     <div class="cfg-row"><label>Reversal Threshold</label><input type="number" step="0.01" id="cfg_reversal_threshold"></div>
+    <div class="cfg-row"><label>Min Oracle Gap ($)</label><input type="number" step="1" id="cfg_min_oracle_gap"></div>
   </div>
 </div>
 <div class="col">
@@ -214,6 +223,7 @@ canvas{width:100%;height:120px}
   <div class="cfg-group"><h4>Data Providers</h4>
     <div class="cfg-row"><label>News API</label><input type="checkbox" id="cfg_dp_news"></div>
     <div class="cfg-row"><label>Tavily Search</label><input type="checkbox" id="cfg_dp_tavily"></div>
+    <div class="cfg-row"><label>Chainlink On-Chain</label><input type="checkbox" id="cfg_dp_chainlink"></div>
   </div>
   <div class="cfg-group"><h4>Mode</h4>
     <div class="cfg-row"><label>Mode</label>
@@ -277,9 +287,20 @@ function update(s) {
   // Market
   setText('marketQuestion', s.current_market_question || 'Waiting for market...');
   setText('btcPrice', s.btc_price ? s.btc_price.toFixed(2) : '--');
+  setText('chainlinkPrice', s.chainlink_price ? s.chainlink_price.toFixed(2) : '--');
+  setText('priceTobeat', s.price_to_beat ? s.price_to_beat.toFixed(2) : '--');
   setText('velocity', (s.btc_velocity||0).toFixed(6));
   setText('velArrow', s.btc_direction === 'up' ? '▲' : '▼');
   document.getElementById('velArrow').style.color = s.btc_direction === 'up' ? '#00ff88' : '#ff4444';
+  const gap = s.binance_chainlink_gap || 0;
+  const gapEl = document.getElementById('oracleGap');
+  gapEl.textContent = (gap >= 0 ? '+' : '') + gap.toFixed(2);
+  gapEl.style.color = Math.abs(gap) >= 15 ? '#00ff88' : '#ff4444';
+  setText('gapDir', s.gap_direction || '--');
+  const clvs = s.chainlink_vs_price_to_beat || 0;
+  const clvsEl = document.getElementById('clVsPtb');
+  clvsEl.textContent = (clvs >= 0 ? '+' : '') + clvs.toFixed(2);
+  clvsEl.style.color = clvs >= 0 ? '#00ff88' : '#ff4444';
   setText('yesPrice', (s.yes_price||0).toFixed(4));
   setText('noPrice', (s.no_price||0).toFixed(4));
   setText('spread', (s.clob_spread||0).toFixed(4));
@@ -293,6 +314,8 @@ function update(s) {
   // Signal
   if (s.signal) {
     setSig('s_velocity', s.signal.velocity_ok);
+    setSig('s_oraclegap', s.signal.oracle_gap_ok);
+    setSig('s_clobmisprice', s.signal.clob_mispricing_ok);
     setSig('s_edge', s.signal.edge_ok);
     setSig('s_spread', s.signal.spread_ok);
     setSig('s_nopos', s.signal.no_position);
@@ -401,6 +424,7 @@ function populateConfig(cfg) {
   setVal('cfg_min_edge', cfg.min_edge);
   setVal('cfg_max_spread', cfg.max_spread);
   setVal('cfg_reversal_threshold', cfg.reversal_threshold);
+  setVal('cfg_min_oracle_gap', cfg.min_oracle_gap);
   setVal('cfg_early_window_seconds', cfg.early_window_seconds);
   setVal('cfg_mid_window_seconds', cfg.mid_window_seconds);
   setVal('cfg_early_edge_multiplier', cfg.early_edge_multiplier);
@@ -416,6 +440,7 @@ function populateConfig(cfg) {
   setVal('cfg_llm_timeout', cfg.llm_timeout);
   document.getElementById('cfg_dp_news').checked = (cfg.data_providers||[]).includes('news');
   document.getElementById('cfg_dp_tavily').checked = (cfg.data_providers||[]).includes('tavily');
+  document.getElementById('cfg_dp_chainlink').checked = (cfg.data_providers||[]).includes('chainlink');
   setVal('cfg_mode', cfg.mode);
 }
 
@@ -426,6 +451,7 @@ async function saveConfig() {
   const dp = [];
   if (document.getElementById('cfg_dp_news').checked) dp.push('news');
   if (document.getElementById('cfg_dp_tavily').checked) dp.push('tavily');
+  if (document.getElementById('cfg_dp_chainlink').checked) dp.push('chainlink');
 
   const newMode = document.getElementById('cfg_mode').value;
   if (newMode === 'live') {
@@ -443,6 +469,7 @@ async function saveConfig() {
     min_edge: getNum('cfg_min_edge'),
     max_spread: getNum('cfg_max_spread'),
     reversal_threshold: getNum('cfg_reversal_threshold'),
+    min_oracle_gap: getNum('cfg_min_oracle_gap'),
     early_window_seconds: getNum('cfg_early_window_seconds'),
     mid_window_seconds: getNum('cfg_mid_window_seconds'),
     early_edge_multiplier: getNum('cfg_early_edge_multiplier'),

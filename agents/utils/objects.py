@@ -247,7 +247,8 @@ class PolyGuezConfig(BaseModel):
     velocity_threshold: float = Field(default=0.05, description="Min BTC price velocity magnitude ($/sec)")
     min_edge: float = Field(default=0.03, description="Min difference between fair value estimate and CLOB price")
     max_spread: float = Field(default=0.10, description="Max CLOB spread to allow entry")
-    reversal_threshold: float = Field(default=0.08, description="Velocity reversal magnitude for emergency exit")
+    reversal_threshold: float = Field(default=0.08, description="Chainlink reversal vs price_to_beat for emergency exit")
+    min_oracle_gap: float = Field(default=15.0, description="Min Binance-to-Chainlink gap in USD to trigger signal")
 
     # Entry window edge multipliers
     early_window_seconds: int = Field(default=60)
@@ -278,7 +279,7 @@ class PolyGuezConfig(BaseModel):
 
     # Market discovery
     market_slug_pattern: str = Field(default="btc-updown-5m", description="Slug pattern to match 5-min BTC markets")
-    market_question_pattern: str = Field(default="", description="Optional question regex pattern for market matching")
+    market_question_pattern: str = Field(default="Bitcoin Up or Down", description="Question text pattern for market matching")
 
     # CLOB polling
     clob_poll_interval: float = Field(default=1.0, description="Seconds between CLOB orderbook polls")
@@ -286,8 +287,9 @@ class PolyGuezConfig(BaseModel):
     # Mode: dry-run, paper, live
     mode: str = Field(default="dry-run")
 
-    # BTC feed
-    binance_ws_url: str = Field(default="wss://stream.binance.com:9443/ws/btcusdt@trade")
+    # Price feeds
+    rtds_ws_url: str = Field(default="wss://ws-live-data.polymarket.com", description="Polymarket RTDS WebSocket (primary for Binance+Chainlink)")
+    binance_ws_url: str = Field(default="wss://stream.binance.com:9443/ws/btcusdt@trade", description="Direct Binance WS (fallback only)")
     coinbase_ws_url: str = Field(default="wss://ws-feed.exchange.coinbase.com")
     btc_feed_connect_timeout: float = Field(default=5.0)
     btc_buffer_min_seconds: float = Field(default=30.0)
@@ -316,6 +318,8 @@ class TradeRecord(BaseModel):
 class SignalState(BaseModel):
     btc_velocity: float = 0.0
     btc_price: float = 0.0
+    chainlink_price: float = 0.0
+    binance_chainlink_gap: float = 0.0
     yes_price: float = 0.0
     no_price: float = 0.0
     spread: float = 0.0
@@ -324,9 +328,12 @@ class SignalState(BaseModel):
     estimated_fair_value: float = 0.0
     edge: float = 0.0
     required_edge: float = 0.0
+    gap_favors_position: bool = False
 
     # Per-condition booleans
     velocity_ok: bool = False
+    oracle_gap_ok: bool = False
+    clob_mispricing_ok: bool = False
     edge_ok: bool = False
     spread_ok: bool = False
     no_position: bool = False
@@ -338,7 +345,8 @@ class SignalState(BaseModel):
     @property
     def all_conditions_met(self) -> bool:
         return all([
-            self.velocity_ok, self.edge_ok, self.spread_ok,
+            self.velocity_ok, self.oracle_gap_ok, self.clob_mispricing_ok,
+            self.edge_ok, self.spread_ok,
             self.no_position, self.cooldown_ok, self.daily_loss_ok,
             self.balance_ok, self.position_limit_ok,
         ])
@@ -351,6 +359,7 @@ class PositionState(BaseModel):
     market_id: str = ""
     token_id: str = ""
     size_usdc: float = 0.0
+    price_to_beat: float = 0.0  # Chainlink opening price for the 5-min window
 
 
 class RollingStats(BaseModel):
@@ -420,6 +429,11 @@ class DashboardSnapshot(BaseModel):
     current_market_question: str = ""
     current_market_expiry: Optional[str] = None
     btc_price: float = 0.0
+    chainlink_price: float = 0.0
+    binance_chainlink_gap: float = 0.0
+    gap_direction: str = ""  # narrowing or widening
+    price_to_beat: float = 0.0
+    chainlink_vs_price_to_beat: float = 0.0
     btc_velocity: float = 0.0
     btc_direction: str = ""
     yes_price: float = 0.0

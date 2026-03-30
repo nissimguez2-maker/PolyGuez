@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 
 from agents.polymarket.gamma import GammaMarketClient
 from agents.polymarket.polymarket import Polymarket
-from agents.strategies.btc_feed import BTCPriceFeed
+from agents.strategies.btc_feed import PriceFeedManager
 from agents.strategies.market_discovery import MarketDiscovery
 from agents.strategies.polyguez_strategy import (
     calculate_max_capital_at_risk,
@@ -58,7 +58,7 @@ class PolyGuezRunner:
         self._discovery = MarketDiscovery(self._gamma)
 
         # New components
-        self._btc_feed = BTCPriceFeed(self.config)
+        self._btc_feed = PriceFeedManager(self.config)
 
         # State
         self._rolling_stats = load_rolling_stats()
@@ -73,6 +73,7 @@ class PolyGuezRunner:
         self._usdc_balance = 0.0
         self._gamma_ok = False
         self._clob_ok = False
+        self._price_to_beat = 0.0  # Chainlink price at market open
 
     # -- Public API for dashboard / CLI ------------------------------------
 
@@ -124,6 +125,9 @@ class PolyGuezRunner:
             except (ValueError, TypeError):
                 pass
 
+        chainlink_price = self._btc_feed.get_chainlink_price()
+        chainlink_vs_ptb = chainlink_price - self._price_to_beat if chainlink_price and self._price_to_beat else 0.0
+
         return DashboardSnapshot(
             mode=self.config.mode,
             btc_feed_connected=self._btc_feed.is_connected,
@@ -138,6 +142,11 @@ class PolyGuezRunner:
             current_market_question=self._current_market.get("question", "") if self._current_market else "",
             current_market_expiry=expiry,
             btc_price=self._btc_feed.get_price(),
+            chainlink_price=chainlink_price,
+            binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
+            gap_direction=self._btc_feed.get_gap_direction(),
+            price_to_beat=self._price_to_beat,
+            chainlink_vs_price_to_beat=chainlink_vs_ptb,
             btc_velocity=self._btc_feed.get_velocity(),
             btc_direction="up" if self._btc_feed.get_velocity() > 0 else "down",
             yes_price=self._current_signal.yes_price if self._current_signal else 0.0,
@@ -246,6 +255,15 @@ class PolyGuezRunner:
             "expiry": str(expiry_dt),
         })
 
+        # Capture price_to_beat: Chainlink price at market open
+        self._price_to_beat = self._btc_feed.get_chainlink_price()
+        if self._price_to_beat > 0:
+            log_event(logger, "price_to_beat", f"Chainlink at market open: ${self._price_to_beat:.2f}")
+        else:
+            # Fallback: use Binance price if Chainlink not available yet
+            self._price_to_beat = self._btc_feed.get_price()
+            log_event(logger, "price_to_beat_fallback", f"Using Binance as price_to_beat: ${self._price_to_beat:.2f}")
+
         # Wait for BTC feed buffer
         if not self._btc_feed.is_ready():
             log_event(logger, "btc_buffer_filling", "Waiting for BTC price buffer")
@@ -275,6 +293,7 @@ class PolyGuezRunner:
         self._current_signal = None
         self._last_llm_verdict = ""
         self._last_llm_reason = ""
+        self._price_to_beat = 0.0
 
     # -- Sub-loops ---------------------------------------------------------
 
@@ -294,7 +313,7 @@ class PolyGuezRunner:
             # Poll CLOB prices
             yes_price, no_price, spread = await self._poll_clob(yes_token, no_token)
 
-            # Evaluate signal
+            # Evaluate signal (three-price-gap model)
             signal = evaluate_entry_signal(
                 btc_velocity=self._btc_feed.get_velocity(),
                 btc_price=self._btc_feed.get_price(),
@@ -307,6 +326,8 @@ class PolyGuezRunner:
                 rolling_stats=self._rolling_stats,
                 has_position=self._position is not None,
                 open_position_count=1 if self._position else 0,
+                chainlink_price=self._btc_feed.get_chainlink_price(),
+                binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
             )
             self._current_signal = signal
 
@@ -315,9 +336,12 @@ class PolyGuezRunner:
                 "edge": round(signal.edge, 4),
                 "required_edge": round(signal.required_edge, 4),
                 "spread": round(signal.spread, 4),
+                "oracle_gap": round(signal.binance_chainlink_gap, 2),
                 "elapsed": round(elapsed, 1),
                 "conditions": {
                     "velocity_ok": signal.velocity_ok,
+                    "oracle_gap_ok": signal.oracle_gap_ok,
+                    "clob_mispricing_ok": signal.clob_mispricing_ok,
                     "edge_ok": signal.edge_ok,
                     "spread_ok": signal.spread_ok,
                     "no_position": signal.no_position,
@@ -339,9 +363,17 @@ class PolyGuezRunner:
         """Deterministic signal fired — run LLM confirmation then execute."""
         log_event(logger, "signal_fired", f"Deterministic signal FIRED: {signal.direction}")
 
+        # Build CLOB depth summary for LLM context
+        clob_depth = await self._get_clob_depth(
+            yes_token if signal.direction == "up" else no_token,
+        )
+
         # LLM confirmation
         verdict, reason, provider, llm_time = await get_llm_confirmation(
             signal, self._rolling_stats, self.config,
+            price_to_beat=self._price_to_beat,
+            gap_direction=self._btc_feed.get_gap_direction(),
+            clob_depth_summary=clob_depth,
         )
         self._last_llm_verdict = verdict
         self._last_llm_reason = reason
@@ -396,6 +428,7 @@ class PolyGuezRunner:
             market_id=market_id,
             token_id=token_id,
             size_usdc=size,
+            price_to_beat=self._price_to_beat,
         )
 
         log_event(logger, "position_entered", f"Entered {side} @ {entry_price:.4f}, size=${size:.2f}", {
@@ -416,7 +449,11 @@ class PolyGuezRunner:
                     break  # Let it settle
 
             velocity = self._btc_feed.get_velocity()
-            if check_emergency_exit(velocity, entry_direction, self.config):
+            if check_emergency_exit(
+                velocity, entry_direction, self.config,
+                chainlink_price=self._btc_feed.get_chainlink_price(),
+                price_to_beat=self._position.price_to_beat,
+            ):
                 result = await execute_emergency_exit(
                     self._polymarket, self._position, self.config.mode,
                 )
@@ -568,6 +605,43 @@ class PolyGuezRunner:
             log_event(logger, "clob_error", f"CLOB poll failed: {exc}", level=40)
             return (0.0, 0.0, 1.0)  # spread=1.0 will fail the spread check → safe
 
+    async def _get_clob_depth(self, token_id):
+        """Get CLOB depth summary: top-of-book + depth within $0.05 per side."""
+        if not self._polymarket:
+            return ""
+        loop = asyncio.get_event_loop()
+        try:
+            book = await loop.run_in_executor(
+                None, self._polymarket.client.get_order_book, token_id,
+            )
+            bids = book.get("bids", [])
+            asks = book.get("asks", [])
+
+            best_bid = float(bids[0]["price"]) if bids else 0.0
+            best_bid_size = float(bids[0]["size"]) if bids else 0.0
+            best_ask = float(asks[0]["price"]) if asks else 0.0
+            best_ask_size = float(asks[0]["size"]) if asks else 0.0
+
+            # Depth within $0.05 of best price
+            bid_depth = sum(
+                float(b["size"]) for b in bids
+                if best_bid - float(b["price"]) <= 0.05
+            )
+            ask_depth = sum(
+                float(a["size"]) for a in asks
+                if float(a["price"]) - best_ask <= 0.05
+            )
+
+            return (
+                f"Best bid: {best_bid:.4f} (size {best_bid_size:.1f}) | "
+                f"Best ask: {best_ask:.4f} (size {best_ask_size:.1f})\n"
+                f"Bid depth (within $0.05): {bid_depth:.1f} | "
+                f"Ask depth (within $0.05): {ask_depth:.1f}"
+            )
+        except Exception as exc:
+            log_event(logger, "clob_depth_error", f"Depth fetch failed: {exc}")
+            return ""
+
     async def _refresh_balance(self):
         """Update USDC balance."""
         if self._polymarket:
@@ -607,6 +681,7 @@ def start_runner(mode="dry-run", live=False):
 
     # Load overrides from env
     env_overrides = {
+        "rtds_ws_url": os.getenv("POLYMARKET_RTDS_URL", config.rtds_ws_url),
         "binance_ws_url": os.getenv("BINANCE_WS_URL", config.binance_ws_url),
         "coinbase_ws_url": os.getenv("COINBASE_WS_URL", config.coinbase_ws_url),
         "dashboard_secret": os.getenv("DASHBOARD_SECRET", ""),

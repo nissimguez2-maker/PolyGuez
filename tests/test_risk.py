@@ -60,6 +60,8 @@ class TestDailyLossLimit(unittest.TestCase):
 
 class TestEmergencyExit(unittest.TestCase):
 
+    # -- Velocity-based fallback (no Chainlink data) -----------------------
+
     def test_no_reversal(self):
         config = _default_config(reversal_threshold=0.08)
         self.assertFalse(check_emergency_exit(0.05, "up", config))
@@ -84,6 +86,49 @@ class TestEmergencyExit(unittest.TestCase):
         """At exactly the threshold — not exceeded, so no exit."""
         config = _default_config(reversal_threshold=0.08)
         self.assertFalse(check_emergency_exit(-0.08, "up", config))
+
+    # -- Chainlink-based exit (primary) ------------------------------------
+
+    def test_chainlink_reversal_up_triggers_exit(self):
+        """Chainlink drops below price_to_beat by more than threshold → exit."""
+        config = _default_config(reversal_threshold=50.0)
+        self.assertTrue(check_emergency_exit(
+            0.05, "up", config,
+            chainlink_price=64940.0, price_to_beat=65000.0,  # -60 < -50
+        ))
+
+    def test_chainlink_reversal_down_triggers_exit(self):
+        """Chainlink rises above price_to_beat by more than threshold → exit."""
+        config = _default_config(reversal_threshold=50.0)
+        self.assertTrue(check_emergency_exit(
+            -0.05, "down", config,
+            chainlink_price=65060.0, price_to_beat=65000.0,  # +60 > +50
+        ))
+
+    def test_chainlink_no_reversal(self):
+        """Chainlink move within threshold → no exit."""
+        config = _default_config(reversal_threshold=50.0)
+        self.assertFalse(check_emergency_exit(
+            0.05, "up", config,
+            chainlink_price=64970.0, price_to_beat=65000.0,  # -30, within 50
+        ))
+
+    def test_chainlink_favorable_move_no_exit(self):
+        """Chainlink moves in our favor → no exit."""
+        config = _default_config(reversal_threshold=50.0)
+        self.assertFalse(check_emergency_exit(
+            0.05, "up", config,
+            chainlink_price=65100.0, price_to_beat=65000.0,  # +100, favorable for "up"
+        ))
+
+    def test_chainlink_overrides_velocity(self):
+        """When Chainlink data available, velocity doesn't matter."""
+        config = _default_config(reversal_threshold=50.0)
+        # Velocity would trigger exit, but Chainlink says we're fine
+        self.assertFalse(check_emergency_exit(
+            -1.0, "up", config,  # huge negative velocity
+            chainlink_price=65010.0, price_to_beat=65000.0,  # Chainlink still above P2B
+        ))
 
 
 class TestAdaptiveCooldown(unittest.TestCase):

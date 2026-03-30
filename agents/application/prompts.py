@@ -255,7 +255,31 @@ class Prompter:
         win_rate: float,
         recent_trades_summary: str,
         context_data: str,
+        chainlink_price: float = 0.0,
+        binance_chainlink_gap: float = 0.0,
+        gap_direction: str = "unknown",
+        price_to_beat: float = 0.0,
+        clob_depth_summary: str = "",
     ) -> str:
+        oracle_section = ""
+        if chainlink_price > 0:
+            oracle_section = f"""
+ORACLE GAP (key edge signal):
+- Binance spot: ${velocity * 30 + chainlink_price + binance_chainlink_gap:.2f} (leads)
+- Chainlink oracle: ${chainlink_price:.2f} (follows with delay)
+- Gap: ${binance_chainlink_gap:+.2f} ({"favors " + direction if (binance_chainlink_gap > 0) == (direction == "up") else "AGAINST " + direction})
+- Gap trend: {gap_direction}
+- Price to beat (market open Chainlink): ${price_to_beat:.2f}
+- Chainlink vs price to beat: ${chainlink_price - price_to_beat:+.2f}
+NOTE: Markets resolve against Chainlink, NOT Binance. The edge is the latency gap."""
+
+        depth_section = ""
+        if clob_depth_summary:
+            depth_section = f"""
+CLOB ORDER BOOK DEPTH:
+{clob_depth_summary}
+NOTE: Thin depth = higher slippage risk. Asymmetric depth may signal informed flow."""
+
         return f"""You are a risk-aware trading confirmation system for 5-minute BTC binary markets on Polymarket.
 
 A deterministic momentum signal has ALREADY fired. Your job is to CONFIRM or VETO.
@@ -266,7 +290,8 @@ CURRENT STATE:
 - CLOB spread: {spread:.4f}
 - Time elapsed in market: {elapsed_seconds:.0f}s of 300s
 - Rolling win rate (last 10): {win_rate:.1%}
-
+{oracle_section}
+{depth_section}
 RECENT TRADE HISTORY:
 {recent_trades_summary}
 
@@ -277,7 +302,9 @@ RULES:
 - The deterministic signal passed all thresholds. You are advisory only.
 - If momentum is clear and context supports it, respond GO.
 - If context suggests a reversal or anomaly, respond NO-GO.
+- If the oracle gap is narrowing (Chainlink catching up), this REDUCES the edge — consider REDUCE-SIZE or NO-GO.
 - If signal is borderline or context is mixed, respond REDUCE-SIZE.
+- Multiple bots compete on these markets. If depth is thin or gap is small, the edge may already be taken.
 
 Respond with EXACTLY one line in this format:
 VERDICT: <GO|NO-GO|REDUCE-SIZE> | REASON: <one sentence>"""

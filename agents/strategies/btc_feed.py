@@ -1,4 +1,8 @@
-"""BTC price feed via WebSocket — Binance primary, Coinbase fallback."""
+"""Price feed manager — Polymarket RTDS primary, direct Binance fallback.
+
+RTDS provides both Binance spot and Chainlink oracle prices from a single
+WebSocket, which is the exact data source Polymarket uses for resolution.
+"""
 
 import asyncio
 import json
@@ -9,24 +13,49 @@ import websockets
 
 from agents.utils.logger import get_logger, log_event
 
-logger = get_logger("polyguez.btc_feed")
+logger = get_logger("polyguez.price_feed")
+
+# RTDS protocol constants
+_RTDS_PING_INTERVAL = 5.0
+_RTDS_SUBSCRIBE_BINANCE = json.dumps({
+    "action": "subscribe",
+    "subscriptions": [{
+        "topic": "crypto_prices",
+        "type": "*",
+        "filters": json.dumps({"symbol": "btcusdt"}),
+    }],
+})
+_RTDS_SUBSCRIBE_CHAINLINK = json.dumps({
+    "action": "subscribe",
+    "subscriptions": [{
+        "topic": "crypto_prices_chainlink",
+        "type": "*",
+        "filters": json.dumps({"symbol": "btc/usd"}),
+    }],
+})
 
 
-class BTCPriceFeed:
-    """Async BTC price streamer with 30-second rolling velocity."""
+class PriceFeedManager:
+    """Async dual-price streamer: Binance spot + Chainlink oracle via RTDS."""
 
     def __init__(self, config):
         self._config = config
-        # (timestamp, price) tuples
-        self._buffer = deque(maxlen=3000)  # ~5 min at ~10 msgs/sec
+        # Binance buffer: (timestamp, price)
+        self._binance_buffer = deque(maxlen=3000)
+        # Chainlink buffer: (timestamp, price)
+        self._chainlink_buffer = deque(maxlen=3000)
+        # Gap tracking: (timestamp, gap) for narrowing/widening detection
+        self._gap_buffer = deque(maxlen=60)
+
         self._ws = None
         self._connected = False
-        self._source = ""  # "binance" or "coinbase"
+        self._source = ""  # "rtds" or "binance-direct"
         self._task = None
+        self._ping_task = None
         self._stop = asyncio.Event()
         self._reconnect_delay = 1.0
 
-    # -- public API -----------------------------------------------------------
+    # -- Public API: Binance -------------------------------------------------
 
     @property
     def is_connected(self):
@@ -37,23 +66,23 @@ class BTCPriceFeed:
         return self._source
 
     def is_ready(self):
-        """True when buffer spans at least btc_buffer_min_seconds."""
-        if len(self._buffer) < 2:
+        """True when Binance buffer spans >= btc_buffer_min_seconds."""
+        if len(self._binance_buffer) < 2:
             return False
-        span = self._buffer[-1][0] - self._buffer[0][0]
+        span = self._binance_buffer[-1][0] - self._binance_buffer[0][0]
         return span >= self._config.btc_buffer_min_seconds
 
     def get_price(self):
-        """Latest BTC price or 0.0 if buffer empty."""
-        if not self._buffer:
+        """Latest Binance BTC price."""
+        if not self._binance_buffer:
             return 0.0
-        return self._buffer[-1][1]
+        return self._binance_buffer[-1][1]
 
     def get_velocity(self):
-        """30-second rolling linear slope ($/sec) via least-squares."""
+        """30-second rolling linear slope ($/sec) of Binance prices."""
         now = time.time()
         cutoff = now - 30.0
-        points = [(t, p) for t, p in self._buffer if t >= cutoff]
+        points = [(t, p) for t, p in self._binance_buffer if t >= cutoff]
         if len(points) < 2:
             return 0.0
         n = len(points)
@@ -67,10 +96,43 @@ class BTCPriceFeed:
         denom = n * sum_xx - sum_x * sum_x
         if abs(denom) < 1e-12:
             return 0.0
-        slope = (n * sum_xy - sum_x * sum_y) / denom
-        return slope
+        return (n * sum_xy - sum_x * sum_y) / denom
 
-    # -- lifecycle ------------------------------------------------------------
+    # -- Public API: Chainlink -----------------------------------------------
+
+    def get_chainlink_price(self):
+        """Latest Chainlink oracle price."""
+        if not self._chainlink_buffer:
+            return 0.0
+        return self._chainlink_buffer[-1][1]
+
+    def is_chainlink_ready(self):
+        """True when we have at least one Chainlink price."""
+        return len(self._chainlink_buffer) > 0
+
+    def get_binance_chainlink_gap(self):
+        """Binance price minus Chainlink price (positive = Binance ahead)."""
+        bp = self.get_price()
+        cp = self.get_chainlink_price()
+        if bp == 0.0 or cp == 0.0:
+            return 0.0
+        return bp - cp
+
+    def get_gap_direction(self):
+        """Whether the Binance-Chainlink gap is 'narrowing' or 'widening'."""
+        if len(self._gap_buffer) < 2:
+            return "unknown"
+        recent = list(self._gap_buffer)
+        # Compare last 5 gap values vs previous 5
+        if len(recent) < 10:
+            old_avg = abs(recent[0][1])
+            new_avg = abs(recent[-1][1])
+        else:
+            old_avg = sum(abs(g) for _, g in recent[-10:-5]) / 5
+            new_avg = sum(abs(g) for _, g in recent[-5:]) / 5
+        return "narrowing" if new_avg < old_avg else "widening"
+
+    # -- Lifecycle -----------------------------------------------------------
 
     async def start(self):
         """Start streaming in the background."""
@@ -78,8 +140,10 @@ class BTCPriceFeed:
         self._task = asyncio.create_task(self._run_loop())
 
     async def stop(self):
-        """Gracefully stop the feed."""
+        """Gracefully stop all feeds."""
         self._stop.set()
+        if self._ping_task:
+            self._ping_task.cancel()
         if self._ws:
             await self._ws.close()
         if self._task:
@@ -90,12 +154,12 @@ class BTCPriceFeed:
                 pass
         self._connected = False
 
-    # -- internal -------------------------------------------------------------
+    # -- Internal: RTDS (primary) -------------------------------------------
 
     async def _run_loop(self):
         while not self._stop.is_set():
             try:
-                await self._connect_and_listen()
+                await self._connect_rtds()
             except (
                 websockets.ConnectionClosed,
                 websockets.InvalidURI,
@@ -103,44 +167,116 @@ class BTCPriceFeed:
                 asyncio.TimeoutError,
             ) as exc:
                 self._connected = False
-                log_event(logger, "btc_feed_disconnect", f"BTC feed disconnected: {exc}")
-                await self._backoff_sleep()
+                log_event(logger, "feed_disconnect", f"RTDS disconnected: {exc}, trying fallback")
+                try:
+                    await self._connect_binance_direct()
+                except Exception as fb_exc:
+                    log_event(logger, "feed_disconnect", f"Binance fallback also failed: {fb_exc}")
+                    await self._backoff_sleep()
             except asyncio.CancelledError:
                 break
 
-    async def _connect_and_listen(self):
-        # Try Binance first
-        try:
-            self._ws = await asyncio.wait_for(
-                websockets.connect(self._config.binance_ws_url),
-                timeout=self._config.btc_feed_connect_timeout,
-            )
-            self._source = "binance"
-            self._connected = True
-            self._reconnect_delay = 1.0
-            log_event(logger, "btc_feed_connected", "Connected to Binance BTC feed")
-            await self._listen_binance()
-        except (OSError, asyncio.TimeoutError, websockets.InvalidURI) as exc:
-            log_event(logger, "btc_feed_fallback", f"Binance failed ({exc}), trying Coinbase")
-            await self._connect_coinbase()
-
-    async def _connect_coinbase(self):
+    async def _connect_rtds(self):
+        """Connect to Polymarket RTDS and subscribe to both feeds."""
         self._ws = await asyncio.wait_for(
-            websockets.connect(self._config.coinbase_ws_url),
+            websockets.connect(self._config.rtds_ws_url),
             timeout=self._config.btc_feed_connect_timeout,
         )
-        subscribe = json.dumps({
-            "type": "subscribe",
-            "channels": [{"name": "matches", "product_ids": ["BTC-USD"]}],
-        })
-        await self._ws.send(subscribe)
-        self._source = "coinbase"
+        self._source = "rtds"
         self._connected = True
         self._reconnect_delay = 1.0
-        log_event(logger, "btc_feed_connected", "Connected to Coinbase BTC feed")
-        await self._listen_coinbase()
+        log_event(logger, "feed_connected", "Connected to Polymarket RTDS")
+
+        # Subscribe to both Binance and Chainlink topics
+        await self._ws.send(_RTDS_SUBSCRIBE_BINANCE)
+        await self._ws.send(_RTDS_SUBSCRIBE_CHAINLINK)
+
+        # Start keepalive ping
+        self._ping_task = asyncio.create_task(self._rtds_ping_loop())
+
+        await self._listen_rtds()
+
+    async def _rtds_ping_loop(self):
+        """Send PING every 5 seconds to keep RTDS connection alive."""
+        try:
+            while not self._stop.is_set():
+                await asyncio.sleep(_RTDS_PING_INTERVAL)
+                if self._ws and self._ws.open:
+                    await self._ws.send("PING")
+        except asyncio.CancelledError:
+            pass
+
+    async def _listen_rtds(self):
+        """Listen to RTDS messages and route to appropriate buffer."""
+        async for raw in self._ws:
+            if self._stop.is_set():
+                break
+            if raw == "PONG":
+                continue
+            try:
+                msg = json.loads(raw)
+                topic = msg.get("topic", "")
+                data = msg.get("data", msg)
+
+                if topic == "crypto_prices" or "btcusdt" in str(data).lower():
+                    price = self._extract_price(data)
+                    if price:
+                        self._binance_buffer.append((time.time(), price))
+                        self._update_gap()
+                elif topic == "crypto_prices_chainlink" or "btc/usd" in str(data).lower():
+                    price = self._extract_price(data)
+                    if price:
+                        self._chainlink_buffer.append((time.time(), price))
+                        self._update_gap()
+                elif isinstance(data, dict) and "price" in data:
+                    # Backfill or untagged message — try to classify
+                    symbol = data.get("symbol", "").lower()
+                    price = self._extract_price(data)
+                    if price:
+                        if "btc/usd" in symbol:
+                            self._chainlink_buffer.append((time.time(), price))
+                        elif "btcusdt" in symbol:
+                            self._binance_buffer.append((time.time(), price))
+                        self._update_gap()
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                continue
+
+    def _extract_price(self, data):
+        """Extract a float price from various RTDS message formats."""
+        if isinstance(data, dict):
+            for key in ("price", "p", "mid_price", "last_price"):
+                if key in data:
+                    try:
+                        return float(data[key])
+                    except (ValueError, TypeError):
+                        continue
+            # Nested data field
+            if "data" in data and isinstance(data["data"], dict):
+                return self._extract_price(data["data"])
+        return None
+
+    def _update_gap(self):
+        """Record the current Binance-Chainlink gap for trend tracking."""
+        gap = self.get_binance_chainlink_gap()
+        if gap != 0.0:
+            self._gap_buffer.append((time.time(), gap))
+
+    # -- Internal: Direct Binance (fallback) --------------------------------
+
+    async def _connect_binance_direct(self):
+        """Fallback: connect directly to Binance WebSocket."""
+        self._ws = await asyncio.wait_for(
+            websockets.connect(self._config.binance_ws_url),
+            timeout=self._config.btc_feed_connect_timeout,
+        )
+        self._source = "binance-direct"
+        self._connected = True
+        self._reconnect_delay = 1.0
+        log_event(logger, "feed_connected", "Connected to Binance WS (fallback, no Chainlink)")
+        await self._listen_binance()
 
     async def _listen_binance(self):
+        """Listen to direct Binance trade stream."""
         async for raw in self._ws:
             if self._stop.is_set():
                 break
@@ -148,25 +284,14 @@ class BTCPriceFeed:
                 msg = json.loads(raw)
                 price = float(msg["p"])
                 ts = msg.get("T", time.time() * 1000) / 1000.0
-                self._buffer.append((ts, price))
+                self._binance_buffer.append((ts, price))
             except (KeyError, ValueError, TypeError):
                 continue
 
-    async def _listen_coinbase(self):
-        async for raw in self._ws:
-            if self._stop.is_set():
-                break
-            try:
-                msg = json.loads(raw)
-                if msg.get("type") != "match":
-                    continue
-                price = float(msg["price"])
-                self._buffer.append((time.time(), price))
-            except (KeyError, ValueError, TypeError):
-                continue
+    # -- Shared helpers -----------------------------------------------------
 
     async def _backoff_sleep(self):
         delay = min(self._reconnect_delay, 30.0)
-        log_event(logger, "btc_feed_reconnect", f"Reconnecting in {delay:.1f}s")
+        log_event(logger, "feed_reconnect", f"Reconnecting in {delay:.1f}s")
         await asyncio.sleep(delay)
         self._reconnect_delay = min(self._reconnect_delay * 2, 30.0)

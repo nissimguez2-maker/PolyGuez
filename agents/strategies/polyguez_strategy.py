@@ -44,8 +44,10 @@ def evaluate_entry_signal(
     rolling_stats,
     has_position,
     open_position_count=0,
+    chainlink_price=0.0,
+    binance_chainlink_gap=0.0,
 ):
-    """Evaluate all 8 entry conditions. Returns a SignalState."""
+    """Evaluate all 10 entry conditions (three-price-gap model). Returns a SignalState."""
     direction = "up" if btc_velocity > 0 else "down"
 
     # Fair value estimate based on momentum direction
@@ -89,9 +91,25 @@ def evaluate_entry_signal(
         except (ValueError, TypeError):
             pass
 
+    # Oracle gap: Binance-Chainlink gap must exceed min_oracle_gap in the
+    # direction that favors the trade (positive gap = Binance ahead for "up")
+    gap_favors = False
+    if direction == "up" and binance_chainlink_gap > 0:
+        gap_favors = True
+    elif direction == "down" and binance_chainlink_gap < 0:
+        gap_favors = True
+    oracle_gap_ok = gap_favors and abs(binance_chainlink_gap) >= config.min_oracle_gap
+
+    # CLOB mispricing: the CLOB token hasn't caught up to the Chainlink move yet
+    # If Binance leads Chainlink which leads CLOB, the token price should still
+    # be "cheap" relative to fair value from the oracle gap signal.
+    clob_mispricing_ok = edge > 0 and token_price < estimated_fv
+
     signal = SignalState(
         btc_velocity=btc_velocity,
         btc_price=btc_price,
+        chainlink_price=chainlink_price,
+        binance_chainlink_gap=binance_chainlink_gap,
         yes_price=yes_price,
         no_price=no_price,
         spread=spread,
@@ -100,7 +118,10 @@ def evaluate_entry_signal(
         estimated_fair_value=estimated_fv,
         edge=edge,
         required_edge=effective_required_edge,
+        gap_favors_position=gap_favors,
         velocity_ok=abs(btc_velocity) > effective_velocity_threshold,
+        oracle_gap_ok=oracle_gap_ok,
+        clob_mispricing_ok=clob_mispricing_ok,
         edge_ok=edge > effective_required_edge,
         spread_ok=spread < config.max_spread,
         no_position=not has_position,
@@ -170,11 +191,23 @@ def compute_cooldown(rolling_stats, config):
         return config.cooldown_cycles_long
 
 
-def check_emergency_exit(btc_velocity, entry_direction, config):
+def check_emergency_exit(btc_velocity, entry_direction, config, chainlink_price=0.0, price_to_beat=0.0):
     """Return True if an emergency exit should be triggered.
 
-    Fires when velocity flips sign AND reversal magnitude exceeds threshold.
+    Primary: Chainlink price reversal vs price_to_beat exceeds threshold.
+    Fallback: velocity-based reversal when Chainlink data unavailable.
     """
+    # Chainlink-based exit (primary): if the Chainlink oracle has already
+    # moved against our position by more than reversal_threshold
+    if chainlink_price > 0 and price_to_beat > 0:
+        chainlink_move = chainlink_price - price_to_beat
+        if entry_direction == "up" and chainlink_move < -config.reversal_threshold:
+            return True
+        if entry_direction == "down" and chainlink_move > config.reversal_threshold:
+            return True
+        return False
+
+    # Velocity-based fallback (when Chainlink data unavailable)
     if entry_direction == "up" and btc_velocity < -config.reversal_threshold:
         return True
     if entry_direction == "down" and btc_velocity > config.reversal_threshold:
@@ -187,7 +220,7 @@ def check_emergency_exit(btc_velocity, entry_direction, config):
 # ---------------------------------------------------------------------------
 
 
-async def get_llm_confirmation(signal_state, rolling_stats, config):
+async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_beat=0.0, gap_direction="unknown", clob_depth_summary=""):
     """Run LLM confirmation with data providers. Returns (verdict, reason, provider, response_time)."""
     if not config.llm_enabled:
         return ("GO", "llm-disabled", "", 0.0)
@@ -200,6 +233,7 @@ async def get_llm_confirmation(signal_state, rolling_stats, config):
         "velocity": signal_state.btc_velocity,
         "market_question": "",
         "elapsed_seconds": signal_state.elapsed_seconds,
+        "binance_chainlink_gap": signal_state.binance_chainlink_gap,
     }
     context_data = await fetch_all_providers(
         config.data_providers, market_context, timeout=config.data_provider_timeout,
@@ -212,6 +246,8 @@ async def get_llm_confirmation(signal_state, rolling_stats, config):
             context_str += f"NewsAPI headlines: {', '.join(data['headlines'][:5])}\n"
         if "context" in data and data["context"]:
             context_str += f"Web search: {data['context'][:500]}\n"
+        if source == "chainlink" and data.get("price"):
+            context_str += f"Chainlink on-chain: ${data['price']:.2f}\n"
         if "error" in data:
             context_str += f"({source} unavailable: {data['error']})\n"
     if not context_str:
@@ -237,6 +273,11 @@ async def get_llm_confirmation(signal_state, rolling_stats, config):
         win_rate=rolling_stats.win_rate,
         recent_trades_summary=trades_summary,
         context_data=context_str,
+        chainlink_price=signal_state.chainlink_price,
+        binance_chainlink_gap=signal_state.binance_chainlink_gap,
+        gap_direction=gap_direction,
+        price_to_beat=price_to_beat,
+        clob_depth_summary=clob_depth_summary,
     )
 
     adapter = get_llm_adapter(config)

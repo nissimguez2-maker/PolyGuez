@@ -23,8 +23,8 @@ class TestSignalEvaluation(unittest.TestCase):
     """Test evaluate_entry_signal with various inputs."""
 
     def test_all_conditions_met_up(self):
-        """Strong upward momentum, good edge, should fire."""
-        config = _default_config(velocity_threshold=0.01, min_edge=0.02, max_spread=0.10)
+        """Strong upward momentum, good edge, oracle gap, should fire."""
+        config = _default_config(velocity_threshold=0.01, min_edge=0.02, max_spread=0.10, min_oracle_gap=10.0)
         stats = _stats_with_trades(["win"] * 6)
         signal = evaluate_entry_signal(
             btc_velocity=0.05,
@@ -37,13 +37,15 @@ class TestSignalEvaluation(unittest.TestCase):
             config=config,
             rolling_stats=stats,
             has_position=False,
+            chainlink_price=64985.0,
+            binance_chainlink_gap=15.0,
         )
         self.assertTrue(signal.all_conditions_met)
         self.assertEqual(signal.direction, "up")
 
     def test_all_conditions_met_down(self):
         """Strong downward momentum."""
-        config = _default_config(velocity_threshold=0.01, min_edge=0.02, max_spread=0.10)
+        config = _default_config(velocity_threshold=0.01, min_edge=0.02, max_spread=0.10, min_oracle_gap=10.0)
         stats = _stats_with_trades(["win"] * 6)
         signal = evaluate_entry_signal(
             btc_velocity=-0.05,
@@ -56,6 +58,8 @@ class TestSignalEvaluation(unittest.TestCase):
             config=config,
             rolling_stats=stats,
             has_position=False,
+            chainlink_price=65015.0,
+            binance_chainlink_gap=-15.0,
         )
         self.assertTrue(signal.all_conditions_met)
         self.assertEqual(signal.direction, "down")
@@ -238,6 +242,149 @@ class TestSignalEvaluation(unittest.TestCase):
         )
         # velocity 0.05 < tightened threshold 0.06
         self.assertFalse(signal.velocity_ok)
+
+    # -- Oracle gap tests ---------------------------------------------------
+
+    def test_oracle_gap_ok_up(self):
+        """Positive gap with upward direction satisfies oracle_gap_ok."""
+        config = _default_config(min_oracle_gap=10.0, velocity_threshold=0.01, min_edge=0.02, max_spread=0.10)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.05,
+            btc_price=65000.0,
+            yes_price=0.50,
+            no_price=0.48,
+            spread=0.02,
+            elapsed_seconds=30.0,
+            usdc_balance=100.0,
+            config=config,
+            rolling_stats=stats,
+            has_position=False,
+            chainlink_price=64985.0,
+            binance_chainlink_gap=15.0,
+        )
+        self.assertTrue(signal.oracle_gap_ok)
+
+    def test_oracle_gap_too_small(self):
+        """Gap below min_oracle_gap fails oracle_gap_ok."""
+        config = _default_config(min_oracle_gap=20.0, velocity_threshold=0.01, min_edge=0.02, max_spread=0.10)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.05,
+            btc_price=65000.0,
+            yes_price=0.50,
+            no_price=0.48,
+            spread=0.02,
+            elapsed_seconds=30.0,
+            usdc_balance=100.0,
+            config=config,
+            rolling_stats=stats,
+            has_position=False,
+            chainlink_price=64990.0,
+            binance_chainlink_gap=10.0,
+        )
+        self.assertFalse(signal.oracle_gap_ok)
+
+    def test_oracle_gap_wrong_direction(self):
+        """Gap in wrong direction for the trade fails oracle_gap_ok."""
+        config = _default_config(min_oracle_gap=10.0, velocity_threshold=0.01, min_edge=0.02, max_spread=0.10)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.05,  # direction = up
+            btc_price=65000.0,
+            yes_price=0.50,
+            no_price=0.48,
+            spread=0.02,
+            elapsed_seconds=30.0,
+            usdc_balance=100.0,
+            config=config,
+            rolling_stats=stats,
+            has_position=False,
+            chainlink_price=65020.0,
+            binance_chainlink_gap=-20.0,  # negative gap = Chainlink ahead, wrong for "up"
+        )
+        self.assertFalse(signal.oracle_gap_ok)
+
+    def test_oracle_gap_ok_down(self):
+        """Negative gap with downward direction satisfies oracle_gap_ok."""
+        config = _default_config(min_oracle_gap=10.0, velocity_threshold=0.01, min_edge=0.02, max_spread=0.10)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=-0.05,
+            btc_price=65000.0,
+            yes_price=0.48,
+            no_price=0.50,
+            spread=0.02,
+            elapsed_seconds=30.0,
+            usdc_balance=100.0,
+            config=config,
+            rolling_stats=stats,
+            has_position=False,
+            chainlink_price=65015.0,
+            binance_chainlink_gap=-15.0,
+        )
+        self.assertTrue(signal.oracle_gap_ok)
+
+    # -- CLOB mispricing tests ----------------------------------------------
+
+    def test_clob_mispricing_ok(self):
+        """Token price below fair value triggers clob_mispricing_ok."""
+        config = _default_config(velocity_threshold=0.01, min_edge=0.02, max_spread=0.10, min_oracle_gap=10.0)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.05,
+            btc_price=65000.0,
+            yes_price=0.50,  # cheap relative to estimated_fv
+            no_price=0.48,
+            spread=0.02,
+            elapsed_seconds=30.0,
+            usdc_balance=100.0,
+            config=config,
+            rolling_stats=stats,
+            has_position=False,
+            chainlink_price=64985.0,
+            binance_chainlink_gap=15.0,
+        )
+        self.assertTrue(signal.clob_mispricing_ok)
+        self.assertGreater(signal.estimated_fair_value, signal.yes_price)
+
+    def test_clob_no_mispricing(self):
+        """Token at or above fair value fails clob_mispricing_ok."""
+        config = _default_config(velocity_threshold=0.001, min_edge=0.001, max_spread=0.10, min_oracle_gap=10.0)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.001,  # tiny velocity → estimated_fv barely above token price
+            btc_price=65000.0,
+            yes_price=0.99,  # very high, near max
+            no_price=0.01,
+            spread=0.00,
+            elapsed_seconds=30.0,
+            usdc_balance=100.0,
+            config=config,
+            rolling_stats=stats,
+            has_position=False,
+            chainlink_price=64985.0,
+            binance_chainlink_gap=15.0,
+        )
+        # estimated_fv = min(1.0, 0.99 + 0.001*10) = min(1.0, 1.0) = 1.0
+        # edge = 1.0 - 0.99 = 0.01 > 0, token_price 0.99 < 1.0 → still mispriced
+        # Use a case where edge <= 0 to fail
+        signal2 = evaluate_entry_signal(
+            btc_velocity=0.0001,
+            btc_price=65000.0,
+            yes_price=1.0,
+            no_price=0.00,
+            spread=0.00,
+            elapsed_seconds=30.0,
+            usdc_balance=100.0,
+            config=config,
+            rolling_stats=stats,
+            has_position=False,
+            chainlink_price=64985.0,
+            binance_chainlink_gap=15.0,
+        )
+        # estimated_fv = min(1.0, 1.0 + 0.0001*10) = 1.0, edge = 0.0
+        self.assertFalse(signal2.clob_mispricing_ok)
 
 
 if __name__ == "__main__":

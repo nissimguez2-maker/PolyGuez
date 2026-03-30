@@ -94,11 +94,46 @@ class TavilyProvider(DataProvider):
             return {"source": "tavily", "context": "", "error": str(exc)}
 
 
+class ChainlinkProvider(DataProvider):
+    """Provide current Chainlink on-chain price as context for LLM."""
+
+    name = "chainlink"
+
+    def __init__(self):
+        self._feed = None
+
+    def _get_feed(self):
+        if self._feed is None:
+            from agents.connectors.chainlink_feed import ChainlinkOnChainFeed
+            self._feed = ChainlinkOnChainFeed()
+        return self._feed
+
+    async def fetch(self, market_context):
+        loop = asyncio.get_event_loop()
+        try:
+            feed = self._get_feed()
+            price, updated_at = await loop.run_in_executor(
+                None, feed.get_latest_price,
+            )
+            if price is None:
+                return {"source": "chainlink", "price": None, "error": "on-chain read failed"}
+            return {
+                "source": "chainlink",
+                "price": price,
+                "updated_at": updated_at,
+                "oracle_gap": market_context.get("binance_chainlink_gap", 0.0),
+            }
+        except Exception as exc:
+            log_event(logger, "data_provider_error", f"ChainlinkProvider failed: {exc}")
+            return {"source": "chainlink", "price": None, "error": str(exc)}
+
+
 # -- Registry ----------------------------------------------------------------
 
 _PROVIDER_REGISTRY = {
     "news": NewsProvider,
     "tavily": TavilyProvider,
+    "chainlink": ChainlinkProvider,
 }
 
 
