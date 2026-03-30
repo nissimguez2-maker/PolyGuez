@@ -1,17 +1,36 @@
 import typer
 from devtools import pprint
 
-from agents.polymarket.polymarket import Polymarket
-from agents.connectors.chroma import PolymarketRAG
-from agents.connectors.news import News
-from agents.application.trade import Trader
-from agents.application.executor import Executor
-from agents.application.creator import Creator
-
 app = typer.Typer()
-polymarket = Polymarket()
-newsapi_client = News()
-polymarket_rag = PolymarketRAG()
+
+# Lazy-initialized singletons — avoids wallet/API errors at import time
+_polymarket = None
+_newsapi_client = None
+_polymarket_rag = None
+
+
+def _get_polymarket():
+    global _polymarket
+    if _polymarket is None:
+        from agents.polymarket.polymarket import Polymarket
+        _polymarket = Polymarket()
+    return _polymarket
+
+
+def _get_news():
+    global _newsapi_client
+    if _newsapi_client is None:
+        from agents.connectors.news import News
+        _newsapi_client = News()
+    return _newsapi_client
+
+
+def _get_rag():
+    global _polymarket_rag
+    if _polymarket_rag is None:
+        from agents.connectors.chroma import PolymarketRAG
+        _polymarket_rag = PolymarketRAG()
+    return _polymarket_rag
 
 
 @app.command()
@@ -20,6 +39,7 @@ def get_all_markets(limit: int = 5, sort_by: str = "spread") -> None:
     Query Polymarket's markets
     """
     print(f"limit: int = {limit}, sort_by: str = {sort_by}")
+    polymarket = _get_polymarket()
     markets = polymarket.get_all_markets()
     markets = polymarket.filter_markets_for_trading(markets)
     if sort_by == "spread":
@@ -33,6 +53,7 @@ def get_relevant_news(keywords: str) -> None:
     """
     Use NewsAPI to query the internet
     """
+    newsapi_client = _get_news()
     articles = newsapi_client.get_articles_for_cli_keywords(keywords)
     pprint(articles)
 
@@ -43,6 +64,7 @@ def get_all_events(limit: int = 5, sort_by: str = "number_of_markets") -> None:
     Query Polymarket's events
     """
     print(f"limit: int = {limit}, sort_by: str = {sort_by}")
+    polymarket = _get_polymarket()
     events = polymarket.get_all_events()
     events = polymarket.filter_events_for_trading(events)
     if sort_by == "number_of_markets":
@@ -56,7 +78,7 @@ def create_local_markets_rag(local_directory: str) -> None:
     """
     Create a local markets database for RAG
     """
-    polymarket_rag.create_local_markets_rag(local_directory=local_directory)
+    _get_rag().create_local_markets_rag(local_directory=local_directory)
 
 
 @app.command()
@@ -64,7 +86,7 @@ def query_local_markets_rag(vector_db_directory: str, query: str) -> None:
     """
     RAG over a local database of Polymarket's events
     """
-    response = polymarket_rag.query_local_markets_rag(
+    response = _get_rag().query_local_markets_rag(
         local_directory=vector_db_directory, query=query
     )
     pprint(response)
@@ -78,6 +100,7 @@ def ask_superforecaster(event_title: str, market_question: str, outcome: str) ->
     print(
         f"event: str = {event_title}, question: str = {market_question}, outcome (usually yes or no): str = {outcome}"
     )
+    from agents.application.executor import Executor
     executor = Executor()
     response = executor.get_superforecast(
         event_title=event_title, market_question=market_question, outcome=outcome
@@ -90,6 +113,7 @@ def create_market() -> None:
     """
     Format a request to create a market on Polymarket
     """
+    from agents.application.creator import Creator
     c = Creator()
     market_description = c.one_best_market()
     print(f"market_description: str = {market_description}")
@@ -100,6 +124,7 @@ def ask_llm(user_input: str) -> None:
     """
     Ask a question to the LLM and get a response.
     """
+    from agents.application.executor import Executor
     executor = Executor()
     response = executor.get_llm_response(user_input)
     print(f"LLM Response: {response}")
@@ -110,6 +135,7 @@ def ask_polymarket_llm(user_input: str) -> None:
     """
     What types of markets do you want trade?
     """
+    from agents.application.executor import Executor
     executor = Executor()
     response = executor.get_polymarket_llm(user_input=user_input)
     print(f"LLM + current markets&events response: {response}")
@@ -120,6 +146,7 @@ def run_autonomous_trader() -> None:
     """
     Let an autonomous system trade for you.
     """
+    from agents.application.trade import Trader
     trader = Trader()
     trader.one_best_trade()
 
