@@ -124,5 +124,72 @@ def run_autonomous_trader() -> None:
     trader.one_best_trade()
 
 
+@app.command()
+def run_polyguez(
+    mode: str = typer.Option("dry-run", help="Mode: dry-run, paper, or live"),
+    live: bool = typer.Option(False, "--live", help="Shortcut for --mode live"),
+    dashboard: bool = typer.Option(True, help="Start dashboard server"),
+    port: int = typer.Option(8080, help="Dashboard port"),
+) -> None:
+    """
+    Run the PolyGuez Momentum strategy.
+    Default is dry-run. Use --live for real execution.
+    """
+    import asyncio
+    import threading
+
+    from agents.application.run_polyguez import PolyGuezRunner
+    from agents.utils.objects import PolyGuezConfig
+    import os
+
+    effective_mode = "live" if live else mode
+    if effective_mode not in ("dry-run", "paper", "live"):
+        print(f"Invalid mode: {effective_mode}. Using dry-run.")
+        effective_mode = "dry-run"
+
+    config = PolyGuezConfig(
+        mode=effective_mode,
+        binance_ws_url=os.getenv("BINANCE_WS_URL", PolyGuezConfig().binance_ws_url),
+        coinbase_ws_url=os.getenv("COINBASE_WS_URL", PolyGuezConfig().coinbase_ws_url),
+        dashboard_secret=os.getenv("DASHBOARD_SECRET", ""),
+    )
+
+    runner = PolyGuezRunner(config=config)
+
+    if dashboard:
+        from scripts.python.server import app as fastapi_app, set_runner
+        import uvicorn
+
+        set_runner(runner)
+
+        def _start_dashboard():
+            uvicorn.run(fastapi_app, host="0.0.0.0", port=port, log_level="warning")
+
+        t = threading.Thread(target=_start_dashboard, daemon=True)
+        t.start()
+        print(f"Dashboard running at http://localhost:{port}")
+
+    print(f"PolyGuez starting in [{effective_mode.upper()}] mode")
+    asyncio.run(runner.run())
+
+
+@app.command()
+def kill() -> None:
+    """
+    Send kill signal to a running PolyGuez instance via the dashboard API.
+    """
+    import httpx
+    import os
+
+    port = int(os.getenv("POLYGUEZ_DASHBOARD_PORT", "8080"))
+    secret = os.getenv("DASHBOARD_SECRET", "")
+    url = f"http://localhost:{port}/api/kill"
+    try:
+        resp = httpx.post(url, params={"secret": secret})
+        print(f"Kill response: {resp.json()}")
+    except Exception as e:
+        print(f"Failed to reach dashboard: {e}")
+
+
 if __name__ == "__main__":
     app()

@@ -241,5 +241,43 @@ class Prompter:
 
         Question: "Will Kamala win"
         Outcomes: Yes or No
-        
+
         """
+
+    def momentum_confirmation(
+        self,
+        velocity: float,
+        direction: str,
+        yes_price: float,
+        no_price: float,
+        spread: float,
+        elapsed_seconds: float,
+        win_rate: float,
+        recent_trades_summary: str,
+        context_data: str,
+    ) -> str:
+        return f"""You are a risk-aware trading confirmation system for 5-minute BTC binary markets on Polymarket.
+
+A deterministic momentum signal has ALREADY fired. Your job is to CONFIRM or VETO.
+
+CURRENT STATE:
+- BTC 30s velocity: {velocity:.6f} $/sec ({direction})
+- YES token price: {yes_price:.4f} | NO token price: {no_price:.4f}
+- CLOB spread: {spread:.4f}
+- Time elapsed in market: {elapsed_seconds:.0f}s of 300s
+- Rolling win rate (last 10): {win_rate:.1%}
+
+RECENT TRADE HISTORY:
+{recent_trades_summary}
+
+EXTERNAL CONTEXT:
+{context_data}
+
+RULES:
+- The deterministic signal passed all thresholds. You are advisory only.
+- If momentum is clear and context supports it, respond GO.
+- If context suggests a reversal or anomaly, respond NO-GO.
+- If signal is borderline or context is mixed, respond REDUCE-SIZE.
+
+Respond with EXACTLY one line in this format:
+VERDICT: <GO|NO-GO|REDUCE-SIZE> | REASON: <one sentence>"""

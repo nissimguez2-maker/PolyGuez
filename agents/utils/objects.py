@@ -1,6 +1,7 @@
 from __future__ import annotations
-from typing import Optional, Union
-from pydantic import BaseModel
+from typing import Optional, Union, List
+from pydantic import BaseModel, Field
+from datetime import datetime, timezone
 
 
 class Trade(BaseModel):
@@ -226,3 +227,224 @@ class Article(BaseModel):
     urlToImage: Optional[str]
     publishedAt: Optional[str]
     content: Optional[str]
+
+
+# ---------------------------------------------------------------------------
+# PolyGuez Momentum — new models
+# ---------------------------------------------------------------------------
+
+class PolyGuezConfig(BaseModel):
+    # Capital & sizing
+    max_capital_pct: float = Field(default=0.10, description="Max capital at risk as fraction of USDC balance")
+    min_capital_floor: float = Field(default=3.0, description="Minimum capital floor in USDC")
+    position_size_pct: float = Field(default=0.30, description="Position size as fraction of max capital at risk")
+
+    # Risk
+    max_daily_loss: Optional[float] = Field(default=None, description="Override daily loss limit in USDC (None = auto from capital)")
+    max_open_positions: int = Field(default=1)
+
+    # Signal thresholds
+    velocity_threshold: float = Field(default=0.05, description="Min BTC price velocity magnitude ($/sec)")
+    min_edge: float = Field(default=0.03, description="Min difference between fair value estimate and CLOB price")
+    max_spread: float = Field(default=0.10, description="Max CLOB spread to allow entry")
+    reversal_threshold: float = Field(default=0.08, description="Velocity reversal magnitude for emergency exit")
+
+    # Entry window edge multipliers
+    early_window_seconds: int = Field(default=60)
+    mid_window_seconds: int = Field(default=150)
+    early_edge_multiplier: float = Field(default=1.0)
+    mid_edge_multiplier: float = Field(default=1.5)
+    late_edge_multiplier: float = Field(default=2.5)
+
+    # Cooldown
+    cooldown_win_rate_no_cooldown: float = Field(default=0.60, description="Win rate above which no cooldown after win")
+    cooldown_win_rate_short: float = Field(default=0.50, description="Win rate above which 1 cycle cooldown after loss")
+    cooldown_cycles_short: int = Field(default=1)
+    cooldown_cycles_long: int = Field(default=2)
+    cooldown_tightened_multiplier: float = Field(default=1.5, description="Multiplier for velocity/edge after losing streak")
+    cooldown_startup_trades: int = Field(default=5, description="Conservative mode until this many trades")
+
+    # LLM
+    llm_timeout: float = Field(default=15.0, description="LLM confirmation timeout in seconds")
+    llm_enabled: bool = Field(default=True, description="Enable LLM confirmation layer")
+    llm_provider: str = Field(default="openai", description="Active LLM provider: openai, anthropic, groq")
+    llm_model_openai: str = Field(default="gpt-4o-mini")
+    llm_model_anthropic: str = Field(default="claude-3-5-haiku-20241022")
+    llm_model_groq: str = Field(default="llama-3.1-70b-versatile")
+
+    # Data providers
+    data_providers: List[str] = Field(default=["news", "tavily"], description="Enabled data provider names")
+    data_provider_timeout: float = Field(default=3.0, description="Per-provider fetch timeout in seconds")
+
+    # Market discovery
+    market_slug_pattern: str = Field(default="btc-updown-5m", description="Slug pattern to match 5-min BTC markets")
+    market_question_pattern: str = Field(default="", description="Optional question regex pattern for market matching")
+
+    # CLOB polling
+    clob_poll_interval: float = Field(default=1.0, description="Seconds between CLOB orderbook polls")
+
+    # Mode: dry-run, paper, live
+    mode: str = Field(default="dry-run")
+
+    # BTC feed
+    binance_ws_url: str = Field(default="wss://stream.binance.com:9443/ws/btcusdt@trade")
+    coinbase_ws_url: str = Field(default="wss://ws-feed.exchange.coinbase.com")
+    btc_feed_connect_timeout: float = Field(default=5.0)
+    btc_buffer_min_seconds: float = Field(default=30.0)
+
+    # Dashboard
+    dashboard_secret: str = Field(default="", description="Shared secret for dashboard auth")
+
+
+class TradeRecord(BaseModel):
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    market_id: str = ""
+    market_question: str = ""
+    side: str = ""  # YES or NO
+    entry_price: float = 0.0
+    exit_price: Optional[float] = None
+    pnl: Optional[float] = None
+    duration_seconds: Optional[float] = None
+    signal_strength: Optional[float] = None
+    llm_verdict: str = ""  # GO, NO-GO, REDUCE-SIZE, timeout-default, disabled
+    llm_reason: str = ""
+    llm_provider: str = ""
+    outcome: str = ""  # win, loss, skipped, emergency-exit
+    reason: str = ""
+
+
+class SignalState(BaseModel):
+    btc_velocity: float = 0.0
+    btc_price: float = 0.0
+    yes_price: float = 0.0
+    no_price: float = 0.0
+    spread: float = 0.0
+    elapsed_seconds: float = 0.0
+    direction: str = ""  # up or down
+    estimated_fair_value: float = 0.0
+    edge: float = 0.0
+    required_edge: float = 0.0
+
+    # Per-condition booleans
+    velocity_ok: bool = False
+    edge_ok: bool = False
+    spread_ok: bool = False
+    no_position: bool = False
+    cooldown_ok: bool = False
+    daily_loss_ok: bool = False
+    balance_ok: bool = False
+    position_limit_ok: bool = False
+
+    @property
+    def all_conditions_met(self) -> bool:
+        return all([
+            self.velocity_ok, self.edge_ok, self.spread_ok,
+            self.no_position, self.cooldown_ok, self.daily_loss_ok,
+            self.balance_ok, self.position_limit_ok,
+        ])
+
+
+class PositionState(BaseModel):
+    side: str = ""  # YES or NO
+    entry_price: float = 0.0
+    entry_time: str = ""
+    market_id: str = ""
+    token_id: str = ""
+    size_usdc: float = 0.0
+
+
+class RollingStats(BaseModel):
+    trades: List[TradeRecord] = Field(default_factory=list)
+    daily_pnl: float = 0.0
+    daily_pnl_reset_utc: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    cooldown_until: Optional[str] = None  # ISO timestamp or None
+    max_capital_at_risk: float = 0.0  # recalculated each cycle
+
+    @property
+    def last_n_trades(self) -> List[TradeRecord]:
+        return self.trades[-10:] if self.trades else []
+
+    @property
+    def win_rate(self) -> float:
+        recent = self.last_n_trades
+        if not recent:
+            return 0.0
+        wins = sum(1 for t in recent if t.outcome == "win")
+        return wins / len(recent)
+
+    @property
+    def total_pnl(self) -> float:
+        return sum(t.pnl for t in self.trades if t.pnl is not None)
+
+    @property
+    def total_trades(self) -> int:
+        return len([t for t in self.trades if t.outcome in ("win", "loss", "emergency-exit")])
+
+    @property
+    def total_wins(self) -> int:
+        return len([t for t in self.trades if t.outcome == "win"])
+
+    @property
+    def total_losses(self) -> int:
+        return len([t for t in self.trades if t.outcome in ("loss", "emergency-exit")])
+
+    @property
+    def total_skips(self) -> int:
+        return len([t for t in self.trades if t.outcome == "skipped"])
+
+    @property
+    def biggest_win(self) -> float:
+        wins = [t.pnl for t in self.trades if t.pnl is not None and t.pnl > 0]
+        return max(wins) if wins else 0.0
+
+    @property
+    def biggest_loss(self) -> float:
+        losses = [t.pnl for t in self.trades if t.pnl is not None and t.pnl < 0]
+        return min(losses) if losses else 0.0
+
+
+class DashboardSnapshot(BaseModel):
+    # Status
+    mode: str = "dry-run"
+    btc_feed_connected: bool = False
+    clob_connected: bool = False
+    gamma_connected: bool = False
+    usdc_balance: float = 0.0
+    max_capital_at_risk: float = 0.0
+    position_size_ceiling: float = 0.0
+    daily_pnl: float = 0.0
+    killed: bool = False
+    kill_timestamp: Optional[str] = None
+
+    # Live market
+    current_market_question: str = ""
+    current_market_expiry: Optional[str] = None
+    btc_price: float = 0.0
+    btc_velocity: float = 0.0
+    btc_direction: str = ""
+    yes_price: float = 0.0
+    no_price: float = 0.0
+    clob_spread: float = 0.0
+    entry_window_elapsed: float = 0.0
+    entry_window_total: float = 300.0
+
+    # Signal
+    signal: Optional[SignalState] = None
+
+    # LLM
+    llm_verdict: str = ""
+    llm_reason: str = ""
+    llm_response_time: Optional[float] = None
+
+    # Position
+    position: Optional[PositionState] = None
+    unrealized_pnl: float = 0.0
+    time_to_expiry: float = 0.0
+
+    # Stats
+    rolling_stats: Optional[RollingStats] = None
+    cooldown_active: bool = False
+    cooldown_remaining_seconds: float = 0.0
+
+    # Config (for the config panel)
+    config: Optional[PolyGuezConfig] = None

@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PolyGuez Momentum Dashboard</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;color:#e0e0e0;font-family:'Segoe UI',system-ui,sans-serif;font-size:14px}
+.mono{font-family:'Cascadia Code','Fira Code',monospace}
+.container{max-width:1400px;margin:0 auto;padding:8px}
+.card{background:#16213e;border-radius:8px;padding:12px 16px;margin-bottom:8px;box-shadow:0 2px 8px rgba(0,0,0,.3)}
+.card h3{font-size:13px;text-transform:uppercase;color:#8899aa;margin-bottom:8px;letter-spacing:1px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.col{flex:1;min-width:280px}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px;vertical-align:middle}
+.green{background:#00ff88}.red{background:#ff4444}
+.badge{display:inline-block;padding:2px 10px;border-radius:4px;font-weight:700;font-size:12px;letter-spacing:1px}
+.badge-dry{background:#4488ff;color:#fff}.badge-paper{background:#ffaa00;color:#000}.badge-live{background:#ff4444;color:#fff}
+.badge-go{background:#00ff88;color:#000}.badge-nogo{background:#ff4444;color:#fff}.badge-reduce{background:#ffaa00;color:#000}
+.pnl-pos{color:#00ff88}.pnl-neg{color:#ff4444}
+.big-num{font-size:28px;font-weight:700}
+.signal-row{display:flex;align-items:center;gap:6px;padding:2px 0;font-size:13px}
+.signal-row .icon{width:18px;text-align:center}
+.ok{color:#00ff88}.fail{color:#ff4444}
+.progress-bar{background:#0a0a1a;border-radius:4px;height:10px;overflow:hidden;margin-top:4px}
+.progress-fill{height:100%;background:linear-gradient(90deg,#4488ff,#00ff88);transition:width .5s}
+table{width:100%;border-collapse:collapse;font-size:12px}
+th{text-align:left;padding:4px 6px;color:#8899aa;border-bottom:1px solid #2a2a4e}
+td{padding:4px 6px;border-bottom:1px solid #1a1a2e}
+.win-row td{color:#00ff88}.loss-row td{color:#ff4444}.skip-row td{color:#667}
+.trade-log{max-height:250px;overflow-y:auto}
+#killBtn{position:fixed;top:8px;right:16px;z-index:100;background:#ff4444;color:#fff;border:none;padding:10px 24px;border-radius:6px;font-size:14px;font-weight:700;cursor:pointer;letter-spacing:1px;box-shadow:0 2px 12px rgba(255,68,68,.4)}
+#killBtn:hover{background:#ff2222}
+#killBtn.killed{background:#444;cursor:default;color:#888}
+.config-panel{display:none}
+.config-panel.open{display:block}
+.config-toggle{cursor:pointer;color:#4488ff;font-size:13px;padding:8px 0}
+.cfg-group{margin-bottom:12px}
+.cfg-group h4{font-size:12px;color:#8899aa;margin-bottom:6px;text-transform:uppercase}
+.cfg-row{display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px}
+.cfg-row label{width:200px;color:#aab}
+.cfg-row input,.cfg-row select{background:#0a0a1a;border:1px solid #2a2a4e;color:#e0e0e0;padding:3px 6px;border-radius:4px;width:160px}
+.cfg-row input[type=checkbox]{width:auto}
+.save-btn{background:#4488ff;color:#fff;border:none;padding:6px 20px;border-radius:4px;cursor:pointer;font-weight:600;margin-top:8px}
+.save-btn:hover{background:#3377ee}
+canvas{width:100%;height:120px}
+.stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;font-size:13px}
+.stat-grid .label{color:#8899aa}.stat-grid .value{text-align:right}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<button id="killBtn" onclick="doKill()">KILL SWITCH</button>
+<div class="container">
+
+<!-- STATUS BAR -->
+<div class="card" id="statusBar">
+<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+  <div><span id="modeBadge" class="badge badge-dry">DRY-RUN</span></div>
+  <div>
+    <span class="dot" id="dotBtc"></span>BTC
+    <span class="dot" id="dotClob" style="margin-left:8px"></span>CLOB
+    <span class="dot" id="dotGamma" style="margin-left:8px"></span>Gamma
+  </div>
+  <div class="mono">Balance: $<span id="balance">0.00</span></div>
+  <div class="mono">Risk Cap: $<span id="riskCap">0.00</span></div>
+  <div class="mono">Size Cap: $<span id="sizeCap">0.00</span></div>
+  <div class="mono">Daily P&L: <span id="dailyPnl">$0.00</span></div>
+</div>
+</div>
+
+<div class="row">
+<!-- LEFT COL -->
+<div class="col">
+
+<!-- LIVE MARKET -->
+<div class="card">
+<h3>Live Market</h3>
+<div id="marketQuestion" style="font-size:13px;color:#aab;margin-bottom:6px">Waiting for market...</div>
+<div style="display:flex;justify-content:space-between;align-items:baseline">
+  <div><span class="big-num mono" id="btcPrice">--</span> <span style="color:#8899aa">BTC/USD</span></div>
+  <div class="mono">Expiry: <span id="expiry">--:--</span></div>
+</div>
+<div style="margin-top:6px;display:flex;gap:24px;font-size:13px" class="mono">
+  <div>Velocity: <span id="velocity">0.000000</span> <span id="velArrow"></span></div>
+  <div>YES: <span id="yesPrice">0.0000</span></div>
+  <div>NO: <span id="noPrice">0.0000</span></div>
+  <div>Spread: <span id="spread">0.0000</span></div>
+</div>
+<div style="margin-top:6px">
+  <div style="font-size:11px;color:#667">Entry Window</div>
+  <div class="progress-bar"><div class="progress-fill" id="entryBar" style="width:0%"></div></div>
+</div>
+</div>
+
+<!-- SIGNAL -->
+<div class="card">
+<h3>Signal Conditions</h3>
+<div id="signalList">
+  <div class="signal-row"><span class="icon" id="s_velocity">-</span> Velocity above threshold</div>
+  <div class="signal-row"><span class="icon" id="s_edge">-</span> Edge above required</div>
+  <div class="signal-row"><span class="icon" id="s_spread">-</span> Spread below max</div>
+  <div class="signal-row"><span class="icon" id="s_nopos">-</span> No open position</div>
+  <div class="signal-row"><span class="icon" id="s_cooldown">-</span> Cooldown elapsed</div>
+  <div class="signal-row"><span class="icon" id="s_dailyloss">-</span> Daily loss limit OK</div>
+  <div class="signal-row"><span class="icon" id="s_balance">-</span> Balance sufficient</div>
+  <div class="signal-row"><span class="icon" id="s_poslimit">-</span> Position limit OK</div>
+</div>
+<div style="margin-top:8px">
+  LLM: <span id="llmBadge" class="badge" style="background:#333">--</span>
+  <span id="llmReason" style="font-size:12px;color:#8899aa;margin-left:8px"></span>
+  <span id="llmTime" class="mono" style="font-size:11px;color:#667;margin-left:8px"></span>
+</div>
+</div>
+
+<!-- POSITION -->
+<div class="card" id="posPanel">
+<h3>Position</h3>
+<div id="posContent">
+  <div class="mono" style="display:flex;gap:24px;font-size:13px">
+    <div>Side: <b id="posSide">--</b></div>
+    <div>Entry: <span id="posEntry">--</span></div>
+    <div>Size: $<span id="posSize">--</span></div>
+    <div>Unrealized: <span id="posUnreal">--</span></div>
+    <div>TTX: <span id="posTtx">--</span></div>
+  </div>
+</div>
+<div id="posEmpty" style="color:#667;font-size:13px">No open position</div>
+</div>
+
+</div><!-- /left col -->
+
+<!-- RIGHT COL -->
+<div class="col">
+
+<!-- PERFORMANCE -->
+<div class="card">
+<h3>Performance</h3>
+<canvas id="pnlChart" height="120"></canvas>
+<div class="stat-grid mono" style="margin-top:8px">
+  <span class="label">Win Rate:</span><span class="value" id="winRate">0%</span>
+  <span class="label">Total Trades:</span><span class="value" id="totalTrades">0</span>
+  <span class="label">Wins:</span><span class="value" id="totalWins">0</span>
+  <span class="label">Losses:</span><span class="value" id="totalLosses">0</span>
+  <span class="label">Skips:</span><span class="value" id="totalSkips">0</span>
+  <span class="label">Total P&L:</span><span class="value" id="totalPnl">$0.00</span>
+  <span class="label">Biggest Win:</span><span class="value pnl-pos" id="bigWin">$0.00</span>
+  <span class="label">Biggest Loss:</span><span class="value pnl-neg" id="bigLoss">$0.00</span>
+  <span class="label">Cooldown:</span><span class="value" id="cooldownStatus">--</span>
+</div>
+</div>
+
+<!-- TRADE LOG -->
+<div class="card">
+<h3>Trade Log</h3>
+<div class="trade-log">
+<table>
+<thead><tr><th>Time</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&L</th><th>Dur</th><th>LLM</th><th>Outcome</th></tr></thead>
+<tbody id="tradeBody"></tbody>
+</table>
+</div>
+</div>
+
+</div><!-- /right col -->
+</div><!-- /row -->
+
+<!-- CONFIG -->
+<div class="card">
+<div class="config-toggle" onclick="document.getElementById('cfgPanel').classList.toggle('open')">&#9881; Configuration (click to expand)</div>
+<div class="config-panel" id="cfgPanel">
+<div class="row">
+<div class="col">
+  <div class="cfg-group"><h4>Capital &amp; Sizing</h4>
+    <div class="cfg-row"><label>Max Capital %</label><input type="number" step="0.01" id="cfg_max_capital_pct"></div>
+    <div class="cfg-row"><label>Min Floor ($)</label><input type="number" step="0.5" id="cfg_min_capital_floor"></div>
+    <div class="cfg-row"><label>Position Size %</label><input type="number" step="0.01" id="cfg_position_size_pct"></div>
+  </div>
+  <div class="cfg-group"><h4>Risk</h4>
+    <div class="cfg-row"><label>Max Daily Loss ($, blank=auto)</label><input type="number" step="0.5" id="cfg_max_daily_loss"></div>
+    <div class="cfg-row"><label>Max Open Positions</label><input type="number" step="1" id="cfg_max_open_positions"></div>
+  </div>
+  <div class="cfg-group"><h4>Signal Thresholds</h4>
+    <div class="cfg-row"><label>Velocity Threshold</label><input type="number" step="0.001" id="cfg_velocity_threshold"></div>
+    <div class="cfg-row"><label>Min Edge</label><input type="number" step="0.001" id="cfg_min_edge"></div>
+    <div class="cfg-row"><label>Max Spread</label><input type="number" step="0.01" id="cfg_max_spread"></div>
+    <div class="cfg-row"><label>Reversal Threshold</label><input type="number" step="0.01" id="cfg_reversal_threshold"></div>
+  </div>
+</div>
+<div class="col">
+  <div class="cfg-group"><h4>Entry Window</h4>
+    <div class="cfg-row"><label>Early Window (sec)</label><input type="number" id="cfg_early_window_seconds"></div>
+    <div class="cfg-row"><label>Mid Window (sec)</label><input type="number" id="cfg_mid_window_seconds"></div>
+    <div class="cfg-row"><label>Early Edge Mult</label><input type="number" step="0.1" id="cfg_early_edge_multiplier"></div>
+    <div class="cfg-row"><label>Mid Edge Mult</label><input type="number" step="0.1" id="cfg_mid_edge_multiplier"></div>
+    <div class="cfg-row"><label>Late Edge Mult</label><input type="number" step="0.1" id="cfg_late_edge_multiplier"></div>
+  </div>
+  <div class="cfg-group"><h4>Cooldown</h4>
+    <div class="cfg-row"><label>No-cooldown Win Rate</label><input type="number" step="0.05" id="cfg_cooldown_win_rate_no_cooldown"></div>
+    <div class="cfg-row"><label>Short Cooldown Win Rate</label><input type="number" step="0.05" id="cfg_cooldown_win_rate_short"></div>
+    <div class="cfg-row"><label>Short Cooldown Cycles</label><input type="number" id="cfg_cooldown_cycles_short"></div>
+    <div class="cfg-row"><label>Long Cooldown Cycles</label><input type="number" id="cfg_cooldown_cycles_long"></div>
+    <div class="cfg-row"><label>Tightened Multiplier</label><input type="number" step="0.1" id="cfg_cooldown_tightened_multiplier"></div>
+  </div>
+</div>
+<div class="col">
+  <div class="cfg-group"><h4>LLM</h4>
+    <div class="cfg-row"><label>LLM Enabled</label><input type="checkbox" id="cfg_llm_enabled"></div>
+    <div class="cfg-row"><label>Provider</label>
+      <select id="cfg_llm_provider"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="groq">Groq</option></select>
+    </div>
+    <div class="cfg-row"><label>Timeout (sec)</label><input type="number" step="1" id="cfg_llm_timeout"></div>
+  </div>
+  <div class="cfg-group"><h4>Data Providers</h4>
+    <div class="cfg-row"><label>News API</label><input type="checkbox" id="cfg_dp_news"></div>
+    <div class="cfg-row"><label>Tavily Search</label><input type="checkbox" id="cfg_dp_tavily"></div>
+  </div>
+  <div class="cfg-group"><h4>Mode</h4>
+    <div class="cfg-row"><label>Mode</label>
+      <select id="cfg_mode"><option value="dry-run">Dry-Run</option><option value="paper">Paper</option><option value="live">Live</option></select>
+    </div>
+  </div>
+  <button class="save-btn" onclick="saveConfig()">Save Config</button>
+</div>
+</div>
+</div>
+</div>
+
+</div><!-- /container -->
+
+<script>
+const params = new URLSearchParams(location.search);
+const secret = params.get('secret') || '';
+const wsUrl = `ws://${location.host}/ws?secret=${encodeURIComponent(secret)}`;
+const apiBase = `/api`;
+
+let ws = null;
+let state = {};
+let configPopulated = false;
+
+function connect() {
+  ws = new WebSocket(wsUrl);
+  ws.onmessage = (e) => {
+    try { state = JSON.parse(e.data); update(state); } catch(err) {}
+  };
+  ws.onclose = () => setTimeout(connect, 2000);
+  ws.onerror = () => ws.close();
+}
+
+function update(s) {
+  // Mode
+  const mb = document.getElementById('modeBadge');
+  mb.textContent = s.mode ? s.mode.toUpperCase() : 'DRY-RUN';
+  mb.className = 'badge badge-' + ({live:'live',paper:'paper'}[s.mode]||'dry');
+
+  // Connections
+  setDot('dotBtc', s.btc_feed_connected);
+  setDot('dotClob', s.clob_connected);
+  setDot('dotGamma', s.gamma_connected);
+
+  // Balance / caps
+  setText('balance', (s.usdc_balance||0).toFixed(2));
+  setText('riskCap', (s.max_capital_at_risk||0).toFixed(2));
+  setText('sizeCap', (s.position_size_ceiling||0).toFixed(2));
+  const dp = document.getElementById('dailyPnl');
+  dp.textContent = '$' + (s.daily_pnl||0).toFixed(2);
+  dp.className = (s.daily_pnl||0) >= 0 ? 'pnl-pos' : 'pnl-neg';
+
+  // Kill
+  const kb = document.getElementById('killBtn');
+  if (s.killed) {
+    kb.textContent = 'KILLED ' + (s.kill_timestamp||'').slice(11,19);
+    kb.className = 'killed';
+    kb.disabled = true;
+  }
+
+  // Market
+  setText('marketQuestion', s.current_market_question || 'Waiting for market...');
+  setText('btcPrice', s.btc_price ? s.btc_price.toFixed(2) : '--');
+  setText('velocity', (s.btc_velocity||0).toFixed(6));
+  setText('velArrow', s.btc_direction === 'up' ? '▲' : '▼');
+  document.getElementById('velArrow').style.color = s.btc_direction === 'up' ? '#00ff88' : '#ff4444';
+  setText('yesPrice', (s.yes_price||0).toFixed(4));
+  setText('noPrice', (s.no_price||0).toFixed(4));
+  setText('spread', (s.clob_spread||0).toFixed(4));
+  if (s.current_market_expiry) {
+    const rem = Math.max(0, (new Date(s.current_market_expiry) - Date.now()) / 1000);
+    setText('expiry', fmtTime(rem));
+  } else { setText('expiry', '--:--'); }
+  const pct = s.entry_window_total > 0 ? Math.min(100, (s.entry_window_elapsed / s.entry_window_total) * 100) : 0;
+  document.getElementById('entryBar').style.width = pct + '%';
+
+  // Signal
+  if (s.signal) {
+    setSig('s_velocity', s.signal.velocity_ok);
+    setSig('s_edge', s.signal.edge_ok);
+    setSig('s_spread', s.signal.spread_ok);
+    setSig('s_nopos', s.signal.no_position);
+    setSig('s_cooldown', s.signal.cooldown_ok);
+    setSig('s_dailyloss', s.signal.daily_loss_ok);
+    setSig('s_balance', s.signal.balance_ok);
+    setSig('s_poslimit', s.signal.position_limit_ok);
+  }
+
+  // LLM
+  const lb = document.getElementById('llmBadge');
+  if (s.llm_verdict) {
+    lb.textContent = s.llm_verdict;
+    lb.className = 'badge ' + ({'GO':'badge-go','NO-GO':'badge-nogo','REDUCE-SIZE':'badge-reduce'}[s.llm_verdict]||'');
+    setText('llmReason', s.llm_reason || '');
+    setText('llmTime', s.llm_response_time ? s.llm_response_time.toFixed(1) + 's' : '');
+  } else { lb.textContent = '--'; lb.className = 'badge'; setText('llmReason',''); setText('llmTime',''); }
+
+  // Position
+  if (s.position) {
+    document.getElementById('posContent').style.display = '';
+    document.getElementById('posEmpty').style.display = 'none';
+    setText('posSide', s.position.side);
+    setText('posEntry', s.position.entry_price.toFixed(4));
+    setText('posSize', s.position.size_usdc.toFixed(2));
+    const ur = document.getElementById('posUnreal');
+    ur.textContent = '$' + (s.unrealized_pnl||0).toFixed(4);
+    ur.className = (s.unrealized_pnl||0) >= 0 ? 'pnl-pos' : 'pnl-neg';
+    setText('posTtx', fmtTime(s.time_to_expiry||0));
+  } else {
+    document.getElementById('posContent').style.display = 'none';
+    document.getElementById('posEmpty').style.display = '';
+  }
+
+  // Stats
+  const rs = s.rolling_stats || {};
+  setText('winRate', ((rs.win_rate||0)*100).toFixed(0) + '%');
+  setText('totalTrades', rs.total_trades||0);
+  setText('totalWins', rs.total_wins||0);
+  setText('totalLosses', rs.total_losses||0);
+  setText('totalSkips', rs.total_skips||0);
+  setText('totalPnl', '$' + (rs.total_pnl||0).toFixed(2));
+  setText('bigWin', '$' + (rs.biggest_win||0).toFixed(2));
+  setText('bigLoss', '$' + (rs.biggest_loss||0).toFixed(2));
+  setText('cooldownStatus', s.cooldown_active ? fmtTime(s.cooldown_remaining_seconds||0) : 'None');
+
+  // Trade log
+  if (rs.trades && rs.trades.length) {
+    const tbody = document.getElementById('tradeBody');
+    tbody.innerHTML = '';
+    const recent = rs.trades.slice(-50).reverse();
+    for (const t of recent) {
+      const cls = t.outcome === 'win' ? 'win-row' : t.outcome === 'skipped' ? 'skip-row' : 'loss-row';
+      const dur = t.duration_seconds ? (t.duration_seconds/60).toFixed(1)+'m' : '--';
+      tbody.innerHTML += `<tr class="${cls}"><td>${(t.timestamp||'').slice(11,19)}</td><td>${t.side}</td><td>${(t.entry_price||0).toFixed(4)}</td><td>${(t.exit_price!=null?t.exit_price:0).toFixed(4)}</td><td>$${(t.pnl||0).toFixed(4)}</td><td>${dur}</td><td>${t.llm_verdict||'--'}</td><td>${t.outcome}</td></tr>`;
+    }
+  }
+
+  // P&L chart
+  drawChart(rs.trades || []);
+
+  // Populate config once
+  if (s.config && !configPopulated) { populateConfig(s.config); configPopulated = true; }
+}
+
+function setDot(id, ok) { document.getElementById(id).className = 'dot ' + (ok ? 'green' : 'red'); }
+function setSig(id, ok) { const el = document.getElementById(id); el.textContent = ok ? '✓' : '✗'; el.className = 'icon ' + (ok ? 'ok' : 'fail'); }
+function setText(id, v) { document.getElementById(id).textContent = v; }
+function fmtTime(s) { const m = Math.floor(s/60); return m + ':' + String(Math.floor(s%60)).padStart(2,'0'); }
+
+function drawChart(trades) {
+  const c = document.getElementById('pnlChart');
+  const ctx = c.getContext('2d');
+  c.width = c.clientWidth * 2; c.height = 240;
+  ctx.clearRect(0, 0, c.width, c.height);
+  const executed = trades.filter(t => t.pnl != null);
+  if (executed.length < 2) return;
+  let cum = 0; const pts = [0];
+  for (const t of executed) { cum += t.pnl; pts.push(cum); }
+  const mn = Math.min(...pts); const mx = Math.max(...pts);
+  const range = mx - mn || 1;
+  const w = c.width; const h = c.height;
+  const pad = 20;
+  ctx.strokeStyle = '#4488ff'; ctx.lineWidth = 2;
+  ctx.beginPath();
+  for (let i = 0; i < pts.length; i++) {
+    const x = pad + (i / (pts.length - 1)) * (w - 2 * pad);
+    const y = h - pad - ((pts[i] - mn) / range) * (h - 2 * pad);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+  // zero line
+  const zy = h - pad - ((0 - mn) / range) * (h - 2 * pad);
+  ctx.strokeStyle = '#333'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
+  ctx.beginPath(); ctx.moveTo(pad, zy); ctx.lineTo(w-pad, zy); ctx.stroke();
+  ctx.setLineDash([]);
+}
+
+function populateConfig(cfg) {
+  setVal('cfg_max_capital_pct', cfg.max_capital_pct);
+  setVal('cfg_min_capital_floor', cfg.min_capital_floor);
+  setVal('cfg_position_size_pct', cfg.position_size_pct);
+  setVal('cfg_max_daily_loss', cfg.max_daily_loss || '');
+  setVal('cfg_max_open_positions', cfg.max_open_positions);
+  setVal('cfg_velocity_threshold', cfg.velocity_threshold);
+  setVal('cfg_min_edge', cfg.min_edge);
+  setVal('cfg_max_spread', cfg.max_spread);
+  setVal('cfg_reversal_threshold', cfg.reversal_threshold);
+  setVal('cfg_early_window_seconds', cfg.early_window_seconds);
+  setVal('cfg_mid_window_seconds', cfg.mid_window_seconds);
+  setVal('cfg_early_edge_multiplier', cfg.early_edge_multiplier);
+  setVal('cfg_mid_edge_multiplier', cfg.mid_edge_multiplier);
+  setVal('cfg_late_edge_multiplier', cfg.late_edge_multiplier);
+  setVal('cfg_cooldown_win_rate_no_cooldown', cfg.cooldown_win_rate_no_cooldown);
+  setVal('cfg_cooldown_win_rate_short', cfg.cooldown_win_rate_short);
+  setVal('cfg_cooldown_cycles_short', cfg.cooldown_cycles_short);
+  setVal('cfg_cooldown_cycles_long', cfg.cooldown_cycles_long);
+  setVal('cfg_cooldown_tightened_multiplier', cfg.cooldown_tightened_multiplier);
+  document.getElementById('cfg_llm_enabled').checked = cfg.llm_enabled;
+  setVal('cfg_llm_provider', cfg.llm_provider);
+  setVal('cfg_llm_timeout', cfg.llm_timeout);
+  document.getElementById('cfg_dp_news').checked = (cfg.data_providers||[]).includes('news');
+  document.getElementById('cfg_dp_tavily').checked = (cfg.data_providers||[]).includes('tavily');
+  setVal('cfg_mode', cfg.mode);
+}
+
+function setVal(id, v) { const el = document.getElementById(id); if (el) el.value = v; }
+function getNum(id) { const v = document.getElementById(id).value; return v === '' ? null : parseFloat(v); }
+
+async function saveConfig() {
+  const dp = [];
+  if (document.getElementById('cfg_dp_news').checked) dp.push('news');
+  if (document.getElementById('cfg_dp_tavily').checked) dp.push('tavily');
+
+  const newMode = document.getElementById('cfg_mode').value;
+  if (newMode === 'live') {
+    const c = prompt('Type CONFIRM to enable live trading:');
+    if (c !== 'CONFIRM') { alert('Live mode not enabled.'); return; }
+  }
+
+  const body = {
+    max_capital_pct: getNum('cfg_max_capital_pct'),
+    min_capital_floor: getNum('cfg_min_capital_floor'),
+    position_size_pct: getNum('cfg_position_size_pct'),
+    max_daily_loss: getNum('cfg_max_daily_loss'),
+    max_open_positions: getNum('cfg_max_open_positions'),
+    velocity_threshold: getNum('cfg_velocity_threshold'),
+    min_edge: getNum('cfg_min_edge'),
+    max_spread: getNum('cfg_max_spread'),
+    reversal_threshold: getNum('cfg_reversal_threshold'),
+    early_window_seconds: getNum('cfg_early_window_seconds'),
+    mid_window_seconds: getNum('cfg_mid_window_seconds'),
+    early_edge_multiplier: getNum('cfg_early_edge_multiplier'),
+    mid_edge_multiplier: getNum('cfg_mid_edge_multiplier'),
+    late_edge_multiplier: getNum('cfg_late_edge_multiplier'),
+    cooldown_win_rate_no_cooldown: getNum('cfg_cooldown_win_rate_no_cooldown'),
+    cooldown_win_rate_short: getNum('cfg_cooldown_win_rate_short'),
+    cooldown_cycles_short: getNum('cfg_cooldown_cycles_short'),
+    cooldown_cycles_long: getNum('cfg_cooldown_cycles_long'),
+    cooldown_tightened_multiplier: getNum('cfg_cooldown_tightened_multiplier'),
+    llm_enabled: document.getElementById('cfg_llm_enabled').checked,
+    llm_provider: document.getElementById('cfg_llm_provider').value,
+    llm_timeout: getNum('cfg_llm_timeout'),
+    data_providers: dp,
+    mode: newMode,
+  };
+
+  // Remove nulls
+  for (const k in body) { if (body[k] === null) delete body[k]; }
+
+  const resp = await fetch(`${apiBase}/config?secret=${encodeURIComponent(secret)}`, {
+    method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify(body),
+  });
+  const data = await resp.json();
+  if (resp.ok) { alert('Config saved!'); configPopulated = false; }
+  else alert('Error: ' + (data.detail || data.error || 'unknown'));
+}
+
+async function doKill() {
+  if (!confirm('Kill the bot? This will close all positions and halt trading.')) return;
+  const resp = await fetch(`${apiBase}/kill?secret=${encodeURIComponent(secret)}`, {method:'POST'});
+  const data = await resp.json();
+  alert(data.status || data.error || 'Done');
+}
+
+connect();
+</script>
+</body>
+</html>
