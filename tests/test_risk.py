@@ -7,6 +7,7 @@ from agents.strategies.polyguez_strategy import (
     check_daily_loss_limit,
     check_emergency_exit,
     compute_cooldown,
+    settle_with_retry,
 )
 from agents.utils.objects import PolyGuezConfig, RollingStats, TradeRecord
 
@@ -28,7 +29,6 @@ class TestDailyLossLimit(unittest.TestCase):
     def test_under_limit(self):
         config = _default_config(max_capital_pct=0.10)
         stats = RollingStats(daily_pnl=-5.0, daily_pnl_reset_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-        # max capital at risk for $100 = $10, daily loss limit = $10
         self.assertTrue(check_daily_loss_limit(stats, config, usdc_balance=100.0))
 
     def test_at_limit(self):
@@ -54,136 +54,143 @@ class TestDailyLossLimit(unittest.TestCase):
     def test_new_day_resets(self):
         config = _default_config(max_capital_pct=0.10)
         stats = RollingStats(daily_pnl=-50.0, daily_pnl_reset_utc="2020-01-01")
-        # Different day → always returns True (reset will happen in runner)
         self.assertTrue(check_daily_loss_limit(stats, config, usdc_balance=100.0))
 
 
 class TestEmergencyExit(unittest.TestCase):
+    """FIX 1: Tests use the new split threshold fields."""
 
     # -- Velocity-based fallback (no Chainlink data) -----------------------
 
     def test_no_reversal(self):
-        config = _default_config(reversal_threshold=0.08)
+        config = _default_config(reversal_velocity_threshold=0.08)
         self.assertFalse(check_emergency_exit(0.05, "up", config))
 
     def test_small_reversal_no_exit(self):
-        config = _default_config(reversal_threshold=0.08)
+        config = _default_config(reversal_velocity_threshold=0.08)
         self.assertFalse(check_emergency_exit(-0.05, "up", config))
 
     def test_reversal_exceeds_threshold_up(self):
-        config = _default_config(reversal_threshold=0.08)
+        config = _default_config(reversal_velocity_threshold=0.08)
         self.assertTrue(check_emergency_exit(-0.10, "up", config))
 
     def test_reversal_exceeds_threshold_down(self):
-        config = _default_config(reversal_threshold=0.08)
+        config = _default_config(reversal_velocity_threshold=0.08)
         self.assertTrue(check_emergency_exit(0.10, "down", config))
 
     def test_same_direction_no_exit(self):
-        config = _default_config(reversal_threshold=0.08)
+        config = _default_config(reversal_velocity_threshold=0.08)
         self.assertFalse(check_emergency_exit(0.10, "up", config))
 
     def test_exact_threshold_no_exit(self):
-        """At exactly the threshold — not exceeded, so no exit."""
-        config = _default_config(reversal_threshold=0.08)
+        config = _default_config(reversal_velocity_threshold=0.08)
         self.assertFalse(check_emergency_exit(-0.08, "up", config))
 
-    # -- Chainlink-based exit (primary) ------------------------------------
+    # -- Chainlink-based exit (primary) — now uses reversal_chainlink_threshold
 
     def test_chainlink_reversal_up_triggers_exit(self):
-        """Chainlink drops below price_to_beat by more than threshold → exit."""
-        config = _default_config(reversal_threshold=50.0)
+        config = _default_config(reversal_chainlink_threshold=50.0)
         self.assertTrue(check_emergency_exit(
             0.05, "up", config,
-            chainlink_price=64940.0, price_to_beat=65000.0,  # -60 < -50
+            chainlink_price=64940.0, price_to_beat=65000.0,
         ))
 
     def test_chainlink_reversal_down_triggers_exit(self):
-        """Chainlink rises above price_to_beat by more than threshold → exit."""
-        config = _default_config(reversal_threshold=50.0)
+        config = _default_config(reversal_chainlink_threshold=50.0)
         self.assertTrue(check_emergency_exit(
             -0.05, "down", config,
-            chainlink_price=65060.0, price_to_beat=65000.0,  # +60 > +50
+            chainlink_price=65060.0, price_to_beat=65000.0,
         ))
 
     def test_chainlink_no_reversal(self):
-        """Chainlink move within threshold → no exit."""
-        config = _default_config(reversal_threshold=50.0)
+        config = _default_config(reversal_chainlink_threshold=50.0)
         self.assertFalse(check_emergency_exit(
             0.05, "up", config,
-            chainlink_price=64970.0, price_to_beat=65000.0,  # -30, within 50
+            chainlink_price=64970.0, price_to_beat=65000.0,
         ))
 
     def test_chainlink_favorable_move_no_exit(self):
-        """Chainlink moves in our favor → no exit."""
-        config = _default_config(reversal_threshold=50.0)
+        config = _default_config(reversal_chainlink_threshold=50.0)
         self.assertFalse(check_emergency_exit(
             0.05, "up", config,
-            chainlink_price=65100.0, price_to_beat=65000.0,  # +100, favorable for "up"
+            chainlink_price=65100.0, price_to_beat=65000.0,
         ))
 
     def test_chainlink_overrides_velocity(self):
-        """When Chainlink data available, velocity doesn't matter."""
-        config = _default_config(reversal_threshold=50.0)
-        # Velocity would trigger exit, but Chainlink says we're fine
+        config = _default_config(reversal_chainlink_threshold=50.0)
         self.assertFalse(check_emergency_exit(
-            -1.0, "up", config,  # huge negative velocity
-            chainlink_price=65010.0, price_to_beat=65000.0,  # Chainlink still above P2B
+            -1.0, "up", config,
+            chainlink_price=65010.0, price_to_beat=65000.0,
+        ))
+
+    # -- FIX 1: Verify the two thresholds are independent --
+
+    def test_velocity_threshold_independent_of_chainlink(self):
+        config = _default_config(
+            reversal_velocity_threshold=0.05,
+            reversal_chainlink_threshold=100.0,
+        )
+        self.assertTrue(check_emergency_exit(-0.06, "up", config))
+        self.assertFalse(check_emergency_exit(-0.04, "up", config))
+
+    def test_chainlink_threshold_independent_of_velocity(self):
+        config = _default_config(
+            reversal_velocity_threshold=0.05,
+            reversal_chainlink_threshold=30.0,
+        )
+        self.assertTrue(check_emergency_exit(
+            0.01, "up", config,
+            chainlink_price=64965.0, price_to_beat=65000.0,
+        ))
+        self.assertFalse(check_emergency_exit(
+            0.01, "up", config,
+            chainlink_price=64975.0, price_to_beat=65000.0,
         ))
 
 
 class TestAdaptiveCooldown(unittest.TestCase):
 
     def test_startup_conservative(self):
-        """Fewer than 5 trades → always 1 cycle cooldown."""
         config = _default_config(cooldown_startup_trades=5)
         stats = _stats_with_trades(["win", "win"])
         self.assertEqual(compute_cooldown(stats, config), 1)
 
     def test_win_high_win_rate_no_cooldown(self):
-        """Win with >= 60% win rate → no cooldown."""
         config = _default_config(
             cooldown_startup_trades=5,
             cooldown_win_rate_no_cooldown=0.60,
         )
-        # 3 losses then 7 wins = 70% win rate, last trade is a win
         stats = _stats_with_trades(["loss"] * 3 + ["win"] * 7)
         self.assertEqual(compute_cooldown(stats, config), 0)
 
     def test_win_low_win_rate_1_cycle(self):
-        """Win with < 60% win rate → 1 cycle cooldown."""
         config = _default_config(
             cooldown_startup_trades=5,
             cooldown_win_rate_no_cooldown=0.60,
             cooldown_cycles_short=1,
         )
-        # 5 wins, 5 losses = 50%, last is win
         stats = _stats_with_trades(["loss"] * 5 + ["win"] * 5)
         self.assertEqual(compute_cooldown(stats, config), 1)
 
     def test_loss_high_win_rate_1_cycle(self):
-        """Loss with >= 50% win rate → 1 cycle."""
         config = _default_config(
             cooldown_startup_trades=5,
             cooldown_win_rate_short=0.50,
             cooldown_cycles_short=1,
         )
-        # 6 wins, 4 losses = 60%, last is loss
         stats = _stats_with_trades(["win"] * 6 + ["loss"] * 4)
         self.assertEqual(compute_cooldown(stats, config), 1)
 
     def test_loss_low_win_rate_2_cycles(self):
-        """Loss with < 50% win rate → 2 cycles."""
         config = _default_config(
             cooldown_startup_trades=5,
             cooldown_win_rate_short=0.50,
             cooldown_cycles_long=2,
         )
-        # 3 wins, 7 losses = 30%, last is loss
         stats = _stats_with_trades(["win"] * 3 + ["loss"] * 7)
         self.assertEqual(compute_cooldown(stats, config), 2)
 
     def test_empty_trades(self):
-        """No trades at all → startup conservative (1 cycle)."""
         config = _default_config(cooldown_startup_trades=5)
         stats = RollingStats()
         self.assertEqual(compute_cooldown(stats, config), 1)

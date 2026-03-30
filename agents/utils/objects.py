@@ -28,17 +28,12 @@ class Trade(BaseModel):
 class SimpleMarket(BaseModel):
     id: int
     question: str
-    # start: str
     end: str
     description: str
     active: bool
-    # deployed: Optional[bool]
     funded: bool
-    # orderMinSize: float
-    # orderPriceMinTickSize: float
     rewardsMinSize: float
     rewardsMaxSpread: float
-    # volume: Optional[float]
     spread: float
     outcomes: str
     outcome_prices: str
@@ -46,34 +41,32 @@ class SimpleMarket(BaseModel):
 
 
 class ClobReward(BaseModel):
-    id: str  # returned as string in api but really an int?
+    id: str
     conditionId: str
     assetAddress: str
-    rewardsAmount: float  # only seen 0 but could be float?
-    rewardsDailyRate: int  # only seen ints but could be float?
-    startDate: str  # yyyy-mm-dd formatted date string
-    endDate: str  # yyyy-mm-dd formatted date string
+    rewardsAmount: float
+    rewardsDailyRate: int
+    startDate: str
+    endDate: str
 
 
 class Tag(BaseModel):
     id: str
     label: Optional[str] = None
     slug: Optional[str] = None
-    forceShow: Optional[bool] = None  # missing from current events data
-    createdAt: Optional[str] = None  # missing from events data
-    updatedAt: Optional[str] = None  # missing from current events data
+    forceShow: Optional[bool] = None
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
     _sync: Optional[bool] = None
 
 
 class PolymarketEvent(BaseModel):
-    id: str  # "11421"
+    id: str
     ticker: Optional[str] = None
     slug: Optional[str] = None
     title: Optional[str] = None
     startDate: Optional[str] = None
-    creationDate: Optional[str] = (
-        None  # fine in market event but missing from events response
-    )
+    creationDate: Optional[str] = None
     endDate: Optional[str] = None
     image: Optional[str] = None
     icon: Optional[str] = None
@@ -86,15 +79,14 @@ class PolymarketEvent(BaseModel):
     liquidity: Optional[float] = None
     volume: Optional[float] = None
     reviewStatus: Optional[str] = None
-    createdAt: Optional[str] = None  # 2024-07-08T01:06:23.982796Z,
-    updatedAt: Optional[str] = None  # 2024-07-15T17:12:48.601056Z,
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
     competitive: Optional[float] = None
     volume24hr: Optional[float] = None
     enableOrderBook: Optional[bool] = None
     liquidityClob: Optional[float] = None
     _sync: Optional[bool] = None
     commentCount: Optional[int] = None
-    # markets: list[str, 'Market'] # forward reference Market defined below - TODO: double check this works as intended
     markets: Optional[list[Market]] = None
     tags: Optional[list[Tag]] = None
     cyom: Optional[bool] = None
@@ -120,7 +112,7 @@ class Market(BaseModel):
     active: Optional[bool] = None
     closed: Optional[bool] = None
     marketMakerAddress: Optional[str] = None
-    createdAt: Optional[str] = None  # date type worth enforcing for dates?
+    createdAt: Optional[str] = None
     updatedAt: Optional[str] = None
     new: Optional[bool] = None
     featured: Optional[bool] = None
@@ -136,13 +128,13 @@ class Market(BaseModel):
     orderMinSize: Optional[int] = None
     volumeNum: Optional[float] = None
     liquidityNum: Optional[float] = None
-    endDateIso: Optional[str] = None  # iso format date = None
+    endDateIso: Optional[str] = None
     startDateIso: Optional[str] = None
     hasReviewedDates: Optional[bool] = None
     volume24hr: Optional[float] = None
     clobTokenIds: Optional[list] = None
-    umaBond: Optional[int] = None  # returned as string from api?
-    umaReward: Optional[int] = None  # returned as string from api?
+    umaBond: Optional[int] = None
+    umaReward: Optional[int] = None
     volume24hrClob: Optional[float] = None
     volumeClob: Optional[float] = None
     liquidityClob: Optional[float] = None
@@ -154,17 +146,15 @@ class Market(BaseModel):
     ready: Optional[bool] = None
     deployed: Optional[bool] = None
     funded: Optional[bool] = None
-    deployedTimestamp: Optional[str] = None  # utc z datetime string
-    acceptingOrdersTimestamp: Optional[str] = None  # utc z datetime string,
+    deployedTimestamp: Optional[str] = None
+    acceptingOrdersTimestamp: Optional[str] = None
     cyom: Optional[bool] = None
     competitive: Optional[float] = None
     pagerDutyNotificationEnabled: Optional[bool] = None
-    reviewStatus: Optional[str] = None  # deployed, draft, etc.
+    reviewStatus: Optional[str] = None
     approved: Optional[bool] = None
     clobRewards: Optional[list[ClobReward]] = None
-    rewardsMinSize: Optional[int] = (
-        None  # would make sense to allow float but we'll see
-    )
+    rewardsMinSize: Optional[int] = None
     rewardsMaxSpread: Optional[float] = None
     spread: Optional[float] = None
 
@@ -230,88 +220,82 @@ class Article(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# PolyGuez Momentum — new models
+# PolyGuez Momentum — models
 # ---------------------------------------------------------------------------
 
 class PolyGuezConfig(BaseModel):
-    # Capital & sizing
-    max_capital_pct: float = Field(default=0.10, description="Max capital at risk as fraction of USDC balance")
-    min_capital_floor: float = Field(default=3.0, description="Minimum capital floor in USDC")
-    position_size_pct: float = Field(default=0.30, description="Position size as fraction of max capital at risk")
-
-    # Risk
-    max_daily_loss: Optional[float] = Field(default=None, description="Override daily loss limit in USDC (None = auto from capital)")
+    max_capital_pct: float = Field(default=0.10)
+    min_capital_floor: float = Field(default=3.0)
+    position_size_pct: float = Field(default=0.30)
+    max_daily_loss: Optional[float] = Field(default=None)
     max_open_positions: int = Field(default=1)
+    velocity_threshold: float = Field(default=0.05)
+    min_edge: float = Field(default=0.03)
+    max_spread: float = Field(default=0.10)
+    min_oracle_gap: float = Field(default=15.0)
 
-    # Signal thresholds
-    velocity_threshold: float = Field(default=0.05, description="Min BTC price velocity magnitude ($/sec)")
-    min_edge: float = Field(default=0.03, description="Min difference between fair value estimate and CLOB price")
-    max_spread: float = Field(default=0.10, description="Max CLOB spread to allow entry")
-    reversal_threshold: float = Field(default=0.08, description="Chainlink reversal vs price_to_beat for emergency exit")
-    min_oracle_gap: float = Field(default=15.0, description="Min Binance-to-Chainlink gap in USD to trigger signal")
+    # FIX 1: Split reversal_threshold into two fields
+    reversal_velocity_threshold: float = Field(default=0.08, description="$/sec for velocity-based emergency exit fallback")
+    reversal_chainlink_threshold: float = Field(default=50.0, description="$ of BTC price move for Chainlink-based emergency exit")
 
-    # Entry window edge multipliers
+    # FIX 2: CLOB depth hard gate
+    min_clob_depth: float = Field(default=50.0, description="Min ask-side depth in token units within $0.05 of best price")
+
+    # FIX 3: Settlement retry
+    settlement_max_retries: int = Field(default=4)
+    settlement_retry_delay: float = Field(default=3.0)
+
     early_window_seconds: int = Field(default=60)
     mid_window_seconds: int = Field(default=150)
     early_edge_multiplier: float = Field(default=1.0)
     mid_edge_multiplier: float = Field(default=1.5)
     late_edge_multiplier: float = Field(default=2.5)
-
-    # Cooldown
-    cooldown_win_rate_no_cooldown: float = Field(default=0.60, description="Win rate above which no cooldown after win")
-    cooldown_win_rate_short: float = Field(default=0.50, description="Win rate above which 1 cycle cooldown after loss")
+    cooldown_win_rate_no_cooldown: float = Field(default=0.60)
+    cooldown_win_rate_short: float = Field(default=0.50)
     cooldown_cycles_short: int = Field(default=1)
     cooldown_cycles_long: int = Field(default=2)
-    cooldown_tightened_multiplier: float = Field(default=1.5, description="Multiplier for velocity/edge after losing streak")
-    cooldown_startup_trades: int = Field(default=5, description="Conservative mode until this many trades")
-
-    # LLM
-    llm_timeout: float = Field(default=15.0, description="LLM confirmation timeout in seconds")
-    llm_enabled: bool = Field(default=True, description="Enable LLM confirmation layer")
-    llm_provider: str = Field(default="openai", description="Active LLM provider: openai, anthropic, groq")
+    cooldown_tightened_multiplier: float = Field(default=1.5)
+    cooldown_startup_trades: int = Field(default=5)
+    llm_timeout: float = Field(default=15.0)
+    llm_enabled: bool = Field(default=True)
+    llm_provider: str = Field(default="openai")
     llm_model_openai: str = Field(default="gpt-4o-mini")
     llm_model_anthropic: str = Field(default="claude-3-5-haiku-20241022")
     llm_model_groq: str = Field(default="llama-3.1-70b-versatile")
-
-    # Data providers
-    data_providers: List[str] = Field(default=["news", "tavily"], description="Enabled data provider names")
-    data_provider_timeout: float = Field(default=3.0, description="Per-provider fetch timeout in seconds")
-
-    # Market discovery
-    market_slug_pattern: str = Field(default="btc-updown-5m", description="Slug pattern to match 5-min BTC markets")
-    market_question_pattern: str = Field(default="Bitcoin Up or Down", description="Question text pattern for market matching")
-
-    # CLOB polling
-    clob_poll_interval: float = Field(default=0.5, description="Seconds between CLOB orderbook polls")
-
-    # Mode: dry-run, paper, live
+    data_providers: List[str] = Field(default=["news", "tavily"])
+    data_provider_timeout: float = Field(default=3.0)
+    market_slug_pattern: str = Field(default="btc-updown-5m")
+    market_question_pattern: str = Field(default="Bitcoin Up or Down")
+    clob_poll_interval: float = Field(default=0.5)
     mode: str = Field(default="dry-run")
-
-    # Price feeds
-    rtds_ws_url: str = Field(default="wss://ws-live-data.polymarket.com", description="Polymarket RTDS WebSocket (primary for Binance+Chainlink)")
-    binance_ws_url: str = Field(default="wss://stream.binance.com:9443/ws/btcusdt@trade", description="Direct Binance WS (fallback only)")
+    rtds_ws_url: str = Field(default="wss://ws-live-data.polymarket.com")
+    binance_ws_url: str = Field(default="wss://stream.binance.com:9443/ws/btcusdt@trade")
     coinbase_ws_url: str = Field(default="wss://ws-feed.exchange.coinbase.com")
     btc_feed_connect_timeout: float = Field(default=5.0)
     btc_buffer_min_seconds: float = Field(default=10.0)
 
-    # Dashboard
-    dashboard_secret: str = Field(default="", description="Shared secret for dashboard auth")
+    # FIX 4: Chainlink on-chain fallback
+    chainlink_onchain_fallback: bool = Field(default=True)
+    chainlink_onchain_poll_interval: float = Field(default=2.0)
+    chainlink_onchain_rpc_url: str = Field(default="https://polygon-rpc.com")
+
+    dashboard_secret: str = Field(default="")
 
 
 class TradeRecord(BaseModel):
     timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     market_id: str = ""
     market_question: str = ""
-    side: str = ""  # YES or NO
+    side: str = ""
     entry_price: float = 0.0
     exit_price: Optional[float] = None
     pnl: Optional[float] = None
     duration_seconds: Optional[float] = None
     signal_strength: Optional[float] = None
-    llm_verdict: str = ""  # GO, NO-GO, REDUCE-SIZE, timeout-default, disabled
+    llm_verdict: str = ""
     llm_reason: str = ""
     llm_provider: str = ""
-    outcome: str = ""  # win, loss, skipped, emergency-exit
+    outcome: str = ""  # win, loss, skipped, emergency-exit, pending
     reason: str = ""
 
 
@@ -324,13 +308,11 @@ class SignalState(BaseModel):
     no_price: float = 0.0
     spread: float = 0.0
     elapsed_seconds: float = 0.0
-    direction: str = ""  # up or down
+    direction: str = ""
     estimated_fair_value: float = 0.0
     edge: float = 0.0
     required_edge: float = 0.0
     gap_favors_position: bool = False
-
-    # Per-condition booleans
     velocity_ok: bool = False
     oracle_gap_ok: bool = False
     clob_mispricing_ok: bool = False
@@ -341,6 +323,7 @@ class SignalState(BaseModel):
     daily_loss_ok: bool = False
     balance_ok: bool = False
     position_limit_ok: bool = False
+    depth_ok: bool = False  # FIX 2
 
     @property
     def all_conditions_met(self) -> bool:
@@ -349,25 +332,26 @@ class SignalState(BaseModel):
             self.edge_ok, self.spread_ok,
             self.no_position, self.cooldown_ok, self.daily_loss_ok,
             self.balance_ok, self.position_limit_ok,
+            self.depth_ok,
         ])
 
 
 class PositionState(BaseModel):
-    side: str = ""  # YES or NO
+    side: str = ""
     entry_price: float = 0.0
     entry_time: str = ""
     market_id: str = ""
     token_id: str = ""
     size_usdc: float = 0.0
-    price_to_beat: float = 0.0  # Chainlink opening price for the 5-min window
+    price_to_beat: float = 0.0
 
 
 class RollingStats(BaseModel):
     trades: List[TradeRecord] = Field(default_factory=list)
     daily_pnl: float = 0.0
     daily_pnl_reset_utc: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
-    cooldown_until: Optional[str] = None  # ISO timestamp or None
-    max_capital_at_risk: float = 0.0  # recalculated each cycle
+    cooldown_until: Optional[str] = None
+    max_capital_at_risk: float = 0.0
 
     @property
     def last_n_trades(self) -> List[TradeRecord]:
@@ -413,7 +397,6 @@ class RollingStats(BaseModel):
 
 
 class DashboardSnapshot(BaseModel):
-    # Status
     mode: str = "dry-run"
     btc_feed_connected: bool = False
     clob_connected: bool = False
@@ -424,14 +407,13 @@ class DashboardSnapshot(BaseModel):
     daily_pnl: float = 0.0
     killed: bool = False
     kill_timestamp: Optional[str] = None
-
-    # Live market
     current_market_question: str = ""
     current_market_expiry: Optional[str] = None
     btc_price: float = 0.0
     chainlink_price: float = 0.0
+    chainlink_source: str = ""  # FIX 4
     binance_chainlink_gap: float = 0.0
-    gap_direction: str = ""  # narrowing or widening
+    gap_direction: str = ""
     price_to_beat: float = 0.0
     chainlink_vs_price_to_beat: float = 0.0
     btc_velocity: float = 0.0
@@ -439,26 +421,17 @@ class DashboardSnapshot(BaseModel):
     yes_price: float = 0.0
     no_price: float = 0.0
     clob_spread: float = 0.0
+    clob_depth: float = 0.0  # FIX 2
     entry_window_elapsed: float = 0.0
     entry_window_total: float = 300.0
-
-    # Signal
     signal: Optional[SignalState] = None
-
-    # LLM
     llm_verdict: str = ""
     llm_reason: str = ""
     llm_response_time: Optional[float] = None
-
-    # Position
     position: Optional[PositionState] = None
     unrealized_pnl: float = 0.0
     time_to_expiry: float = 0.0
-
-    # Stats
     rolling_stats: Optional[RollingStats] = None
     cooldown_active: bool = False
     cooldown_remaining_seconds: float = 0.0
-
-    # Config (for the config panel)
     config: Optional[PolyGuezConfig] = None

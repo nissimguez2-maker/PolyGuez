@@ -20,6 +20,7 @@ from agents.strategies.polyguez_strategy import (
     calculate_position_size,
     check_daily_loss_limit,
     check_emergency_exit,
+    compute_clob_depth,
     compute_cooldown,
     evaluate_entry_signal,
     execute_emergency_exit,
@@ -27,6 +28,7 @@ from agents.strategies.polyguez_strategy import (
     get_llm_confirmation,
     load_rolling_stats,
     save_rolling_stats,
+    settle_with_retry,
 )
 from agents.utils.logger import get_logger, log_event
 from agents.utils.objects import (
@@ -65,6 +67,7 @@ class PolyGuezRunner:
         self._position = None  # PositionState or None
         self._current_market = None
         self._current_signal = None
+        self._current_depth = 0.0  # FIX 2
         self._last_llm_verdict = ""
         self._last_llm_reason = ""
         self._last_llm_time = 0.0
@@ -143,6 +146,7 @@ class PolyGuezRunner:
             current_market_expiry=expiry,
             btc_price=self._btc_feed.get_price(),
             chainlink_price=chainlink_price,
+            chainlink_source=self._btc_feed.chainlink_source,  # FIX 4
             binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
             gap_direction=self._btc_feed.get_gap_direction(),
             price_to_beat=self._price_to_beat,
@@ -152,6 +156,7 @@ class PolyGuezRunner:
             yes_price=self._current_signal.yes_price if self._current_signal else 0.0,
             no_price=self._current_signal.no_price if self._current_signal else 0.0,
             clob_spread=self._current_signal.spread if self._current_signal else 0.0,
+            clob_depth=self._current_depth,  # FIX 2
             entry_window_elapsed=elapsed,
             signal=self._current_signal,
             llm_verdict=self._last_llm_verdict,
@@ -317,6 +322,7 @@ class PolyGuezRunner:
         old_question = self._current_market.get("question", "") if self._current_market else ""
         self._current_market = None
         self._current_signal = None
+        self._current_depth = 0.0
         self._last_llm_verdict = ""
         self._last_llm_reason = ""
         self._price_to_beat = 0.0
@@ -348,6 +354,12 @@ class PolyGuezRunner:
             # Poll CLOB prices
             yes_price, no_price, spread = await self._poll_clob(yes_token, no_token)
 
+            # FIX 2: Fetch CLOB depth for the side we'd buy
+            direction = "up" if self._btc_feed.get_velocity() > 0 else "down"
+            target_token = yes_token if direction == "up" else no_token
+            depth = await self._fetch_depth(target_token)
+            self._current_depth = depth
+
             # Evaluate signal (three-price-gap model)
             signal = evaluate_entry_signal(
                 btc_velocity=self._btc_feed.get_velocity(),
@@ -363,6 +375,7 @@ class PolyGuezRunner:
                 open_position_count=1 if self._position else 0,
                 chainlink_price=self._btc_feed.get_chainlink_price(),
                 binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
+                clob_depth=depth,  # FIX 2
             )
             self._current_signal = signal
 
@@ -372,6 +385,7 @@ class PolyGuezRunner:
                 "required_edge": round(signal.required_edge, 4),
                 "spread": round(signal.spread, 4),
                 "oracle_gap": round(signal.binance_chainlink_gap, 2),
+                "depth": round(depth, 1),
                 "elapsed": round(elapsed, 1),
                 "conditions": {
                     "velocity_ok": signal.velocity_ok,
@@ -379,6 +393,7 @@ class PolyGuezRunner:
                     "clob_mispricing_ok": signal.clob_mispricing_ok,
                     "edge_ok": signal.edge_ok,
                     "spread_ok": signal.spread_ok,
+                    "depth_ok": signal.depth_ok,  # FIX 2
                     "no_position": signal.no_position,
                     "cooldown_ok": signal.cooldown_ok,
                     "daily_loss_ok": signal.daily_loss_ok,
@@ -511,20 +526,18 @@ class PolyGuezRunner:
             await asyncio.sleep(self.config.clob_poll_interval)
 
     async def _settle(self, market_id):
-        """Check settlement outcome and record P&L."""
+        """FIX 3: Settlement with retry instead of defaulting to loss."""
         if not self._position:
             return
 
-        # Poll Gamma for settlement
-        loop = asyncio.get_event_loop()
-        settled_market = await loop.run_in_executor(
-            None, self._discovery.get_market_by_id, market_id,
+        settled_market = await settle_with_retry(
+            self._discovery, market_id, self.config,
         )
 
         outcome_str = ""
         pnl = 0.0
+
         if settled_market and settled_market.get("closed"):
-            # Determine outcome from resolved prices
             outcome_prices = settled_market.get("outcomePrices", "")
             if isinstance(outcome_prices, str):
                 try:
@@ -538,21 +551,22 @@ class PolyGuezRunner:
                 settled_price = yes_settled if self._position.side == "YES" else no_settled
 
                 if settled_price > 0.5:
-                    # Our side won
                     pnl = (1.0 - self._position.entry_price) * self._position.size_usdc
                     outcome_str = "win"
                 else:
                     pnl = -self._position.entry_price * self._position.size_usdc
                     outcome_str = "loss"
             else:
-                # Can't determine — treat as loss to be safe
-                pnl = -self._position.entry_price * self._position.size_usdc
-                outcome_str = "loss"
+                outcome_str = "pending"
+                pnl = 0.0
+                log_event(logger, "settlement_ambiguous",
+                    f"Market {market_id} closed but outcomePrices not parseable: {outcome_prices}")
         else:
-            # Not yet settled — estimate from current data
-            log_event(logger, "settlement_pending", f"Market {market_id} not yet settled, will estimate")
-            pnl = -self._position.entry_price * self._position.size_usdc
-            outcome_str = "loss"
+            # FIX 3: Mark as pending instead of defaulting to loss
+            log_event(logger, "settlement_pending",
+                f"Market {market_id} still unsettled after retries — recording as pending")
+            outcome_str = "pending"
+            pnl = 0.0
 
         pnl = round(pnl, 4)
         entry_time = self._position.entry_time
@@ -566,8 +580,8 @@ class PolyGuezRunner:
             market_question=self._current_market.get("question", "") if self._current_market else "",
             side=self._position.side,
             entry_price=self._position.entry_price,
-            exit_price=1.0 if outcome_str == "win" else 0.0,
-            pnl=pnl,
+            exit_price=1.0 if outcome_str == "win" else (0.0 if outcome_str == "loss" else None),
+            pnl=pnl if outcome_str != "pending" else None,
             duration_seconds=duration,
             signal_strength=abs(self._current_signal.btc_velocity) if self._current_signal else 0.0,
             llm_verdict=self._last_llm_verdict,
@@ -575,7 +589,8 @@ class PolyGuezRunner:
             outcome=outcome_str,
         )
         self._rolling_stats.trades.append(record)
-        self._rolling_stats.daily_pnl += pnl
+        if outcome_str != "pending":
+            self._rolling_stats.daily_pnl += pnl
 
         log_event(logger, "trade_settled", f"{outcome_str.upper()}: P&L=${pnl:.4f}", {
             "market_id": market_id,
@@ -587,7 +602,8 @@ class PolyGuezRunner:
         })
 
         self._position = None
-        self._apply_cooldown()
+        if outcome_str != "pending":
+            self._apply_cooldown()
 
     # -- Helpers -----------------------------------------------------------
 
@@ -663,6 +679,22 @@ class PolyGuezRunner:
             return price
         except Exception as exc:
             log_event(logger, "clob_price_error", f"CLOB {label} midpoint failed: {exc}")
+            return 0.0
+
+    async def _fetch_depth(self, token_id):
+        """FIX 2: Fetch CLOB depth for deterministic gate."""
+        if not self._polymarket:
+            return 999.0  # Don't block dry-run without wallet
+        loop = asyncio.get_event_loop()
+        try:
+            book = await loop.run_in_executor(
+                None, self._polymarket.client.get_order_book, token_id,
+            )
+            depth = compute_clob_depth(book, "buy")
+            log_event(logger, "clob_depth_fetched", f"Depth for {token_id[:16]}...: {depth:.1f}")
+            return depth
+        except Exception as exc:
+            log_event(logger, "clob_depth_error", f"Depth fetch failed: {exc}")
             return 0.0
 
     async def _get_clob_depth(self, token_id):
