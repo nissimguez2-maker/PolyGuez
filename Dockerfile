@@ -7,8 +7,8 @@ COPY requirements.txt .
 # then install requirements skipping the broken pysha3 line.
 # eip712-structs depends on pysha3 but safe-pysha3 provides the same module.
 RUN pip install --no-cache-dir safe-pysha3==1.0.4 && \
-    grep -iv '^pysha3' requirements.txt | pip install --no-cache-dir -r /dev/stdin && \
-    pip install --no-cache-dir --no-deps eip712-structs
+    grep -iv '^pysha3\|^eip712-structs' requirements.txt | pip install --no-cache-dir -r /dev/stdin && \
+    pip install --no-cache-dir --no-deps eip712-structs==1.1.0
 
 COPY . .
 
