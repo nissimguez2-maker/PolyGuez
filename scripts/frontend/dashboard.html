@@ -247,21 +247,33 @@ const apiBase = `/api`;
 let ws = null;
 let state = {};
 let configPopulated = false;
+let wsConnected = false;
 
 function connect() {
   ws = new WebSocket(wsUrl);
+  ws.onopen = () => { wsConnected = true; };
   ws.onmessage = (e) => {
     try { state = JSON.parse(e.data); update(state); } catch(err) {}
   };
-  ws.onclose = () => setTimeout(connect, 2000);
+  ws.onclose = () => {
+    wsConnected = false;
+    const mb = document.getElementById('modeBadge');
+    mb.textContent = 'DISCONNECTED';
+    mb.className = 'badge';
+    mb.style.background = '#666';
+    setTimeout(connect, 2000);
+  };
   ws.onerror = () => ws.close();
 }
 
 function update(s) {
   // Mode
   const mb = document.getElementById('modeBadge');
-  mb.textContent = s.mode ? s.mode.toUpperCase() : 'DRY-RUN';
-  mb.className = 'badge badge-' + ({live:'live',paper:'paper'}[s.mode]||'dry');
+  mb.style.background = '';  // clear disconnected style
+  const modeStr = (s.mode || 'dry-run').toLowerCase();
+  if (modeStr === 'live') { mb.textContent = 'LIVE'; mb.className = 'badge badge-live'; }
+  else if (modeStr === 'paper') { mb.textContent = 'PAPER'; mb.className = 'badge badge-paper'; }
+  else { mb.textContent = 'DRY-RUN'; mb.className = 'badge badge-dry'; }
 
   // Connections
   setDot('dotBtc', s.btc_feed_connected);

@@ -255,14 +255,18 @@ class PolyGuezRunner:
             "expiry": str(expiry_dt),
         })
 
-        # Capture price_to_beat: Chainlink price at market open
-        self._price_to_beat = self._btc_feed.get_chainlink_price()
+        # Capture price_to_beat: first try the market description (Gamma API),
+        # then Chainlink price, then Binance as fallback
+        self._price_to_beat = MarketDiscovery.extract_price_to_beat(self._current_market)
         if self._price_to_beat > 0:
-            log_event(logger, "price_to_beat", f"Chainlink at market open: ${self._price_to_beat:.2f}")
+            log_event(logger, "price_to_beat", f"From market description: ${self._price_to_beat:.2f}")
         else:
-            # Fallback: use Binance price if Chainlink not available yet
-            self._price_to_beat = self._btc_feed.get_price()
-            log_event(logger, "price_to_beat_fallback", f"Using Binance as price_to_beat: ${self._price_to_beat:.2f}")
+            self._price_to_beat = self._btc_feed.get_chainlink_price()
+            if self._price_to_beat > 0:
+                log_event(logger, "price_to_beat", f"From Chainlink at market open: ${self._price_to_beat:.2f}")
+            else:
+                self._price_to_beat = self._btc_feed.get_price()
+                log_event(logger, "price_to_beat_fallback", f"Using Binance as price_to_beat: ${self._price_to_beat:.2f}")
 
         # Wait for BTC feed buffer
         if not self._btc_feed.is_ready():
