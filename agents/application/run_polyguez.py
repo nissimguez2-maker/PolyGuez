@@ -703,7 +703,11 @@ class PolyGuezRunner:
             return ""
 
     async def _refresh_balance(self):
-        """Update USDC balance — always try real wallet balance first."""
+        """Update USDC balance — simulated in dry-run, real in paper/live."""
+        if self.config.mode == "dry-run":
+            self._usdc_balance = 100.0
+            log_event(logger, "balance_simulated", "Dry-run: using simulated $100 balance")
+            return
         if self._polymarket:
             loop = asyncio.get_event_loop()
             try:
@@ -717,8 +721,6 @@ class PolyGuezRunner:
                 log_event(logger, "balance_error",
                     f"Balance fetch failed: {type(exc).__name__}: {exc}",
                     level=40)
-                # Fall through to simulated balance
-        # Simulated balance for dry-run when wallet is unavailable or errored
         if self._usdc_balance <= 0.0:
             self._usdc_balance = 100.0
             log_event(logger, "balance_simulated", "Using simulated $100 balance")

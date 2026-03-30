@@ -2,9 +2,9 @@
 
 RTDS provides both Binance spot and Chainlink oracle prices via WebSocket.
 Binance prices arrive on topic "crypto_prices", Chainlink on
-"crypto_prices_chainlink".  Each message is a flat object:
+"crypto_prices_chainlink".  Payload contains a data[] array:
   {"topic": ..., "type": "update", "timestamp": ...,
-   "payload": {"symbol": "btcusdt", "timestamp": ..., "value": 67234.5}}
+   "payload": {"data": [{"timestamp": ..., "value": 67234.5}, ...], "symbol": "btcusdt"}}
 """
 
 import asyncio
@@ -21,13 +21,13 @@ logger = get_logger("polyguez.price_feed")
 # RTDS protocol constants
 _RTDS_PING_INTERVAL = 5.0
 
-# Binance: topic "crypto_prices", filters is a plain comma-separated string
+# Binance: topic "crypto_prices", filters must be a JSON-encoded object
 _RTDS_SUBSCRIBE_BINANCE = json.dumps({
     "action": "subscribe",
     "subscriptions": [{
         "topic": "crypto_prices",
         "type": "update",
-        "filters": "btcusdt",
+        "filters": json.dumps({"symbol": "btcusdt"}),
     }],
 })
 
@@ -283,21 +283,34 @@ class PriceFeedManager:
                 continue
 
             symbol = (payload.get("symbol") or "").lower()
-            price = None
-            for key in ("value", "price", "p"):
-                if key in payload:
-                    try:
-                        price = float(payload[key])
-                        break
-                    except (ValueError, TypeError):
-                        continue
+
+            # RTDS sends prices in a "data" array: [{"timestamp":..,"value":..}, ...]
+            # Take the LAST entry for most recent price. Fall back to flat payload.
+            data_arr = payload.get("data")
+            if isinstance(data_arr, list) and data_arr:
+                last_entry = data_arr[-1]
+                try:
+                    price = float(last_entry["value"])
+                except (KeyError, ValueError, TypeError):
+                    price = None
+                ts = last_entry.get("timestamp", now)
+            else:
+                # Flat payload fallback (value/price/p at top level)
+                price = None
+                for key in ("value", "price", "p"):
+                    if key in payload:
+                        try:
+                            price = float(payload[key])
+                            break
+                        except (ValueError, TypeError):
+                            continue
+                ts = payload.get("timestamp") or now
 
             if not price:
                 if self._rtds_msg_count <= 10:
-                    log_event(logger, "rtds_no_price", f"No price in payload: {payload}")
+                    log_event(logger, "rtds_no_price", f"No price in payload: {str(payload)[:300]}")
                 continue
 
-            ts = payload.get("timestamp") or now
             if isinstance(ts, (int, float)) and ts > 1e12:
                 ts = ts / 1000.0  # milliseconds → seconds
 
@@ -310,7 +323,7 @@ class PriceFeedManager:
                 self._update_gap()
             else:
                 if self._rtds_msg_count <= 10:
-                    log_event(logger, "rtds_unrouted", f"topic={topic} symbol={symbol}: {payload}")
+                    log_event(logger, "rtds_unrouted", f"topic={topic} symbol={symbol}: {str(payload)[:300]}")
 
     def _update_gap(self):
         """Record the current Binance-Chainlink gap for trend tracking."""
