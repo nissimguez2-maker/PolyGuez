@@ -285,26 +285,36 @@ class PriceFeedManager:
             symbol = (payload.get("symbol") or "").lower()
 
             # RTDS sends prices in a "data" array: [{"timestamp":..,"value":..}, ...]
-            # Take the LAST entry for most recent price. Fall back to flat payload.
+            # Iterate ALL entries so backfill populates the buffer immediately.
             data_arr = payload.get("data")
             if isinstance(data_arr, list) and data_arr:
-                last_entry = data_arr[-1]
-                try:
-                    price = float(last_entry["value"])
-                except (KeyError, ValueError, TypeError):
-                    price = None
-                ts = last_entry.get("timestamp", now)
-            else:
-                # Flat payload fallback (value/price/p at top level)
-                price = None
-                for key in ("value", "price", "p"):
-                    if key in payload:
-                        try:
-                            price = float(payload[key])
-                            break
-                        except (ValueError, TypeError):
-                            continue
-                ts = payload.get("timestamp") or now
+                for entry in data_arr:
+                    try:
+                        price = float(entry["value"])
+                    except (KeyError, ValueError, TypeError):
+                        continue
+                    if price <= 0:
+                        continue
+                    ts = entry.get("timestamp", now)
+                    if isinstance(ts, (int, float)) and ts > 1e12:
+                        ts = ts / 1000.0
+                    if topic == "crypto_prices_chainlink" or symbol in ("btc/usd", "btcusd"):
+                        self._chainlink_buffer.append((ts, price))
+                    elif topic == "crypto_prices" or symbol == "btcusdt":
+                        self._binance_buffer.append((ts, price))
+                self._update_gap()
+                continue
+
+            # Flat payload fallback (value/price/p at top level)
+            price = None
+            for key in ("value", "price", "p"):
+                if key in payload:
+                    try:
+                        price = float(payload[key])
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            ts = payload.get("timestamp") or now
 
             if not price:
                 if self._rtds_msg_count <= 10:
