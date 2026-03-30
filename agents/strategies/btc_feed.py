@@ -54,6 +54,8 @@ class PriceFeedManager:
         self._ping_task = None
         self._stop = asyncio.Event()
         self._reconnect_delay = 1.0
+        self._rtds_msg_count = 0  # verbose logging counter
+        self._last_buffer_log = 0.0  # periodic buffer size logging
 
     # -- Public API: Binance -------------------------------------------------
 
@@ -189,7 +191,10 @@ class PriceFeedManager:
 
         # Subscribe to both Binance and Chainlink topics
         await self._ws.send(_RTDS_SUBSCRIBE_BINANCE)
+        log_event(logger, "rtds_subscribe", f"Sent Binance subscription: {_RTDS_SUBSCRIBE_BINANCE}")
         await self._ws.send(_RTDS_SUBSCRIBE_CHAINLINK)
+        log_event(logger, "rtds_subscribe", f"Sent Chainlink subscription: {_RTDS_SUBSCRIBE_CHAINLINK}")
+        self._rtds_msg_count = 0
 
         # Start keepalive ping
         self._ping_task = asyncio.create_task(self._rtds_ping_loop())
@@ -213,6 +218,29 @@ class PriceFeedManager:
                 break
             if raw == "PONG":
                 continue
+
+            self._rtds_msg_count += 1
+
+            # Log first 20 raw messages for debugging
+            if self._rtds_msg_count <= 20:
+                log_event(logger, "rtds_raw_msg", f"[MSG #{self._rtds_msg_count}] {raw[:500]}")
+
+            # Periodic buffer status log (every 10 seconds)
+            now = time.time()
+            if now - self._last_buffer_log >= 10.0:
+                self._last_buffer_log = now
+                last5_binance = [(round(t, 1), round(p, 2)) for t, p in list(self._binance_buffer)[-5:]]
+                last5_chainlink = [(round(t, 1), round(p, 2)) for t, p in list(self._chainlink_buffer)[-5:]]
+                log_event(logger, "buffer_status", (
+                    f"Binance buf={len(self._binance_buffer)}, "
+                    f"Chainlink buf={len(self._chainlink_buffer)}, "
+                    f"total msgs={self._rtds_msg_count}"
+                ), {
+                    "last5_binance": last5_binance,
+                    "last5_chainlink": last5_chainlink,
+                    "velocity": round(self.get_velocity(), 6),
+                })
+
             try:
                 msg = json.loads(raw)
                 topic = msg.get("topic", "")
@@ -223,11 +251,15 @@ class PriceFeedManager:
                     if price:
                         self._binance_buffer.append((time.time(), price))
                         self._update_gap()
+                    elif self._rtds_msg_count <= 20:
+                        log_event(logger, "rtds_no_price", f"Could not extract price from Binance msg: {data}")
                 elif topic == "crypto_prices_chainlink" or "btc/usd" in str(data).lower():
                     price = self._extract_price(data)
                     if price:
                         self._chainlink_buffer.append((time.time(), price))
                         self._update_gap()
+                    elif self._rtds_msg_count <= 20:
+                        log_event(logger, "rtds_no_price", f"Could not extract price from Chainlink msg: {data}")
                 elif isinstance(data, dict) and "price" in data:
                     # Backfill or untagged message — try to classify
                     symbol = data.get("symbol", "").lower()
@@ -238,7 +270,12 @@ class PriceFeedManager:
                         elif "btcusdt" in symbol:
                             self._binance_buffer.append((time.time(), price))
                         self._update_gap()
-            except (json.JSONDecodeError, KeyError, ValueError, TypeError):
+                else:
+                    if self._rtds_msg_count <= 20:
+                        log_event(logger, "rtds_unrouted", f"Unrouted msg topic='{topic}': {str(data)[:300]}")
+            except (json.JSONDecodeError, KeyError, ValueError, TypeError) as exc:
+                if self._rtds_msg_count <= 20:
+                    log_event(logger, "rtds_parse_error", f"Parse error on msg #{self._rtds_msg_count}: {exc}, raw={raw[:200]}")
                 continue
 
     def _extract_price(self, data):

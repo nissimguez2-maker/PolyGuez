@@ -186,17 +186,20 @@ class PolyGuezRunner:
         """Main event loop — runs until killed."""
         log_event(logger, "runner_start", f"PolyGuez starting in {self.config.mode} mode")
 
-        # Init Polymarket client (wallet/CLOB auth)
-        if self.config.mode == "live":
-            try:
-                loop = asyncio.get_event_loop()
-                self._polymarket = await loop.run_in_executor(None, Polymarket)
-                log_event(logger, "wallet_connected", "Polymarket client initialized")
-            except Exception as exc:
-                log_event(logger, "wallet_error", f"Failed to init Polymarket: {exc}", level=40)
-                if self.config.mode == "live":
-                    log_event(logger, "runner_halt", "Cannot run live without wallet")
-                    return
+        # Init Polymarket client in ALL modes for read operations (balance, CLOB prices).
+        # Trade execution guards in execute_entry/execute_emergency_exit remain mode-gated.
+        try:
+            loop = asyncio.get_event_loop()
+            self._polymarket = await loop.run_in_executor(None, Polymarket)
+            log_event(logger, "wallet_connected", f"Polymarket client initialized (mode={self.config.mode})")
+        except Exception as exc:
+            log_event(logger, "wallet_error", f"Failed to init Polymarket: {exc}", level=40)
+            self._polymarket = None
+            if self.config.mode == "live":
+                log_event(logger, "runner_halt", "Cannot run live without wallet")
+                return
+            else:
+                log_event(logger, "wallet_fallback", "Continuing without wallet — CLOB prices and balance will use fallbacks")
 
         # Start BTC price feed
         await self._btc_feed.start()
@@ -245,6 +248,11 @@ class PolyGuezRunner:
         expiry_dt = MarketDiscovery.get_market_expiry(self._current_market)
         yes_token, no_token = MarketDiscovery.get_market_token_ids(self._current_market)
 
+        log_event(logger, "token_ids", f"Extracted token IDs: yes={yes_token}, no={no_token}", {
+            "raw_clobTokenIds": self._current_market.get("clobTokenIds"),
+            "raw_outcomes": self._current_market.get("outcomes"),
+        })
+
         if not yes_token or not no_token:
             log_event(logger, "market_skip", f"No token IDs for market {market_id}")
             await asyncio.sleep(5)
@@ -257,6 +265,9 @@ class PolyGuezRunner:
 
         # Capture price_to_beat: first try the market description (Gamma API),
         # then Chainlink price, then Binance as fallback
+        desc_field = self._current_market.get("description", "") or ""
+        log_event(logger, "market_description", f"Description field ({len(desc_field)} chars): {desc_field[:500]}")
+
         self._price_to_beat = MarketDiscovery.extract_price_to_beat(self._current_market)
         if self._price_to_beat > 0:
             log_event(logger, "price_to_beat", f"From market description: ${self._price_to_beat:.2f}")
@@ -579,19 +590,22 @@ class PolyGuezRunner:
         loop = asyncio.get_event_loop()
         try:
             if self._polymarket:
+                log_event(logger, "clob_poll", f"Polling CLOB: yes_token={yes_token}, no_token={no_token}")
                 yes_price = await loop.run_in_executor(
                     None, self._polymarket.get_orderbook_price, yes_token,
                 )
                 no_price = await loop.run_in_executor(
                     None, self._polymarket.get_orderbook_price, no_token,
                 )
+                log_event(logger, "clob_prices", f"CLOB prices: YES={yes_price:.4f}, NO={no_price:.4f}")
             else:
-                # In dry-run/paper without wallet, use Gamma API
+                # Fallback without wallet — use Gamma API outcomePrices
                 yes_price = 0.50
                 no_price = 0.50
                 market_data = self._current_market
                 if market_data:
                     prices = market_data.get("outcomePrices", "")
+                    log_event(logger, "clob_fallback", f"No wallet, using outcomePrices: {prices}")
                     if isinstance(prices, str):
                         try:
                             prices = json.loads(prices)
@@ -647,18 +661,22 @@ class PolyGuezRunner:
             return ""
 
     async def _refresh_balance(self):
-        """Update USDC balance."""
+        """Update USDC balance — always try real wallet balance first."""
         if self._polymarket:
             loop = asyncio.get_event_loop()
             try:
-                self._usdc_balance = await loop.run_in_executor(
+                real_balance = await loop.run_in_executor(
                     None, self._polymarket.get_usdc_balance,
                 )
+                self._usdc_balance = real_balance
+                log_event(logger, "balance_real", f"Real USDC balance: ${real_balance:.2f}")
+                return
             except Exception as exc:
                 log_event(logger, "balance_error", f"Balance fetch failed: {exc}", level=40)
-        elif self.config.mode in ("dry-run", "paper"):
-            if self._usdc_balance == 0.0:
-                self._usdc_balance = 100.0  # Simulated starting balance
+        # Fallback: simulated balance only if we truly have no wallet
+        if self._usdc_balance == 0.0:
+            self._usdc_balance = 100.0
+            log_event(logger, "balance_simulated", "No wallet available — using simulated $100")
 
     def _apply_cooldown(self):
         """Set cooldown_until based on adaptive cooldown logic."""
