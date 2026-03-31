@@ -340,6 +340,8 @@ class SignalState(BaseModel):
     strike_delta: float = 0.0
     terminal_probability: float = 0.0
     terminal_edge: float = 0.0
+    terminal_edge_ok: bool = False
+    delta_magnitude_ok: bool = False
 
     @property
     def all_conditions_met(self) -> bool:
@@ -349,6 +351,7 @@ class SignalState(BaseModel):
             self.no_position, self.cooldown_ok, self.daily_loss_ok,
             self.balance_ok, self.position_limit_ok,
             self.depth_ok,
+            self.terminal_edge_ok, self.delta_magnitude_ok,
         ])
 
 

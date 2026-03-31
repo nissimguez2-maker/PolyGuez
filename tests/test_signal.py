@@ -27,9 +27,12 @@ class TestSignalEvaluation(unittest.TestCase):
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
             has_position=False, chainlink_price=64985.0, binance_chainlink_gap=15.0, clob_depth=100.0,
+            price_to_beat=64935.0,
         )
         self.assertTrue(signal.all_conditions_met)
         self.assertTrue(signal.depth_ok)
+        self.assertTrue(signal.terminal_edge_ok)
+        self.assertTrue(signal.delta_magnitude_ok)
 
     def test_all_conditions_met_down(self):
         config = _default_config(velocity_threshold=0.01, min_edge=0.02, max_spread=0.10, min_oracle_gap=10.0, min_clob_depth=50.0)
@@ -38,8 +41,11 @@ class TestSignalEvaluation(unittest.TestCase):
             btc_velocity=-0.05, btc_price=65000.0, yes_price=0.48, no_price=0.50, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
             has_position=False, chainlink_price=65015.0, binance_chainlink_gap=-15.0, clob_depth=100.0,
+            price_to_beat=65065.0,
         )
         self.assertTrue(signal.all_conditions_met)
+        self.assertTrue(signal.terminal_edge_ok)
+        self.assertTrue(signal.delta_magnitude_ok)
 
     def test_velocity_too_low(self):
         config = _default_config(velocity_threshold=0.10, min_clob_depth=0.0)
@@ -47,7 +53,7 @@ class TestSignalEvaluation(unittest.TestCase):
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
-            has_position=False, clob_depth=100.0,
+            has_position=False, clob_depth=100.0, price_to_beat=64900.0,
         )
         self.assertFalse(signal.velocity_ok)
 
@@ -57,7 +63,7 @@ class TestSignalEvaluation(unittest.TestCase):
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.08,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
-            has_position=False, clob_depth=100.0,
+            has_position=False, clob_depth=100.0, price_to_beat=64900.0,
         )
         self.assertFalse(signal.spread_ok)
 
@@ -67,7 +73,7 @@ class TestSignalEvaluation(unittest.TestCase):
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
-            has_position=True, clob_depth=100.0,
+            has_position=True, clob_depth=100.0, price_to_beat=64900.0,
         )
         self.assertFalse(signal.no_position)
 
@@ -77,7 +83,7 @@ class TestSignalEvaluation(unittest.TestCase):
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=2.0, config=config, rolling_stats=stats,
-            has_position=False, clob_depth=100.0,
+            has_position=False, clob_depth=100.0, price_to_beat=64900.0,
         )
         self.assertFalse(signal.balance_ok)
 
@@ -88,7 +94,7 @@ class TestSignalEvaluation(unittest.TestCase):
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
-            has_position=False, clob_depth=100.0,
+            has_position=False, clob_depth=100.0, price_to_beat=64900.0,
         )
         self.assertFalse(signal.velocity_ok)
 
@@ -99,6 +105,7 @@ class TestSignalEvaluation(unittest.TestCase):
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
             has_position=False, chainlink_price=64985.0, binance_chainlink_gap=15.0, clob_depth=100.0,
+            price_to_beat=64900.0,
         )
         self.assertTrue(signal.oracle_gap_ok)
 
@@ -109,6 +116,7 @@ class TestSignalEvaluation(unittest.TestCase):
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
             has_position=False, chainlink_price=64990.0, binance_chainlink_gap=10.0, clob_depth=100.0,
+            price_to_beat=64900.0,
         )
         self.assertFalse(signal.oracle_gap_ok)
 
@@ -119,6 +127,7 @@ class TestSignalEvaluation(unittest.TestCase):
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
             has_position=False, chainlink_price=65020.0, binance_chainlink_gap=-20.0, clob_depth=100.0,
+            price_to_beat=64900.0,
         )
         self.assertFalse(signal.oracle_gap_ok)
 
@@ -131,6 +140,7 @@ class TestSignalEvaluation(unittest.TestCase):
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
             has_position=False, chainlink_price=64985.0, binance_chainlink_gap=15.0, clob_depth=100.0,
+            price_to_beat=64900.0,
         )
         self.assertTrue(signal.depth_ok)
 
@@ -141,6 +151,7 @@ class TestSignalEvaluation(unittest.TestCase):
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
             has_position=False, chainlink_price=64985.0, binance_chainlink_gap=15.0, clob_depth=30.0,
+            price_to_beat=64900.0,
         )
         self.assertFalse(signal.depth_ok)
         self.assertFalse(signal.all_conditions_met)
@@ -152,6 +163,7 @@ class TestSignalEvaluation(unittest.TestCase):
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
             has_position=False, chainlink_price=64985.0, binance_chainlink_gap=15.0, clob_depth=50.0,
+            price_to_beat=64900.0,
         )
         self.assertTrue(signal.depth_ok)
 
@@ -161,7 +173,7 @@ class TestSignalEvaluation(unittest.TestCase):
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
-            has_position=False, clob_depth=0.0,
+            has_position=False, clob_depth=0.0, price_to_beat=64900.0,
         )
         self.assertFalse(signal.depth_ok)
 
@@ -171,9 +183,80 @@ class TestSignalEvaluation(unittest.TestCase):
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
-            has_position=False, clob_depth=0.0,
+            has_position=False, clob_depth=0.0, price_to_beat=64900.0,
         )
         self.assertTrue(signal.depth_ok)
+
+    # -- P2B / terminal probability tests --
+
+    def test_price_to_beat_none_short_circuits(self):
+        config = _default_config()
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
+            elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
+            has_position=False, clob_depth=100.0, price_to_beat=None,
+        )
+        self.assertFalse(signal.all_conditions_met)
+        self.assertEqual(signal.p2b_source, "none")
+        self.assertFalse(signal.terminal_edge_ok)
+        self.assertFalse(signal.delta_magnitude_ok)
+
+    def test_terminal_probability_up_positive_delta(self):
+        """strike_delta=+100, 60s remaining → tp_yes ~0.94, direction=up → selected ~0.94."""
+        config = _default_config(min_terminal_edge=0.05, conviction_min_delta=40.0)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
+            elapsed_seconds=240.0, usdc_balance=100.0, config=config, rolling_stats=stats,
+            has_position=False, chainlink_price=65100.0, clob_depth=100.0,
+            price_to_beat=65000.0,
+        )
+        self.assertEqual(signal.direction, "up")
+        self.assertAlmostEqual(signal.strike_delta, 100.0)
+        self.assertGreater(signal.terminal_probability, 0.90)
+        self.assertTrue(signal.terminal_edge_ok)
+        self.assertTrue(signal.delta_magnitude_ok)
+        self.assertEqual(signal.p2b_source, "description")
+
+    def test_terminal_probability_down_negative_delta(self):
+        """strike_delta=-100, 60s remaining → tp_yes ~0.06, direction=down → selected ~0.94."""
+        config = _default_config(min_terminal_edge=0.05, conviction_min_delta=40.0)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=-0.05, btc_price=65000.0, yes_price=0.48, no_price=0.50, spread=0.02,
+            elapsed_seconds=240.0, usdc_balance=100.0, config=config, rolling_stats=stats,
+            has_position=False, chainlink_price=64900.0, clob_depth=100.0,
+            price_to_beat=65000.0,
+        )
+        self.assertEqual(signal.direction, "down")
+        self.assertAlmostEqual(signal.strike_delta, -100.0)
+        self.assertGreater(signal.terminal_probability, 0.90)
+        self.assertTrue(signal.terminal_edge_ok)
+        self.assertTrue(signal.delta_magnitude_ok)
+
+    def test_delta_too_small_blocks(self):
+        config = _default_config(conviction_min_delta=40.0)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
+            elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
+            has_position=False, chainlink_price=65010.0, clob_depth=100.0,
+            price_to_beat=65000.0,
+        )
+        self.assertFalse(signal.delta_magnitude_ok)
+
+    def test_terminal_edge_too_small_blocks(self):
+        """Near 50/50 probability → terminal_edge near 0 → fails gate."""
+        config = _default_config(min_terminal_edge=0.05, conviction_min_delta=0.0)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
+            elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
+            has_position=False, chainlink_price=65001.0, clob_depth=100.0,
+            price_to_beat=65000.0,
+        )
+        self.assertFalse(signal.terminal_edge_ok)
 
 
 class TestComputeClobDepth(unittest.TestCase):

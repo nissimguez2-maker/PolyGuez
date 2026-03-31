@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import math
 import os
 from datetime import datetime, timezone
 
@@ -26,17 +27,37 @@ def evaluate_entry_signal(
     elapsed_seconds, usdc_balance, config, rolling_stats,
     has_position, open_position_count=0,
     chainlink_price=0.0, binance_chainlink_gap=0.0,
-    clob_depth=0.0,
+    clob_depth=0.0, price_to_beat=None,
 ):
     direction = "up" if btc_velocity > 0 else "down"
+
+    # Short-circuit: no P2B means no entry
+    if price_to_beat is None:
+        return SignalState(
+            btc_velocity=btc_velocity, btc_price=btc_price,
+            chainlink_price=chainlink_price, binance_chainlink_gap=binance_chainlink_gap,
+            yes_price=yes_price, no_price=no_price, spread=spread,
+            elapsed_seconds=elapsed_seconds, direction=direction,
+            p2b_source="none",
+        )
+
+    # Terminal probability via logistic model
+    strike_delta = chainlink_price - price_to_beat
+    seconds_remaining = max(1.0, 300.0 - elapsed_seconds)
+    k = 0.035 / math.sqrt(seconds_remaining / 60.0)
+    clamped = max(-500.0, min(500.0, -k * strike_delta))
+    terminal_probability_yes = 1.0 / (1.0 + math.exp(clamped))
 
     if direction == "up":
         estimated_fv = min(1.0, yes_price + abs(btc_velocity) * 10)
         token_price = yes_price
+        selected_side_probability = terminal_probability_yes
     else:
         estimated_fv = min(1.0, no_price + abs(btc_velocity) * 10)
         token_price = no_price
+        selected_side_probability = 1.0 - terminal_probability_yes
 
+    terminal_edge = selected_side_probability - token_price
     edge = estimated_fv - token_price
 
     if elapsed_seconds <= config.early_window_seconds:
@@ -75,6 +96,8 @@ def evaluate_entry_signal(
 
     clob_mispricing_ok = edge > 0 and token_price < estimated_fv
     depth_ok = clob_depth >= config.min_clob_depth
+    terminal_edge_ok = terminal_edge > config.min_terminal_edge
+    delta_magnitude_ok = abs(strike_delta) > config.conviction_min_delta
 
     return SignalState(
         btc_velocity=btc_velocity, btc_price=btc_price,
@@ -92,6 +115,12 @@ def evaluate_entry_signal(
         balance_ok=usdc_balance >= pos_size and usdc_balance >= config.min_capital_floor,
         position_limit_ok=open_position_count < config.max_open_positions,
         depth_ok=depth_ok,
+        p2b_value=price_to_beat, p2b_source="description",
+        strike_delta=strike_delta,
+        terminal_probability=selected_side_probability,
+        terminal_edge=terminal_edge,
+        terminal_edge_ok=terminal_edge_ok,
+        delta_magnitude_ok=delta_magnitude_ok,
     )
 
 
