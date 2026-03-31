@@ -352,6 +352,7 @@ class RollingStats(BaseModel):
     daily_pnl_reset_utc: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
     cooldown_until: Optional[str] = None
     max_capital_at_risk: float = 0.0
+    simulated_balance: float = 100.0  # Persistent dry-run balance, starts at $100
 
     @property
     def last_n_trades(self) -> List[TradeRecord]:

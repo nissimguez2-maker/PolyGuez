@@ -519,6 +519,10 @@ class PolyGuezRunner:
                 )
                 self._rolling_stats.trades.append(record)
                 self._rolling_stats.daily_pnl += pnl
+                if self.config.mode == "dry-run":
+                    self._rolling_stats.simulated_balance = round(
+                        self._rolling_stats.simulated_balance + pnl, 4
+                    )
                 self._position = None
                 self._apply_cooldown()
                 return
@@ -591,6 +595,13 @@ class PolyGuezRunner:
         self._rolling_stats.trades.append(record)
         if outcome_str != "pending":
             self._rolling_stats.daily_pnl += pnl
+            # Update simulated balance for dry-run tracking
+            if self.config.mode == "dry-run":
+                self._rolling_stats.simulated_balance = round(
+                    self._rolling_stats.simulated_balance + pnl, 4
+                )
+                log_event(logger, "simulated_balance_update",
+                    f"Dry-run balance: ${self._rolling_stats.simulated_balance:.2f} (P&L: {pnl:+.4f})")
 
         log_event(logger, "trade_settled", f"{outcome_str.upper()}: P&L=${pnl:.4f}", {
             "market_id": market_id,
@@ -737,8 +748,8 @@ class PolyGuezRunner:
     async def _refresh_balance(self):
         """Update USDC balance — simulated in dry-run, real in paper/live."""
         if self.config.mode == "dry-run":
-            self._usdc_balance = 100.0
-            log_event(logger, "balance_simulated", "Dry-run: using simulated $100 balance")
+            self._usdc_balance = self._rolling_stats.simulated_balance
+            log_event(logger, "balance_simulated", f"Dry-run: simulated balance ${self._usdc_balance:.2f}")
             return
         if self._polymarket:
             loop = asyncio.get_event_loop()
