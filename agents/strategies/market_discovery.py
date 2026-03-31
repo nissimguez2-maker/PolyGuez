@@ -170,6 +170,27 @@ class MarketDiscovery:
         return None
 
     @staticmethod
+    def get_event_start_time(market_dict):
+        """Parse eventStartTime (or startDate) from market dict into a datetime."""
+        start = market_dict.get("eventStartTime") or market_dict.get("startDate") or ""
+        if not start:
+            return None
+        for fmt in ("%Y-%m-%dT%H:%M:%S.%fZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S%z"):
+            try:
+                dt = datetime.strptime(start, fmt)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except ValueError:
+                continue
+        try:
+            dt = datetime.fromisoformat(start.replace("Z", "+00:00"))
+            return dt
+        except (ValueError, TypeError):
+            pass
+        return None
+
+    @staticmethod
     def get_market_token_ids(market_dict):
         """Return (up_token_id, down_token_id) from market dict.
 
