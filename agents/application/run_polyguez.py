@@ -76,7 +76,10 @@ class PolyGuezRunner:
         self._usdc_balance = 0.0
         self._gamma_ok = False
         self._clob_ok = False
-        self._price_to_beat = 0.0  # Chainlink price at market open
+        self._price_to_beat = None
+        self._p2b_consecutive_failures = 0
+        self._p2b_cross_check_passed = None
+        self._p2b_cross_check_divergence = None
 
     # -- Public API for dashboard / CLI ------------------------------------
 
@@ -129,7 +132,7 @@ class PolyGuezRunner:
                 pass
 
         chainlink_price = self._btc_feed.get_chainlink_price()
-        chainlink_vs_ptb = chainlink_price - self._price_to_beat if chainlink_price and self._price_to_beat else 0.0
+        chainlink_vs_ptb = chainlink_price - self._price_to_beat if chainlink_price and self._price_to_beat is not None else 0.0
 
         return DashboardSnapshot(
             mode=self.config.mode,
@@ -149,7 +152,7 @@ class PolyGuezRunner:
             chainlink_source=self._btc_feed.chainlink_source,  # FIX 4
             binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
             gap_direction=self._btc_feed.get_gap_direction(),
-            price_to_beat=self._price_to_beat,
+            price_to_beat=self._price_to_beat or 0.0,
             chainlink_vs_price_to_beat=chainlink_vs_ptb,
             btc_velocity=self._btc_feed.get_velocity(),
             btc_direction="up" if self._btc_feed.get_velocity() > 0 else "down",
@@ -168,6 +171,14 @@ class PolyGuezRunner:
             rolling_stats=self._rolling_stats,
             cooldown_active=cooldown_active,
             cooldown_remaining_seconds=cooldown_remaining,
+            p2b_source="description" if self._price_to_beat is not None else "none",
+            p2b_parse_success=self._price_to_beat is not None,
+            p2b_cross_check_passed=self._p2b_cross_check_passed,
+            p2b_cross_check_divergence=self._p2b_cross_check_divergence,
+            strike_delta=self._current_signal.strike_delta if self._current_signal else 0.0,
+            terminal_probability=self._current_signal.terminal_probability if self._current_signal else 0.0,
+            terminal_edge=self._current_signal.terminal_edge if self._current_signal else 0.0,
+            p2b_consecutive_failures=self._p2b_consecutive_failures,
             config=self.config,
         )
 
@@ -274,21 +285,50 @@ class PolyGuezRunner:
             "expiry": str(expiry_dt),
         })
 
-        # Capture price_to_beat: first try the market description (Gamma API),
-        # then Chainlink price, then Binance as fallback
-        desc_field = self._current_market.get("description", "") or ""
-        log_event(logger, "market_description", f"Description field ({len(desc_field)} chars): {desc_field[:500]}")
+        # Extract price_to_beat from description only — no fallbacks
+        parsed_p2b = MarketDiscovery.extract_price_to_beat(self._current_market)
+        if parsed_p2b is None:
+            desc_field = self._current_market.get("description", "") or ""
+            log_event(logger, "p2b_extraction_failed",
+                f"Could not parse P2B from description ({len(desc_field)} chars)",
+                {"raw_description": desc_field[:300]}, level=30)
+            self._p2b_consecutive_failures += 1
+            self._rolling_stats.p2b_skips += 1
+            log_event(logger, "window_skipped_no_p2b",
+                f"Skipping window — no P2B (consecutive failures: {self._p2b_consecutive_failures})")
+            self._current_market = None
+            # Halt check
+            if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
+                log_event(logger, "p2b_structural_failure",
+                    f"HALT: {self._p2b_consecutive_failures} consecutive P2B failures",
+                    level=50)
+                self._killed = True
+                self._kill_timestamp = datetime.now(timezone.utc).isoformat()
+            return
 
-        self._price_to_beat = MarketDiscovery.extract_price_to_beat(self._current_market)
-        if self._price_to_beat > 0:
-            log_event(logger, "price_to_beat", f"From market description: ${self._price_to_beat:.2f}")
-        else:
-            self._price_to_beat = self._btc_feed.get_chainlink_price()
-            if self._price_to_beat > 0:
-                log_event(logger, "price_to_beat", f"From Chainlink at market open: ${self._price_to_beat:.2f}")
-            else:
-                self._price_to_beat = self._btc_feed.get_price()
-                log_event(logger, "price_to_beat_fallback", f"Using Binance as price_to_beat: ${self._price_to_beat:.2f}")
+        self._price_to_beat = parsed_p2b
+        self._p2b_consecutive_failures = 0
+        log_event(logger, "price_to_beat", f"From description: ${self._price_to_beat:.2f}",
+            {"source": "description"})
+
+        # Cross-check P2B against Chainlink
+        discovery_lag = 15.0  # conservative default
+        if expiry_dt:
+            discovery_lag = max(0.0, 300.0 - (expiry_dt - datetime.now(timezone.utc)).total_seconds())
+        self._p2b_cross_check_passed, self._p2b_cross_check_divergence = (
+            MarketDiscovery.cross_check_price_to_beat(
+                self._price_to_beat,
+                self._btc_feed.get_chainlink_price(),
+                discovery_lag_seconds=discovery_lag,
+                btc_price=self._btc_feed.get_price(),
+            )
+        )
+        log_event(logger, "p2b_cross_check",
+            f"Cross-check: passed={self._p2b_cross_check_passed}, divergence=${self._p2b_cross_check_divergence:.2f}, lag={discovery_lag:.0f}s")
+        if not self._p2b_cross_check_passed:
+            log_event(logger, "p2b_cross_check_diverged",
+                f"P2B cross-check FAILED: divergence=${self._p2b_cross_check_divergence:.2f}",
+                level=30)
 
         # Wait for BTC feed buffer
         if not self._btc_feed.is_ready():
@@ -325,7 +365,9 @@ class PolyGuezRunner:
         self._current_depth = 0.0
         self._last_llm_verdict = ""
         self._last_llm_reason = ""
-        self._price_to_beat = 0.0
+        self._price_to_beat = None
+        self._p2b_cross_check_passed = None
+        self._p2b_cross_check_divergence = None
         log_event(logger, "cycle_complete", f"Market cycle complete: {old_question}. Looking for next market...")
 
     # -- Sub-loops ---------------------------------------------------------
@@ -376,6 +418,7 @@ class PolyGuezRunner:
                 chainlink_price=self._btc_feed.get_chainlink_price(),
                 binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
                 clob_depth=depth,  # FIX 2
+                price_to_beat=self._price_to_beat,
             )
             self._current_signal = signal
 
