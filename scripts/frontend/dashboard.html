@@ -126,6 +126,7 @@ tbody td { padding: 7px 10px; border-bottom: 1px solid var(--border-light); font
 tr.win td { color: var(--green); }
 tr.loss td, tr.emergency-exit td { color: var(--red); }
 tr.skipped td { color: var(--text-2); }
+tr.skipped-no-p2b td { color: var(--amber); font-style: italic; }
 tr.pending td { color: var(--amber); }
 
 /* Chart */
@@ -227,6 +228,7 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
           <span style="font-size:11px;color:var(--text-2)" id="chainlinkSrc"></span>
         </div>
         <div style="font-size:12px;color:var(--text-2);margin-top:3px">P2B: <span id="priceToBeat">no P2B</span></div>
+        <div id="p2bFailures" style="font-size:11px;color:var(--amber);margin-top:2px;display:none"></div>
       </div>
     </div>
 
@@ -257,6 +259,9 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
       <div>Velocity <span id="velocity">0.0000</span> <span id="velArrow" style="font-size:12px"></span></div>
       <div>Gap <span id="oracleGap">0.00</span></div>
       <div>Gap Dir <span id="gapDir">--</span></div>
+      <div>Δ Strike <span id="strikeDisplay">--</span></div>
+      <div>P(win) <span id="pwinDisplay">--</span></div>
+      <div>Edge <span id="edgeDisplay">--</span></div>
       <div>CL vs P2B <span id="clVsPtb">--</span></div>
     </div>
 
@@ -285,6 +290,9 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
       <div class="sig"><span class="sig-icon sig-fail" id="s_dailyloss">✗</span><span class="sig-label">Daily Loss</span></div>
       <div class="sig"><span class="sig-icon sig-fail" id="s_balance">✗</span><span class="sig-label">Balance</span></div>
       <div class="sig"><span class="sig-icon sig-fail" id="s_poslimit">✗</span><span class="sig-label">Position Limit</span></div>
+      <div class="sig"><span class="sig-icon sig-fail" id="s_p2b">✗</span><span class="sig-label">P2B OK</span></div>
+      <div class="sig"><span class="sig-icon sig-fail" id="s_deltamag">✗</span><span class="sig-label">Delta Mag</span></div>
+      <div class="sig"><span class="sig-icon sig-fail" id="s_termedge">✗</span><span class="sig-label">Terminal Edge</span></div>
     </div>
     <div class="blocker-callout" id="blockerCallout">
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
@@ -450,11 +458,14 @@ const sigLabels = {
   no_position:'Already holding position', cooldown_ok:'Cooldown active',
   daily_loss_ok:'Daily loss limit reached', balance_ok:'Balance too low',
   position_limit_ok:'Position limit reached',
+  p2b_ok:'P2B extraction failed', delta_magnitude_ok:'Strike delta too small',
+  terminal_edge_ok:'Terminal edge insufficient',
 };
 const sigMap = {
   velocity_ok:'s_velocity', oracle_gap_ok:'s_oraclegap', clob_mispricing_ok:'s_clobmisprice',
   edge_ok:'s_edge', spread_ok:'s_spread', depth_ok:'s_depth', no_position:'s_nopos',
   cooldown_ok:'s_cooldown', daily_loss_ok:'s_dailyloss', balance_ok:'s_balance', position_limit_ok:'s_poslimit',
+  p2b_ok:'s_p2b', delta_magnitude_ok:'s_deltamag', terminal_edge_ok:'s_termedge',
 };
 
 function render(s) {
@@ -478,7 +489,15 @@ function render(s) {
   txt('chainlinkPrice', s.chainlink_price ? '$'+s.chainlink_price.toFixed(2) : '--');
   txt('chainlinkSrc', s.chainlink_source ? '('+s.chainlink_source+')' : '');
   const ptb = s.price_to_beat;
-  txt('priceToBeat', ptb && ptb > 0 ? '$'+ptb.toFixed(2) : 'no P2B');
+  const ptbEl = document.getElementById('priceToBeat');
+  if(s.p2b_parse_success){
+    const xc = s.p2b_cross_check_passed;
+    if(xc === false){ ptbEl.textContent='$'+ptb.toFixed(2)+' ⚠'; ptbEl.style.color='var(--amber)'; }
+    else { ptbEl.textContent='$'+ptb.toFixed(2)+' ✓'; ptbEl.style.color=''; }
+  } else { ptbEl.textContent='P2B: FAILED ✗'; ptbEl.style.color='var(--red)'; }
+  const p2bFailEl = document.getElementById('p2bFailures');
+  if((s.p2b_consecutive_failures||0)>0){ p2bFailEl.textContent='P2B failures: '+s.p2b_consecutive_failures+'/3'; p2bFailEl.style.display=''; }
+  else { p2bFailEl.style.display='none'; }
 
   txt('yesPrice', (s.yes_price||0).toFixed(4));
   txt('noPrice', (s.no_price||0).toFixed(4));
@@ -496,6 +515,21 @@ function render(s) {
   gapEl.style.color = Math.abs(gap)>=15?'var(--green)':'var(--text-2)';
   txt('gapDir', s.gap_direction || '--');
 
+  const sd = s.strike_delta||0;
+  const sdEl = document.getElementById('strikeDisplay');
+  sdEl.textContent = (sd>=0?'+$':'-$')+Math.abs(sd).toFixed(2);
+  sdEl.style.color = sd>0?'var(--green)':sd<0?'var(--red)':'';
+
+  const tp = s.terminal_probability||0;
+  const tpEl = document.getElementById('pwinDisplay');
+  tpEl.textContent = (tp*100).toFixed(1)+'%';
+  tpEl.style.color = tp>0.8?'var(--green)':tp>=0.5?'var(--amber)':'var(--red)';
+
+  const te = s.terminal_edge||0;
+  const teEl = document.getElementById('edgeDisplay');
+  teEl.textContent = te.toFixed(4);
+  teEl.style.color = te>0.05?'var(--green)':te>=0.01?'var(--amber)':'var(--text-2)';
+
   const clvs = s.chainlink_vs_price_to_beat||0;
   const clvsEl = document.getElementById('clVsPtb');
   if(!ptb||ptb<=0){ clvsEl.textContent='--'; clvsEl.style.color='var(--text-2)'; }
@@ -509,7 +543,7 @@ function render(s) {
   // Signal
   const blockers=[];
   if(s.signal){
-    const conds = { velocity_ok:s.signal.velocity_ok, oracle_gap_ok:s.signal.oracle_gap_ok, clob_mispricing_ok:s.signal.clob_mispricing_ok, edge_ok:s.signal.edge_ok, spread_ok:s.signal.spread_ok, depth_ok:s.signal.depth_ok, no_position:s.signal.no_position, cooldown_ok:s.signal.cooldown_ok, daily_loss_ok:s.signal.daily_loss_ok, balance_ok:s.signal.balance_ok, position_limit_ok:s.signal.position_limit_ok };
+    const conds = { velocity_ok:s.signal.velocity_ok, oracle_gap_ok:s.signal.oracle_gap_ok, clob_mispricing_ok:s.signal.clob_mispricing_ok, edge_ok:s.signal.edge_ok, spread_ok:s.signal.spread_ok, depth_ok:s.signal.depth_ok, no_position:s.signal.no_position, cooldown_ok:s.signal.cooldown_ok, daily_loss_ok:s.signal.daily_loss_ok, balance_ok:s.signal.balance_ok, position_limit_ok:s.signal.position_limit_ok, p2b_ok:s.p2b_parse_success, delta_magnitude_ok:s.signal.delta_magnitude_ok, terminal_edge_ok:s.signal.terminal_edge_ok };
     const passCount = Object.values(conds).filter(Boolean).length;
     const total = Object.keys(conds).length;
     for(const[key,ok] of Object.entries(conds)){
@@ -543,7 +577,7 @@ function render(s) {
   const hasLog=rs.trades&&rs.trades.length>0;
   document.getElementById('logEmpty').style.display=hasLog?'none':'';
   document.getElementById('logContent').style.display=hasLog?'':'none';
-  if(hasLog){ txt('tradeCount',rs.trades.length+' total'); const tbody=document.getElementById('tradeBody'); const recent=rs.trades.slice(-60).reverse(); let html=''; for(const t of recent){ const cls=t.outcome||'skipped'; const time=(t.timestamp||'').slice(5,16).replace('T',' '); const p=t.pnl!=null?(t.pnl>=0?'+':'')+('$'+t.pnl.toFixed(4)):'--'; html+=`<tr class="${cls}"><td>${time}</td><td>${t.side}</td><td>${(t.entry_price||0).toFixed(4)}</td><td>${t.exit_price!=null?t.exit_price.toFixed(4):'--'}</td><td>${p}</td><td>${t.llm_verdict||'--'}</td><td>${t.outcome}</td></tr>`; } tbody.innerHTML=html; }
+  if(hasLog){ txt('tradeCount',rs.trades.length+' total'); const tbody=document.getElementById('tradeBody'); const recent=rs.trades.slice(-60).reverse(); let html=''; for(const t of recent){ const cls=t.outcome==='skipped-no-p2b'?'skipped-no-p2b':(t.outcome||'skipped'); const time=(t.timestamp||'').slice(5,16).replace('T',' '); const p=t.pnl!=null?(t.pnl>=0?'+':'')+('$'+t.pnl.toFixed(4)):'--'; html+=`<tr class="${cls}"><td>${time}</td><td>${t.side}</td><td>${(t.entry_price||0).toFixed(4)}</td><td>${t.exit_price!=null?t.exit_price.toFixed(4):'--'}</td><td>${p}</td><td>${t.llm_verdict||'--'}</td><td>${t.outcome}</td></tr>`; } tbody.innerHTML=html; }
 
   // Chart
   const executed=(rs.trades||[]).filter(t=>t.pnl!=null);
