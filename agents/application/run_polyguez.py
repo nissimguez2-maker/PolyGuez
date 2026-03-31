@@ -77,6 +77,7 @@ class PolyGuezRunner:
         self._gamma_ok = False
         self._clob_ok = False
         self._price_to_beat = None
+        self._p2b_source = "none"
         self._p2b_consecutive_failures = 0
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
@@ -171,7 +172,7 @@ class PolyGuezRunner:
             rolling_stats=self._rolling_stats,
             cooldown_active=cooldown_active,
             cooldown_remaining_seconds=cooldown_remaining,
-            p2b_source="chainlink" if self._price_to_beat is not None else "none",
+            p2b_source=self._p2b_source,
             p2b_parse_success=self._price_to_beat is not None,
             p2b_cross_check_passed=self._p2b_cross_check_passed,
             p2b_cross_check_divergence=self._p2b_cross_check_divergence,
@@ -285,43 +286,62 @@ class PolyGuezRunner:
             "expiry": str(expiry_dt),
         })
 
-        # P2B = Chainlink price at eventStartTime.
-        # Early in the window the current Chainlink ~= the opening price.
-        chainlink_now = self._btc_feed.get_chainlink_price()
-        if not chainlink_now or chainlink_now <= 0:
-            log_event(logger, "p2b_extraction_failed",
-                "No Chainlink price available — cannot determine P2B", level=30)
+        # P2B = Chainlink price at eventStartTime
+        event_start_dt = MarketDiscovery.get_event_start_time(self._current_market)
+        if event_start_dt:
+            event_start_ts = event_start_dt.timestamp()
+            cl_price, cl_ts, cl_offset = self._btc_feed.get_chainlink_price_at(event_start_ts)
+
+            if cl_price is not None and cl_offset < 30.0:
+                # We have a Chainlink price within 30s of eventStartTime
+                self._price_to_beat = cl_price
+                self._p2b_source = "chainlink_buffer"
+                self._p2b_consecutive_failures = 0
+                log_event(logger, "price_to_beat",
+                    f"P2B from Chainlink buffer: ${cl_price:.2f} (offset: {cl_offset:.1f}s from eventStartTime)",
+                    {"source": "chainlink_buffer", "offset_seconds": round(cl_offset, 1)})
+
+                # Cross-check buffer P2B against current Chainlink
+                current_cl = self._btc_feed.get_chainlink_price()
+                if current_cl and current_cl > 0:
+                    divergence = abs(self._price_to_beat - current_cl)
+                    # Tight tolerance if offset < 5s, wider if older
+                    tolerance = 50.0 if cl_offset < 5.0 else 150.0
+                    self._p2b_cross_check_passed = divergence <= tolerance
+                    self._p2b_cross_check_divergence = divergence
+                    log_event(logger, "p2b_cross_check",
+                        f"Cross-check: passed={self._p2b_cross_check_passed}, divergence=${divergence:.2f}, tolerance=${tolerance:.0f} (buffer offset={cl_offset:.1f}s)")
+                else:
+                    self._p2b_cross_check_passed = True
+                    self._p2b_cross_check_divergence = 0.0
+            else:
+                # Buffer doesn't have a price near eventStartTime — fall back to current Chainlink
+                current_cl = self._btc_feed.get_chainlink_price()
+                if current_cl and current_cl > 0:
+                    self._price_to_beat = current_cl
+                    self._p2b_source = "chainlink_current"
+                    self._p2b_consecutive_failures = 0
+                    elapsed_since_start = (datetime.now(timezone.utc) - event_start_dt).total_seconds()
+                    log_event(logger, "price_to_beat_fallback",
+                        f"P2B fallback to current Chainlink: ${current_cl:.2f} (market started {elapsed_since_start:.0f}s ago, buffer offset: {cl_offset:.1f}s)",
+                        {"source": "chainlink_current", "elapsed_since_start": round(elapsed_since_start, 1)},
+                        level=30)
+                    self._p2b_cross_check_passed = True
+                    self._p2b_cross_check_divergence = 0.0
+                else:
+                    log_event(logger, "p2b_no_chainlink", "No Chainlink price available for P2B", level=30)
+                    self._p2b_consecutive_failures += 1
+                    self._rolling_stats.p2b_skips += 1
+                    self._current_market = None
+                    if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
+                        self._killed = True
+                        self._kill_timestamp = datetime.now(timezone.utc).isoformat()
+                    return
+        else:
+            log_event(logger, "p2b_no_start_time", "No eventStartTime in market dict", level=30)
             self._p2b_consecutive_failures += 1
-            self._rolling_stats.p2b_skips += 1
-            log_event(logger, "window_skipped_no_p2b",
-                f"Skipping window — no Chainlink for P2B (consecutive failures: {self._p2b_consecutive_failures})")
             self._current_market = None
-            if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
-                log_event(logger, "p2b_structural_failure",
-                    f"HALT: {self._p2b_consecutive_failures} consecutive P2B failures",
-                    level=50)
-                self._killed = True
-                self._kill_timestamp = datetime.now(timezone.utc).isoformat()
             return
-
-        # Use Chainlink at discovery time as P2B approximation
-        event_start = MarketDiscovery.get_event_start_time(self._current_market)
-        elapsed_since_start = 0.0
-        if event_start:
-            elapsed_since_start = max(0.0, (datetime.now(timezone.utc) - event_start).total_seconds())
-
-        self._price_to_beat = chainlink_now
-        self._p2b_consecutive_failures = 0
-        log_event(logger, "price_to_beat",
-            f"From Chainlink at discovery: ${self._price_to_beat:.2f} (elapsed since start: {elapsed_since_start:.0f}s)",
-            {"source": "chainlink", "elapsed_since_start": elapsed_since_start})
-
-        # Cross-check: with Chainlink-as-P2B, divergence is 0 at discovery.
-        # Still run cross-check for logging consistency; it will always pass.
-        self._p2b_cross_check_passed = True
-        self._p2b_cross_check_divergence = 0.0
-        log_event(logger, "p2b_cross_check",
-            f"Cross-check: passed=True (Chainlink-based P2B, divergence=$0.00)")
 
         # Wait for BTC feed buffer
         if not self._btc_feed.is_ready():
@@ -359,6 +379,7 @@ class PolyGuezRunner:
         self._last_llm_verdict = ""
         self._last_llm_reason = ""
         self._price_to_beat = None
+        self._p2b_source = "none"
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
         log_event(logger, "cycle_complete", f"Market cycle complete: {old_question}. Looking for next market...")

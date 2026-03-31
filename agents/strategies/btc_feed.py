@@ -96,6 +96,28 @@ class PriceFeedManager:
     def get_chainlink_price(self):
         return self._chainlink_buffer[-1][1] if self._chainlink_buffer else 0.0
 
+    def get_chainlink_price_at(self, target_timestamp):
+        """Look up the Chainlink price closest to a target timestamp.
+
+        Searches the _chainlink_buffer for the entry closest to target_timestamp.
+        Returns (price, actual_timestamp, offset_seconds) or (None, None, None) if buffer is empty.
+        """
+        if not self._chainlink_buffer:
+            return (None, None, None)
+
+        best_price = None
+        best_ts = None
+        best_offset = float('inf')
+
+        for ts, price in self._chainlink_buffer:
+            offset = abs(ts - target_timestamp)
+            if offset < best_offset:
+                best_offset = offset
+                best_price = price
+                best_ts = ts
+
+        return (best_price, best_ts, best_offset)
+
     def is_chainlink_ready(self):
         return len(self._chainlink_buffer) > 0
 
