@@ -17,4 +17,4 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE ${PORT:-8080}
 
-CMD ["python", "scripts/python/cli.py", "run-polyguez"]
+CMD ["python", "scripts/python/inspect_market.py"]
