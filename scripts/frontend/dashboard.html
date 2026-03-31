@@ -88,31 +88,9 @@ body { background: var(--bg); color: var(--text-0); font-family: var(--font); mi
 .muted { color: var(--text-2) !important; }
 
 /* Price display */
-.big-price { font-family: var(--font-mono); font-size: 30px; font-weight: 700; color: var(--text-0); line-height: 1; }
-.price-pair { display: flex; gap: 20px; align-items: center; padding: 8px 14px; background: var(--card-alt); border-radius: var(--radius-sm); border: 1px solid var(--border-light); }
-.price-item { display: flex; flex-direction: column; gap: 1px; }
-.price-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); font-weight: 500; }
-.price-val { font-family: var(--font-mono); font-size: 18px; font-weight: 600; }
-.price-yes { color: var(--green); }
-.price-no { color: var(--rose); }
+.price-yes { color: var(--green); font-family: var(--font-mono); }
+.price-no { color: var(--rose); font-family: var(--font-mono); }
 
-/* Metric row */
-.metric-row { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 13px; color: var(--text-1); }
-.metric-row span { font-family: var(--font-mono); font-weight: 500; color: var(--text-0); }
-
-/* Signal grid */
-.signal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 14px; }
-.sig { display: flex; align-items: center; gap: 7px; font-size: 13px; padding: 5px 8px; border-radius: 6px; transition: background 0.15s; }
-.sig.blocker { background: var(--red-bg); }
-.sig-icon { width: 18px; height: 18px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; flex-shrink: 0; }
-.sig-ok { background: var(--green-bg); color: var(--green); }
-.sig-fail { background: var(--red-bg); color: var(--red); }
-.sig-label { color: var(--text-1); }
-.sig.blocker .sig-label { color: var(--red); font-weight: 500; }
-
-/* Blocker callout */
-.blocker-callout { margin-top: 10px; padding: 8px 12px; background: var(--red-bg); border: 1px solid var(--red-border); border-radius: var(--radius-sm); font-size: 12px; color: var(--red); font-weight: 500; display: none; align-items: center; gap: 6px; }
-.blocker-callout.visible { display: flex; }
 
 /* Progress */
 .progress { background: var(--border-light); border-radius: 4px; height: 6px; overflow: hidden; }
@@ -173,6 +151,34 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
 /* Divider */
 .divider { height: 1px; background: var(--border-light); margin: 10px 0; }
 
+/* Last trade banner */
+.last-trade-banner { padding: 10px 20px; border-radius: var(--radius); font-family: var(--font-mono); font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 8px; box-shadow: var(--shadow); }
+.last-trade-banner.win { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.last-trade-banner.loss { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.last-trade-banner.none { background: var(--card-alt); color: var(--text-2); border: 1px solid var(--border); }
+
+/* Price boxes */
+.price-boxes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 14px; }
+.price-box { background: var(--card-alt); border: 1px solid var(--border-light); border-radius: var(--radius-sm); padding: 12px; text-align: center; }
+.price-box-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); font-weight: 500; margin-bottom: 4px; }
+.price-box-val { font-family: var(--font-mono); font-size: 18px; font-weight: 700; color: var(--text-0); }
+.price-box-tag { font-size: 10px; color: var(--text-2); margin-top: 2px; }
+
+/* Delta strike prominent */
+.delta-strike { padding: 12px 16px; border-radius: var(--radius-sm); margin-bottom: 14px; text-align: center; }
+.delta-strike-val { font-family: var(--font-mono); font-size: 24px; font-weight: 700; }
+.delta-strike-sub { font-size: 12px; margin-top: 4px; opacity: 0.8; }
+
+/* CLOB compact row */
+.clob-row { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 8px 14px; background: var(--card-alt); border-radius: var(--radius-sm); border: 1px solid var(--border-light); margin-bottom: 14px; font-family: var(--font-mono); font-size: 15px; font-weight: 600; }
+
+/* Signal status line */
+.signal-line { padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; margin-top: 14px; }
+.signal-line.blocked { background: var(--card-alt); border: 1px solid var(--border-light); color: var(--text-1); }
+.signal-line.fired { background: var(--green-bg); border: 1px solid var(--green-border); color: var(--green); }
+.signal-line .fail-list { color: var(--red); font-weight: 600; }
+.signal-line .llm-status { margin-top: 4px; font-size: 12px; }
+
 /* Config grid */
 .cfg-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
 @media (max-width: 960px) { .cfg-grid { grid-template-columns: 1fr; } }
@@ -196,11 +202,14 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
   </div>
   <div class="topbar-stats">
     <div class="stat"><span class="stat-label">Balance</span><span class="stat-val" id="balance">$100.00</span></div>
-    <div class="stat"><span class="stat-label">Risk Cap</span><span class="stat-val muted" id="riskCap">$10.00</span></div>
     <div class="stat"><span class="stat-label">Daily P&L</span><span class="stat-val" id="dailyPnl">+$0.00</span></div>
+    <div class="stat"><span class="stat-label">Trades Today</span><span class="stat-val muted" id="tradesToday">0 (0/0)</span></div>
     <div class="stat"><span class="stat-label">Total P&L</span><span class="stat-val" id="totalPnl">+$0.00</span></div>
   </div>
 </div>
+
+<!-- LAST TRADE BANNER -->
+<div class="last-trade-banner none" id="lastTradeBanner">No trades yet</div>
 
 <!-- MAIN GRID -->
 <div class="grid-main">
@@ -214,91 +223,45 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
       <div class="card-title" style="margin-bottom:0">Live Market</div>
       <span style="font-family:var(--font-mono);font-size:13px;color:var(--text-2)" id="expiry">--:--</span>
     </div>
-    <div id="marketQuestion" style="font-size:13px;color:var(--text-1);margin-bottom:12px">Waiting for market...</div>
+    <div id="marketQuestion" style="font-size:13px;color:var(--text-1);margin-bottom:14px">Waiting for market...</div>
 
-    <div style="display:flex;justify-content:space-between;align-items:flex-end;flex-wrap:wrap;gap:10px;margin-bottom:12px">
-      <div>
-        <div class="big-price" id="btcPrice">--</div>
-        <div style="font-size:11px;color:var(--text-2);margin-top:4px">Binance BTC/USD</div>
+    <!-- Three big price boxes -->
+    <div class="price-boxes">
+      <div class="price-box">
+        <div class="price-box-label">BTC (Binance)</div>
+        <div class="price-box-val" id="btcPrice">--</div>
       </div>
-      <div style="text-align:right">
-        <div style="display:flex;align-items:baseline;gap:6px;justify-content:flex-end">
-          <span style="font-size:12px;color:var(--text-2)">Chainlink</span>
-          <span style="font-family:var(--font-mono);font-size:17px;font-weight:600" id="chainlinkPrice">--</span>
-          <span style="font-size:11px;color:var(--text-2)" id="chainlinkSrc"></span>
-        </div>
-        <div style="font-size:12px;color:var(--text-2);margin-top:3px">P2B: <span id="priceToBeat">no P2B</span></div>
-        <div id="p2bFailures" style="font-size:11px;color:var(--amber);margin-top:2px;display:none"></div>
+      <div class="price-box">
+        <div class="price-box-label">Chainlink</div>
+        <div class="price-box-val" id="chainlinkPrice">--</div>
+        <div class="price-box-tag" id="chainlinkSrc"></div>
+      </div>
+      <div class="price-box">
+        <div class="price-box-label">P2B Strike</div>
+        <div class="price-box-val" id="priceToBeat">--</div>
+        <div class="price-box-tag" id="p2bStatus"></div>
       </div>
     </div>
 
-    <!-- YES / NO side by side -->
-    <div class="price-pair" style="margin-bottom:12px">
-      <div class="price-item">
-        <span class="price-label">Yes</span>
-        <span class="price-val price-yes" id="yesPrice">0.0000</span>
-      </div>
-      <div style="width:1px;height:28px;background:var(--border-light)"></div>
-      <div class="price-item">
-        <span class="price-label">No</span>
-        <span class="price-val price-no" id="noPrice">0.0000</span>
-      </div>
-      <div style="width:1px;height:28px;background:var(--border-light)"></div>
-      <div class="price-item">
-        <span class="price-label">Spread</span>
-        <span class="price-val" style="font-size:15px;color:var(--text-0)" id="spread">0.0000</span>
-      </div>
-      <div style="width:1px;height:28px;background:var(--border-light)"></div>
-      <div class="price-item">
-        <span class="price-label">Depth</span>
-        <span class="price-val" style="font-size:15px;color:var(--text-0)" id="clobDepth">--</span>
-      </div>
+    <!-- Delta Strike prominent -->
+    <div class="delta-strike" id="deltaStrikeBox" style="background:var(--card-alt);border:1px solid var(--border-light)">
+      <div class="delta-strike-val" id="deltaStrikeVal">Δ Strike: --</div>
+      <div class="delta-strike-sub" id="deltaStrikeSub">Waiting for data</div>
     </div>
 
-    <div class="metric-row" style="margin-bottom:10px">
-      <div>Velocity <span id="velocity">0.0000</span> <span id="velArrow" style="font-size:12px"></span></div>
-      <div>Gap <span id="oracleGap">0.00</span></div>
-      <div>Gap Dir <span id="gapDir">--</span></div>
-      <div>Δ Strike <span id="strikeDisplay">--</span></div>
-      <div>P(win) <span id="pwinDisplay">--</span></div>
-      <div>Edge <span id="edgeDisplay">--</span></div>
-      <div>CL vs P2B <span id="clVsPtb">--</span></div>
+    <!-- CLOB compact row -->
+    <div class="clob-row">
+      <span>UP: <span class="price-yes" id="yesPrice">0.00</span></span>
+      <span style="color:var(--border)">|</span>
+      <span>DOWN: <span class="price-no" id="noPrice">0.00</span></span>
     </div>
 
+    <!-- Entry window -->
     <div style="margin-bottom:2px;display:flex;justify-content:space-between;font-size:11px;color:var(--text-2)"><span>Entry Window</span><span id="entryPct">0%</span></div>
     <div class="progress"><div class="progress-fill" id="entryBar" style="width:0%"></div></div>
-  </div>
 
-  <!-- SIGNAL -->
-  <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <div class="card-title" style="margin-bottom:0">Signal Conditions</div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span class="llm-badge llm-none" id="llmBadge">--</span>
-        <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-2)" id="llmTime"></span>
-      </div>
-    </div>
-    <div class="signal-grid" id="signalGrid">
-      <div class="sig"><span class="sig-icon sig-fail" id="s_velocity">✗</span><span class="sig-label">Velocity</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_oraclegap">✗</span><span class="sig-label">Oracle Gap</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_clobmisprice">✗</span><span class="sig-label">CLOB Mispricing</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_edge">✗</span><span class="sig-label">Edge</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_spread">✗</span><span class="sig-label">Spread</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_depth">✗</span><span class="sig-label">Depth</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_nopos">✗</span><span class="sig-label">No Position</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_cooldown">✗</span><span class="sig-label">Cooldown</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_dailyloss">✗</span><span class="sig-label">Daily Loss</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_balance">✗</span><span class="sig-label">Balance</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_poslimit">✗</span><span class="sig-label">Position Limit</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_p2b">✗</span><span class="sig-label">P2B OK</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_deltamag">✗</span><span class="sig-label">Delta Mag</span></div>
-      <div class="sig"><span class="sig-icon sig-fail" id="s_termedge">✗</span><span class="sig-label">Terminal Edge</span></div>
-    </div>
-    <div class="blocker-callout" id="blockerCallout">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      <span id="blockerText"></span>
-    </div>
-    <div id="llmReason" style="font-size:12px;color:var(--text-2);margin-top:8px;font-style:italic"></div>
+    <!-- Signal status one-line -->
+    <div class="signal-line blocked" id="signalLine">Signal: waiting for data</div>
   </div>
 
   <!-- POSITION -->
@@ -451,21 +414,12 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
-const sigLabels = {
-  velocity_ok:'Velocity below threshold', oracle_gap_ok:'Oracle gap insufficient',
-  clob_mispricing_ok:'No CLOB mispricing', edge_ok:'Edge below minimum',
-  spread_ok:'Spread too wide', depth_ok:'CLOB depth insufficient',
-  no_position:'Already holding position', cooldown_ok:'Cooldown active',
-  daily_loss_ok:'Daily loss limit reached', balance_ok:'Balance too low',
-  position_limit_ok:'Position limit reached',
-  p2b_ok:'P2B extraction failed', delta_magnitude_ok:'Strike delta too small',
-  terminal_edge_ok:'Terminal edge insufficient',
-};
-const sigMap = {
-  velocity_ok:'s_velocity', oracle_gap_ok:'s_oraclegap', clob_mispricing_ok:'s_clobmisprice',
-  edge_ok:'s_edge', spread_ok:'s_spread', depth_ok:'s_depth', no_position:'s_nopos',
-  cooldown_ok:'s_cooldown', daily_loss_ok:'s_dailyloss', balance_ok:'s_balance', position_limit_ok:'s_poslimit',
-  p2b_ok:'s_p2b', delta_magnitude_ok:'s_deltamag', terminal_edge_ok:'s_termedge',
+const sigNames = {
+  velocity_ok:'Velocity', oracle_gap_ok:'Oracle Gap', clob_mispricing_ok:'CLOB Mispricing',
+  edge_ok:'Edge', spread_ok:'Spread', depth_ok:'Depth', no_position:'No Position',
+  cooldown_ok:'Cooldown', daily_loss_ok:'Daily Loss', balance_ok:'Balance',
+  position_limit_ok:'Position Limit', p2b_ok:'P2B', delta_magnitude_ok:'Delta Mag',
+  terminal_edge_ok:'Terminal Edge',
 };
 
 function render(s) {
@@ -477,91 +431,124 @@ function render(s) {
   setDot('dotBtc', s.btc_feed_connected); setDot('dotClob', s.clob_connected); setDot('dotGamma', s.gamma_connected);
 
   txt('balance', '$'+(s.usdc_balance||0).toFixed(2));
-  txt('riskCap', '$'+(s.max_capital_at_risk||0).toFixed(2));
   pnlText('dailyPnl', s.daily_pnl||0);
   const rs = s.rolling_stats||{};
   pnlText('totalPnl', rs.total_pnl||0);
 
+  // Trades today counter
+  const trades = rs.trades||[];
+  const today = new Date().toISOString().slice(0,10);
+  const todayTrades = trades.filter(t => t.timestamp && t.timestamp.slice(0,10)===today && (t.outcome==='win'||t.outcome==='loss'||t.outcome==='emergency-exit'));
+  const todayWins = todayTrades.filter(t=>t.outcome==='win').length;
+  const todayLosses = todayTrades.filter(t=>t.outcome!=='win').length;
+  txt('tradesToday', todayTrades.length+' ('+todayWins+'W/'+todayLosses+'L)');
+
   if(s.killed){ const kb=document.getElementById('killBtn'); kb.textContent='KILLED'; kb.className='kill-btn killed'; kb.disabled=true; }
+
+  // Last trade banner
+  const lastBanner = document.getElementById('lastTradeBanner');
+  const executedTrades = trades.filter(t=>t.outcome==='win'||t.outcome==='loss'||t.outcome==='emergency-exit');
+  if(executedTrades.length>0){
+    const lt = executedTrades[executedTrades.length-1];
+    const ago = lt.timestamp ? Math.max(0,Math.floor((Date.now()-new Date(lt.timestamp).getTime())/60000)) : 0;
+    const agoStr = ago < 60 ? ago+' min ago' : Math.floor(ago/60)+'h ago';
+    const side = lt.side === 'YES' ? 'UP' : 'DOWN';
+    const won = lt.outcome==='win';
+    const pnlStr = lt.pnl!=null ? (lt.pnl>=0?'+':'')+('$'+lt.pnl.toFixed(2)) : '--';
+    lastBanner.textContent = 'Last trade: '+side+' @ '+(lt.entry_price||0).toFixed(2)+' → '+(won?'WIN ':'LOSS ')+pnlStr+' ('+agoStr+')';
+    lastBanner.className = 'last-trade-banner '+(won?'win':'loss');
+  } else {
+    lastBanner.textContent = 'No trades yet';
+    lastBanner.className = 'last-trade-banner none';
+  }
 
   txt('marketQuestion', s.current_market_question || 'Waiting for market...');
   txt('btcPrice', s.btc_price ? '$'+s.btc_price.toFixed(2) : '--');
   txt('chainlinkPrice', s.chainlink_price ? '$'+s.chainlink_price.toFixed(2) : '--');
-  txt('chainlinkSrc', s.chainlink_source ? '('+s.chainlink_source+')' : '');
+  txt('chainlinkSrc', s.chainlink_source ? s.chainlink_source : '');
+
+  // P2B Strike box
   const ptb = s.price_to_beat;
   const ptbEl = document.getElementById('priceToBeat');
-  if(s.p2b_parse_success){
+  const p2bStatusEl = document.getElementById('p2bStatus');
+  if(s.p2b_parse_success && ptb){
+    ptbEl.textContent = '$'+ptb.toFixed(2);
     const xc = s.p2b_cross_check_passed;
-    if(xc === false){ ptbEl.textContent='$'+ptb.toFixed(2)+' ⚠'; ptbEl.style.color='var(--amber)'; }
-    else { ptbEl.textContent='$'+ptb.toFixed(2)+' ✓'; ptbEl.style.color=''; }
-  } else { ptbEl.textContent='P2B: FAILED ✗'; ptbEl.style.color='var(--red)'; }
-  const p2bFailEl = document.getElementById('p2bFailures');
-  if((s.p2b_consecutive_failures||0)>0){ p2bFailEl.textContent='P2B failures: '+s.p2b_consecutive_failures+'/3'; p2bFailEl.style.display=''; }
-  else { p2bFailEl.style.display='none'; }
+    if(xc === false){ p2bStatusEl.textContent='⚠ cross-check failed'; p2bStatusEl.style.color='var(--amber)'; }
+    else { p2bStatusEl.textContent='✓'; p2bStatusEl.style.color='var(--green)'; }
+  } else {
+    ptbEl.textContent='FAILED ✗';
+    p2bStatusEl.textContent=(s.p2b_consecutive_failures||0)>0?'failures: '+s.p2b_consecutive_failures+'/3':'';
+    p2bStatusEl.style.color='var(--red)';
+  }
 
-  txt('yesPrice', (s.yes_price||0).toFixed(4));
-  txt('noPrice', (s.no_price||0).toFixed(4));
-  txt('spread', (s.clob_spread||0).toFixed(4));
-  txt('clobDepth', s.clob_depth && s.clob_depth < 900 ? s.clob_depth.toFixed(0) : '--');
-
-  txt('velocity', (s.btc_velocity||0).toFixed(4));
-  const va = document.getElementById('velArrow');
-  va.textContent = s.btc_direction==='up'?'▲':'▼';
-  va.style.color = s.btc_direction==='up'?'var(--green)':'var(--red)';
-
-  const gap = s.binance_chainlink_gap||0;
-  const gapEl = document.getElementById('oracleGap');
-  gapEl.textContent = (gap>=0?'+':'')+gap.toFixed(2);
-  gapEl.style.color = Math.abs(gap)>=15?'var(--green)':'var(--text-2)';
-  txt('gapDir', s.gap_direction || '--');
-
+  // Delta Strike prominent
   const sd = s.strike_delta||0;
-  const sdEl = document.getElementById('strikeDisplay');
-  sdEl.textContent = (sd>=0?'+$':'-$')+Math.abs(sd).toFixed(2);
-  sdEl.style.color = sd>0?'var(--green)':sd<0?'var(--red)':'';
+  const dsBox = document.getElementById('deltaStrikeBox');
+  const dsVal = document.getElementById('deltaStrikeVal');
+  const dsSub = document.getElementById('deltaStrikeSub');
+  if(ptb && ptb > 0 && s.chainlink_price){
+    const absDelta = Math.abs(sd);
+    dsVal.textContent = 'Δ Strike: '+(sd>=0?'+$':'-$')+absDelta.toFixed(2);
+    const upWinning = sd > 0;
+    dsVal.style.color = upWinning ? 'var(--green)' : 'var(--red)';
+    dsBox.style.background = upWinning ? 'var(--green-bg)' : 'var(--red-bg)';
+    dsBox.style.borderColor = upWinning ? 'var(--green-border)' : 'var(--red-border)';
+    dsSub.textContent = 'Chainlink is $'+absDelta.toFixed(0)+' '+(upWinning?'above':'below')+' strike → '+(upWinning?'Up':'Down')+' leading';
+    dsSub.style.color = upWinning ? 'var(--green)' : 'var(--red)';
+  } else {
+    dsVal.textContent = 'Δ Strike: --';
+    dsVal.style.color = 'var(--text-2)';
+    dsBox.style.background = 'var(--card-alt)';
+    dsBox.style.borderColor = 'var(--border-light)';
+    dsSub.textContent = 'Waiting for data';
+    dsSub.style.color = 'var(--text-2)';
+  }
 
-  const tp = s.terminal_probability||0;
-  const tpEl = document.getElementById('pwinDisplay');
-  tpEl.textContent = (tp*100).toFixed(1)+'%';
-  tpEl.style.color = tp>0.8?'var(--green)':tp>=0.5?'var(--amber)':'var(--red)';
-
-  const te = s.terminal_edge||0;
-  const teEl = document.getElementById('edgeDisplay');
-  teEl.textContent = te.toFixed(4);
-  teEl.style.color = te>0.05?'var(--green)':te>=0.01?'var(--amber)':'var(--text-2)';
-
-  const clvs = s.chainlink_vs_price_to_beat||0;
-  const clvsEl = document.getElementById('clVsPtb');
-  if(!ptb||ptb<=0){ clvsEl.textContent='--'; clvsEl.style.color='var(--text-2)'; }
-  else { clvsEl.textContent=(clvs>=0?'+':'')+clvs.toFixed(2); clvsEl.style.color=clvs>=0?'var(--green)':'var(--red)'; }
+  txt('yesPrice', (s.yes_price||0).toFixed(2));
+  txt('noPrice', (s.no_price||0).toFixed(2));
 
   if(s.current_market_expiry){ const rem=Math.max(0,(new Date(s.current_market_expiry)-Date.now())/1000); txt('expiry',fmtTime(rem)); } else txt('expiry','--:--');
   const pct = s.entry_window_total>0?Math.min(100,(s.entry_window_elapsed/s.entry_window_total)*100):0;
   document.getElementById('entryBar').style.width=pct+'%';
   txt('entryPct',Math.round(pct)+'%');
 
-  // Signal
-  const blockers=[];
+  // Signal — single status line
+  const sigLine = document.getElementById('signalLine');
   if(s.signal){
     const conds = { velocity_ok:s.signal.velocity_ok, oracle_gap_ok:s.signal.oracle_gap_ok, clob_mispricing_ok:s.signal.clob_mispricing_ok, edge_ok:s.signal.edge_ok, spread_ok:s.signal.spread_ok, depth_ok:s.signal.depth_ok, no_position:s.signal.no_position, cooldown_ok:s.signal.cooldown_ok, daily_loss_ok:s.signal.daily_loss_ok, balance_ok:s.signal.balance_ok, position_limit_ok:s.signal.position_limit_ok, p2b_ok:s.p2b_parse_success, delta_magnitude_ok:s.signal.delta_magnitude_ok, terminal_edge_ok:s.signal.terminal_edge_ok };
-    const passCount = Object.values(conds).filter(Boolean).length;
     const total = Object.keys(conds).length;
-    for(const[key,ok] of Object.entries(conds)){
-      const elId=sigMap[key]; if(!elId)continue;
-      setSig(elId,ok);
-      const row=document.getElementById(elId).closest('.sig');
-      if(!ok&&passCount>=total-3) row.classList.add('blocker'); else row.classList.remove('blocker');
-      if(!ok) blockers.push(sigLabels[key]||key);
-    }
-  }
-  const callout=document.getElementById('blockerCallout');
-  if(blockers.length>0&&blockers.length<=3){ txt('blockerText','Blocked: '+blockers.join(' · ')); callout.classList.add('visible'); }
-  else callout.classList.remove('visible');
+    const passCount = Object.values(conds).filter(Boolean).length;
+    const blockers = Object.entries(conds).filter(([k,v])=>!v).map(([k])=>sigNames[k]||k);
 
-  // LLM
-  const lb=document.getElementById('llmBadge');
-  if(s.llm_verdict){ lb.textContent=s.llm_verdict; lb.className='llm-badge '+({GO:'llm-go','NO-GO':'llm-nogo','REDUCE-SIZE':'llm-reduce'}[s.llm_verdict]||'llm-none'); txt('llmReason',s.llm_reason||''); txt('llmTime',s.llm_response_time?s.llm_response_time.toFixed(1)+'s':''); }
-  else { lb.textContent='--'; lb.className='llm-badge llm-none'; txt('llmReason',''); txt('llmTime',''); }
+    if(passCount === total){
+      // All conditions met
+      if(s.llm_verdict === 'GO'){
+        sigLine.innerHTML = 'LLM: GO ✓';
+        sigLine.className = 'signal-line fired';
+      } else if(s.llm_verdict === 'NO-GO'){
+        sigLine.innerHTML = 'LLM: NO-GO ✗' + (s.llm_reason ? ' <span style="font-size:12px;opacity:0.8">('+s.llm_reason+')</span>' : '');
+        sigLine.className = 'signal-line blocked';
+      } else if(s.llm_verdict === 'REDUCE-SIZE'){
+        sigLine.innerHTML = 'LLM: REDUCE-SIZE ⚠' + (s.llm_reason ? ' <span style="font-size:12px;opacity:0.8">('+s.llm_reason+')</span>' : '');
+        sigLine.className = 'signal-line blocked';
+      } else {
+        sigLine.innerHTML = 'SIGNAL FIRED → awaiting LLM';
+        sigLine.className = 'signal-line fired';
+      }
+    } else {
+      let html = 'Signal: '+passCount+'/'+total+' conditions met — Blocked by: <span class="fail-list">'+blockers.join(', ')+'</span>';
+      if(s.llm_verdict && s.llm_verdict !== '--'){
+        const llmClass = s.llm_verdict==='GO'?'color:var(--green)':s.llm_verdict==='NO-GO'?'color:var(--red)':'color:var(--amber)';
+        html += '<div class="llm-status" style="'+llmClass+'">LLM: '+s.llm_verdict+(s.llm_reason?' — '+s.llm_reason:'')+'</div>';
+      }
+      sigLine.innerHTML = html;
+      sigLine.className = 'signal-line blocked';
+    }
+  } else {
+    sigLine.innerHTML = 'Signal: waiting for data';
+    sigLine.className = 'signal-line blocked';
+  }
 
   // Position
   if(s.position){ document.getElementById('posContent').style.display=''; document.getElementById('posEmpty').style.display='none'; txt('posSide',s.position.side); txt('posEntry',s.position.entry_price.toFixed(4)); txt('posSize','$'+s.position.size_usdc.toFixed(2)); const ur=s.unrealized_pnl||0; const urEl=document.getElementById('posUnreal'); urEl.textContent=(ur>=0?'+':'')+('$'+ur.toFixed(4)); urEl.className='stat-val '+(ur>=0?'positive':'negative'); txt('posTtx',fmtTime(s.time_to_expiry||0)); }
@@ -588,7 +575,6 @@ function render(s) {
 }
 
 function setDot(id,ok){ document.getElementById(id).className='dot '+(ok?'dot-on':'dot-off'); }
-function setSig(id,ok){ const el=document.getElementById(id); el.textContent=ok?'✓':'✗'; el.className='sig-icon '+(ok?'sig-ok':'sig-fail'); }
 function txt(id,v){ const el=document.getElementById(id); if(el) el.textContent=v; }
 function pnlText(id,v){ const el=document.getElementById(id); el.textContent=(v>=0?'+$':'−$')+Math.abs(v).toFixed(2); el.className='stat-val '+(v>=0?'positive':'negative'); }
 function fmtTime(s){ return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'); }
