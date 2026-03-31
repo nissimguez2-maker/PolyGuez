@@ -279,6 +279,13 @@ class PolyGuezConfig(BaseModel):
     chainlink_onchain_poll_interval: float = Field(default=2.0)
     chainlink_onchain_rpc_url: str = Field(default="https://polygon-rpc.com")
 
+    # P2B parsing hardening
+    p2b_sanity_min: float = Field(default=10000.0, description="Min plausible BTC price for P2B")
+    p2b_sanity_max: float = Field(default=500000.0, description="Max plausible BTC price for P2B")
+    p2b_consecutive_failure_halt: int = Field(default=3, description="Halt after N consecutive P2B parse failures")
+    min_terminal_edge: float = Field(default=0.05, description="Min edge at terminal probability for entry")
+    conviction_min_delta: float = Field(default=40.0, description="Min $ delta between Chainlink and P2B for conviction")
+
     dashboard_secret: str = Field(default="")
 
 
@@ -325,6 +332,15 @@ class SignalState(BaseModel):
     position_limit_ok: bool = False
     depth_ok: bool = False  # FIX 2
 
+    # P2B enrichment fields
+    p2b_source: str = ""
+    p2b_value: Optional[float] = None
+    p2b_cross_check_passed: Optional[bool] = None
+    p2b_cross_check_divergence: Optional[float] = None
+    strike_delta: float = 0.0
+    terminal_probability: float = 0.0
+    terminal_edge: float = 0.0
+
     @property
     def all_conditions_met(self) -> bool:
         return all([
@@ -353,6 +369,7 @@ class RollingStats(BaseModel):
     cooldown_until: Optional[str] = None
     max_capital_at_risk: float = 0.0
     simulated_balance: float = 100.0  # Persistent dry-run balance, starts at $100
+    p2b_skips: int = 0
 
     @property
     def last_n_trades(self) -> List[TradeRecord]:
@@ -435,4 +452,13 @@ class DashboardSnapshot(BaseModel):
     rolling_stats: Optional[RollingStats] = None
     cooldown_active: bool = False
     cooldown_remaining_seconds: float = 0.0
+    # P2B dashboard fields
+    p2b_source: str = ""
+    p2b_parse_success: bool = False
+    p2b_cross_check_passed: Optional[bool] = None
+    p2b_cross_check_divergence: Optional[float] = None
+    strike_delta: float = 0.0
+    terminal_probability: float = 0.0
+    terminal_edge: float = 0.0
+    p2b_consecutive_failures: int = 0
     config: Optional[PolyGuezConfig] = None

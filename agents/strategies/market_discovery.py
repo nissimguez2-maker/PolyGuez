@@ -18,6 +18,14 @@ logger = get_logger("polyguez.market_discovery")
 _WINDOW_SECONDS = 300  # 5-minute windows
 _PRICE_TO_BEAT_RE = re.compile(r"\$([0-9,]+\.?\d*)")
 
+# Tiered P2B regexes (most specific first)
+_P2B_PRIMARY = re.compile(r"price\s+to\s+beat.{0,30}\$([0-9,]+\.\d{2})", re.IGNORECASE)
+_P2B_SECONDARY = re.compile(r"opening.{0,30}\$([0-9,]+\.\d{2})", re.IGNORECASE)
+_P2B_TERTIARY = re.compile(r"\$([0-9,]+\.\d{2})")  # first $ amount with 2 decimals
+
+_P2B_SANITY_MIN = 10000.0
+_P2B_SANITY_MAX = 500000.0
+
 
 class MarketDiscovery:
     """Wraps GammaMarketClient to find 5-min BTC binary markets."""
@@ -190,21 +198,46 @@ class MarketDiscovery:
         return (None, None)
 
     @staticmethod
-    def extract_price_to_beat(market_dict):
+    def extract_price_to_beat(market_dict, sanity_min=_P2B_SANITY_MIN, sanity_max=_P2B_SANITY_MAX):
         """Extract the 'Price to Beat' dollar amount from the description.
 
-        The Gamma API embeds it in the description like:
-        "...the opening 'Price to Beat' of $66,477.42..."
-        Returns the float value, or 0.0 if not found.
+        Uses a 3-tier regex strategy:
+          1. Match "price to beat" followed by a $X,XXX.XX amount
+          2. Match "opening" followed by a $X,XXX.XX amount
+          3. Broad match: first $X,XXX.XX amount in description
+
+        Returns Optional[float]: parsed value, or None on failure.
+        All tiers require the value to pass a sanity check (default 10k–500k).
         """
         desc = market_dict.get("description", "") or ""
-        match = _PRICE_TO_BEAT_RE.search(desc)
-        if match:
-            try:
-                return float(match.group(1).replace(",", ""))
-            except (ValueError, TypeError):
-                pass
-        return 0.0
+        if not desc:
+            return None
+
+        for pattern in (_P2B_PRIMARY, _P2B_SECONDARY, _P2B_TERTIARY):
+            match = pattern.search(desc)
+            if match:
+                try:
+                    value = float(match.group(1).replace(",", ""))
+                    if sanity_min <= value <= sanity_max:
+                        return value
+                except (ValueError, TypeError):
+                    continue
+        return None
+
+    @staticmethod
+    def cross_check_price_to_beat(description_p2b, chainlink_price, discovery_lag_seconds=0.0, btc_price=0.0):
+        """Cross-check P2B against Chainlink price to detect stale/wrong values.
+
+        Returns (passes: bool, divergence: float).
+        Tolerance = max(30.0, btc_price * 0.0005) + (discovery_lag_seconds * 3.0)
+        """
+        if description_p2b is None or chainlink_price is None or chainlink_price <= 0:
+            return (False, float('inf'))
+
+        ref_price = btc_price if btc_price > 0 else chainlink_price
+        tolerance = max(30.0, ref_price * 0.0005) + (discovery_lag_seconds * 3.0)
+        divergence = abs(description_p2b - chainlink_price)
+        return (divergence <= tolerance, divergence)
 
     @staticmethod
     def is_market_settled(market_dict):
