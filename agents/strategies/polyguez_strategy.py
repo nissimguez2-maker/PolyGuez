@@ -251,6 +251,9 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
         binance_chainlink_gap=signal_state.binance_chainlink_gap,
         gap_direction=gap_direction, price_to_beat=price_to_beat,
         clob_depth_summary=clob_depth_summary,
+        strike_delta=signal_state.strike_delta,
+        terminal_probability=signal_state.terminal_probability,
+        terminal_edge=signal_state.terminal_edge,
     )
 
     adapter = get_llm_adapter(config)

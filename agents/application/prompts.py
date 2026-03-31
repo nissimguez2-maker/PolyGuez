@@ -260,7 +260,20 @@ class Prompter:
         gap_direction: str = "unknown",
         price_to_beat: float = 0.0,
         clob_depth_summary: str = "",
+        strike_delta: float = 0.0,
+        terminal_probability: float = 0.0,
+        terminal_edge: float = 0.0,
     ) -> str:
+        strike_section = f"""
+STRIKE ANALYSIS (primary signal):
+- Price to Beat (strike): ${price_to_beat:.2f}
+- Current Chainlink: ${chainlink_price:.2f}
+- Strike delta: ${strike_delta:+.2f} ({"above" if strike_delta > 0 else "below"} strike)
+- Terminal probability (selected side): {terminal_probability:.1%}
+- Terminal edge: {terminal_edge:.4f}
+NOTE: Terminal probability estimates the chance the current leading side wins at expiry.
+Edge = terminal probability minus the token price you'd pay. Higher edge = more attractive entry."""
+
         oracle_section = ""
         if chainlink_price > 0:
             oracle_section = f"""
@@ -280,9 +293,10 @@ CLOB ORDER BOOK DEPTH:
 {clob_depth_summary}
 NOTE: Thin depth = higher slippage risk. Asymmetric depth may signal informed flow."""
 
-        return f"""You are a risk-aware trading confirmation system for 5-minute BTC binary markets on Polymarket.
+        return f"""You are a risk-aware trading confirmation system for 5-minute BTC binary markets on Polymarket. The strategy uses late-window convergence: it waits until the outcome is statistically near-certain, then enters if the CLOB token price hasn't caught up.
 
 A deterministic momentum signal has ALREADY fired. Your job is to CONFIRM or VETO.
+{strike_section}
 
 CURRENT STATE:
 - BTC 30s velocity: {velocity:.6f} $/sec ({direction})
@@ -299,12 +313,13 @@ EXTERNAL CONTEXT:
 {context_data}
 
 RULES:
-- The deterministic signal passed all thresholds. You are advisory only.
-- If momentum is clear and context supports it, respond GO.
-- If context suggests a reversal or anomaly, respond NO-GO.
-- If the oracle gap is narrowing (Chainlink catching up), this REDUCES the edge — consider REDUCE-SIZE or NO-GO.
-- If signal is borderline or context is mixed, respond REDUCE-SIZE.
-- Multiple bots compete on these markets. If depth is thin or gap is small, the edge may already be taken.
+- The deterministic signal passed all conditions including: terminal probability > threshold, terminal edge > minimum, delta magnitude sufficient, and all v1 safety gates.
+- The bot enters in the last 60 seconds when the outcome is statistically decided.
+- If strike delta is large and stable, and terminal edge is significant, respond GO.
+- If you see news suggesting an imminent reversal that could flip the outcome in the remaining seconds, respond NO-GO.
+- If the oracle gap is narrowing rapidly (Chainlink catching up to Binance), the edge may shrink — consider REDUCE-SIZE.
+- If depth is thin relative to position size, consider REDUCE-SIZE.
+- If terminal probability is above 95% and edge is above 0.10, the case for GO is very strong.
 
 Respond with EXACTLY one line in this format:
 VERDICT: <GO|NO-GO|REDUCE-SIZE> | REASON: <one sentence>"""
