@@ -9,6 +9,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+import websockets
 from dotenv import load_dotenv
 
 from agents.polymarket.gamma import GammaMarketClient
@@ -83,6 +84,15 @@ class PolyGuezRunner:
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
         self._open_position = None  # Dry-run position tracking
+
+        # CLOB WebSocket state
+        self._clob_ws = None
+        self._clob_ws_task = None
+        self._clob_ws_yes = 0.0
+        self._clob_ws_no = 0.0
+        self._clob_ws_last_msg = 0.0
+        self._clob_ws_tokens = (None, None)  # (yes_token, no_token)
+        self._clob_ws_connected = False
 
     # -- Public API for dashboard / CLI ------------------------------------
 
@@ -196,6 +206,15 @@ class PolyGuezRunner:
             await execute_emergency_exit(self._polymarket, self._position, self.config.mode)
             self._position = None
 
+        # Stop CLOB WS
+        if self._clob_ws_task:
+            self._clob_ws_task.cancel()
+            try: await self._clob_ws_task
+            except asyncio.CancelledError: pass
+        if self._clob_ws:
+            try: await self._clob_ws.close()
+            except: pass
+
         # Stop BTC feed
         await self._btc_feed.stop()
 
@@ -228,6 +247,10 @@ class PolyGuezRunner:
 
         # Start BTC price feed
         await self._btc_feed.start()
+
+        # Start CLOB WebSocket feed
+        self._clob_ws_task = asyncio.create_task(self._clob_ws_loop())
+        log_event(logger, "clob_ws_task_created", "[CLOB/WS] Task created")
 
         while not self._killed:
             try:
@@ -395,6 +418,9 @@ class PolyGuezRunner:
     async def _entry_window(self, market_id, yes_token, no_token, expiry_dt):
         """Evaluate entry signal every ~1s during the entry window."""
         window_start = time.time()
+
+        # Subscribe CLOB WS to new market tokens
+        await self._subscribe_clob_ws(yes_token, no_token)
 
         while not self._killed:
             if expiry_dt:
@@ -828,6 +854,128 @@ class PolyGuezRunner:
 
         self._open_position = None
 
+    # -- CLOB WebSocket ----------------------------------------------------
+
+    _CLOB_WS_URL = "wss://ws-subscriptions-clob.polymarket.com/ws/market"
+
+    async def _clob_ws_loop(self):
+        """Persistent CLOB WS connection. Reconnects on failure."""
+        log_event(logger, "clob_ws_started", "[CLOB/WS] Loop started")
+        while not self._killed:
+            try:
+                self._clob_ws = await asyncio.wait_for(
+                    websockets.connect(self._CLOB_WS_URL, ping_interval=10, ping_timeout=20),
+                    timeout=10.0,
+                )
+                self._clob_ws_connected = True
+                log_event(logger, "clob_ws_connected", "[CLOB/WS] Connected")
+
+                # Re-subscribe if we already have tokens
+                yes_tok, no_tok = self._clob_ws_tokens
+                if yes_tok and no_tok:
+                    sub = json.dumps({
+                        "type": "subscribe",
+                        "channel": "market",
+                        "markets": [yes_tok, no_tok],
+                    })
+                    await self._clob_ws.send(sub)
+                    log_event(logger, "clob_ws_resubscribed",
+                              f"[CLOB/WS] Re-subscribed: yes={yes_tok[:16]}..., no={no_tok[:16]}...")
+
+                async for raw in self._clob_ws:
+                    if self._killed:
+                        break
+                    self._clob_ws_last_msg = time.time()
+                    try:
+                        msg = json.loads(raw)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    self._handle_clob_ws_msg(msg)
+
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                self._clob_ws_connected = False
+                log_event(logger, "clob_ws_error",
+                          f"[CLOB/WS] Error: {type(exc).__name__}: {exc}", level=30)
+            # Reconnect delay
+            self._clob_ws_connected = False
+            await asyncio.sleep(2.0)
+
+    def _handle_clob_ws_msg(self, msg):
+        """Parse CLOB WS messages and update cached prices."""
+        msg_type = msg.get("type", "")
+        yes_tok, no_tok = self._clob_ws_tokens
+
+        if msg_type == "book":
+            # Full orderbook snapshot — extract best bid/ask mid
+            market = msg.get("market", "")
+            bids = msg.get("bids", [])
+            asks = msg.get("asks", [])
+            mid = 0.0
+            if bids and asks:
+                best_bid = float(bids[0].get("price", 0))
+                best_ask = float(asks[0].get("price", 0))
+                if best_bid > 0 and best_ask > 0:
+                    mid = (best_bid + best_ask) / 2.0
+            elif msg.get("mid"):
+                mid = float(msg["mid"])
+            if mid > 0:
+                if market == yes_tok:
+                    self._clob_ws_yes = mid
+                elif market == no_tok:
+                    self._clob_ws_no = mid
+                if self._clob_ws_yes > 0 and self._clob_ws_no > 0:
+                    log_event(logger, "clob_ws_book",
+                              f"[CLOB/WS] UP={self._clob_ws_yes:.4f} DOWN={self._clob_ws_no:.4f}")
+
+        elif msg_type in ("price_change", "last_trade_price"):
+            market = msg.get("market", "") or msg.get("asset_id", "")
+            price = 0.0
+            # Try various price field names
+            for key in ("price", "mid", "last_trade_price", "new_price"):
+                if key in msg:
+                    try:
+                        price = float(msg[key])
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            if price > 0:
+                if market == yes_tok:
+                    self._clob_ws_yes = price
+                elif market == no_tok:
+                    self._clob_ws_no = price
+                if self._clob_ws_yes > 0 and self._clob_ws_no > 0:
+                    log_event(logger, "clob_ws_price",
+                              f"[CLOB/WS] UP={self._clob_ws_yes:.4f} DOWN={self._clob_ws_no:.4f}")
+
+    async def _subscribe_clob_ws(self, yes_token, no_token):
+        """Subscribe to new market tokens on the CLOB WS."""
+        if (yes_token, no_token) == self._clob_ws_tokens:
+            return  # Already subscribed to these tokens
+
+        # Reset cached prices for new market
+        self._clob_ws_yes = 0.0
+        self._clob_ws_no = 0.0
+        self._clob_ws_tokens = (yes_token, no_token)
+
+        if self._clob_ws and self._clob_ws_connected:
+            try:
+                sub = json.dumps({
+                    "type": "subscribe",
+                    "channel": "market",
+                    "markets": [yes_token, no_token],
+                })
+                await self._clob_ws.send(sub)
+                log_event(logger, "clob_ws_subscribed",
+                          f"[CLOB/WS] Subscribed: yes={yes_token[:16]}..., no={no_token[:16]}...")
+            except Exception as exc:
+                log_event(logger, "clob_ws_subscribe_error",
+                          f"[CLOB/WS] Subscribe failed: {exc}", level=30)
+        else:
+            log_event(logger, "clob_ws_pending",
+                      "[CLOB/WS] Not connected, will subscribe on reconnect")
+
     # -- Helpers -----------------------------------------------------------
 
     async def _discover_market(self):
@@ -852,15 +1000,34 @@ class PolyGuezRunner:
             return None
 
     async def _poll_clob(self, yes_token, no_token):
-        """Poll CLOB for current YES/NO prices. Returns (yes_price, no_price, spread)."""
+        """Get CLOB prices: prefer WS cache, fall back to REST, then Gamma."""
+        # Try WS cache first (fresh if message within 10s)
+        ws_fresh = (
+            self._clob_ws_connected
+            and self._clob_ws_last_msg > 0
+            and time.time() - self._clob_ws_last_msg < 10.0
+            and self._clob_ws_yes > 0
+            and self._clob_ws_no > 0
+        )
+        if ws_fresh:
+            yes_price = self._clob_ws_yes
+            no_price = self._clob_ws_no
+            spread = abs(1.0 - yes_price - no_price)
+            self._clob_ok = True
+            return (yes_price, no_price, spread)
+
+        # WS stale or not connected — fall back to REST
+        return await self._poll_clob_rest(yes_token, no_token)
+
+    async def _poll_clob_rest(self, yes_token, no_token):
+        """REST fallback for CLOB prices."""
         loop = asyncio.get_event_loop()
         try:
             if self._polymarket:
-                log_event(logger, "clob_poll", f"Polling CLOB: yes_token={yes_token[:16]}..., no_token={no_token[:16]}...")
                 yes_future = loop.run_in_executor(None, self._get_clob_price_with_log, yes_token, "UP")
                 no_future = loop.run_in_executor(None, self._get_clob_price_with_log, no_token, "DOWN")
                 yes_price, no_price = await asyncio.gather(yes_future, no_future)
-                log_event(logger, "clob_prices", f"CLOB prices: UP={yes_price:.4f}, DOWN={no_price:.4f}")
+                log_event(logger, "clob_rest_prices", f"[CLOB/REST] UP={yes_price:.4f}, DOWN={no_price:.4f}")
             else:
                 # Fallback without wallet — use Gamma API outcomePrices
                 yes_price = 0.50
@@ -884,7 +1051,7 @@ class PolyGuezRunner:
         except Exception as exc:
             self._clob_ok = False
             log_event(logger, "clob_error", f"CLOB poll failed: {exc}", level=40)
-            return (0.0, 0.0, 1.0)  # spread=1.0 will fail the spread check → safe
+            return (0.0, 0.0, 1.0)
 
     def _get_clob_price_with_log(self, token_id, label):
         """Fetch CLOB midpoint price for a token and log the raw response."""
