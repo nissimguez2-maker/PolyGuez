@@ -28,6 +28,7 @@ def evaluate_entry_signal(
     has_position, open_position_count=0,
     chainlink_price=0.0, binance_chainlink_gap=0.0,
     clob_depth=0.0, price_to_beat=None,
+    price_feed_ok=True,
 ):
     # Momentum direction (from velocity) — used for v1 legacy conditions only
     momentum_direction = "up" if btc_velocity > 0 else "down"
@@ -41,6 +42,7 @@ def evaluate_entry_signal(
             elapsed_seconds=elapsed_seconds, direction=momentum_direction,
             momentum_direction=momentum_direction,
             p2b_source="none",
+            price_feed_ok=price_feed_ok,
         )
 
     # Terminal probability via logistic model
@@ -131,6 +133,7 @@ def evaluate_entry_signal(
         terminal_edge=terminal_edge,
         terminal_edge_ok=terminal_edge_ok,
         delta_magnitude_ok=delta_magnitude_ok,
+        price_feed_ok=price_feed_ok,
     )
 
 

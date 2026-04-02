@@ -39,7 +39,7 @@ _AGGREGATOR_ABI = [
 class ChainlinkOnChainFeed:
     """Read Chainlink BTC/USD price from Polygon aggregator contract."""
 
-    def __init__(self, web3_instance=None, rpc_url="https://polygon-rpc.com"):
+    def __init__(self, web3_instance=None, rpc_url="https://polygon.drpc.org"):
         self._web3 = web3_instance
         self._rpc_url = rpc_url
         self._contract = None

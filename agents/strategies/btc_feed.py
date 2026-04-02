@@ -56,6 +56,7 @@ class PriceFeedManager:
         self._stats_window_start = 0.0
         self._onchain_feed = None
         self._onchain_active = False
+        self._last_stale_log = 0.0
 
     @property
     def is_connected(self):
@@ -82,6 +83,20 @@ class PriceFeedManager:
         if self._last_binance_msg_time <= 0:
             return -1.0
         return time.time() - self._last_binance_msg_time
+
+    @property
+    def price_feed_ok(self):
+        """True if any price source has updated within the last 10 seconds."""
+        now = time.time()
+        if self._last_binance_msg_time > 0 and now - self._last_binance_msg_time <= 10.0:
+            return True
+        if self._last_chainlink_msg_time > 0 and now - self._last_chainlink_msg_time <= 10.0:
+            return True
+        # Rate-limit stale log to once per 10s
+        if now - self._last_stale_log >= 10.0:
+            self._last_stale_log = now
+            log_event(logger, "price_feed_stale", "No price update from any source in 10s", level=40)
+        return False
 
     def is_ready(self):
         if len(self._binance_buffer) < 2:
@@ -278,7 +293,9 @@ class PriceFeedManager:
                     if price <= 0: continue
                     ts = entry.get("timestamp", now)
                     if isinstance(ts, (int, float)) and ts > 1e12: ts = ts / 1000.0
-                    self._binance_buffer.append((ts, price))
+                    if ts - self._last_binance_buffer_ts >= 0.1:
+                        self._binance_buffer.append((ts, price))
+                        self._last_binance_buffer_ts = ts
                 self._binance_msg_count += 1
                 self._binance_msg_count_window += 1
                 self._last_binance_msg_time = time.time()
@@ -389,8 +406,8 @@ class PriceFeedManager:
                 await asyncio.sleep(_RTDS_PING_INTERVAL)
                 if self._rtds_ws and self._rtds_ws.open:
                     await self._rtds_ws.send("PING")
-                    if self._last_rtds_msg_time > 0 and time.time() - self._last_rtds_msg_time > 45.0:
-                        log_event(logger, "rtds_stale", "No RTDS message for 45s — forcing reconnect", level=40)
+                    if self._last_rtds_msg_time > 0 and time.time() - self._last_rtds_msg_time > 10.0:
+                        log_event(logger, "rtds_stale", "No RTDS message for 10s — forcing reconnect", level=40)
                         await self._rtds_ws.close()
                         break
         except asyncio.CancelledError: pass

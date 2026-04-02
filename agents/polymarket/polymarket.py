@@ -34,10 +34,9 @@ load_dotenv()
 
 
 _POLYGON_RPC_URLS = [
-    os.getenv("POLYGON_RPC_URL", "https://polygon-rpc.com"),
-    "https://rpc.ankr.com/polygon",
+    os.getenv("POLYGON_RPC_URL", "https://polygon.drpc.org"),
+    "https://rpc.polygon.gateway.fm",
     "https://polygon.llamarpc.com",
-    "https://polygon.drpc.org",
 ]
 
 

@@ -434,6 +434,7 @@ class PolyGuezRunner:
                 binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
                 clob_depth=depth,  # FIX 2
                 price_to_beat=self._price_to_beat,
+                price_feed_ok=self._btc_feed.price_feed_ok,
             )
             self._current_signal = signal
 
@@ -451,6 +452,7 @@ class PolyGuezRunner:
                 "depth": round(depth, 1),
                 "elapsed": round(elapsed, 1),
                 "conditions": {
+                    "price_feed_ok": signal.price_feed_ok,
                     "velocity_ok": signal.velocity_ok,
                     "oracle_gap_ok": signal.oracle_gap_ok,
                     "clob_mispricing_ok": signal.clob_mispricing_ok,
@@ -471,6 +473,7 @@ class PolyGuezRunner:
 
             # Supabase signal log (fire-and-forget)
             _v2_conds = [
+                signal.price_feed_ok,
                 signal.terminal_edge_ok, signal.delta_magnitude_ok, signal.edge_ok,
                 signal.spread_ok, signal.depth_ok, signal.no_position,
                 signal.cooldown_ok, signal.daily_loss_ok, signal.balance_ok,

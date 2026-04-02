@@ -277,7 +277,7 @@ class PolyGuezConfig(BaseModel):
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)
     chainlink_onchain_poll_interval: float = Field(default=2.0)
-    chainlink_onchain_rpc_url: str = Field(default="https://polygon-rpc.com")
+    chainlink_onchain_rpc_url: str = Field(default="https://polygon.drpc.org")
 
     # P2B parsing hardening
     p2b_sanity_min: float = Field(default=10000.0, description="Min plausible BTC price for P2B")
@@ -332,6 +332,7 @@ class SignalState(BaseModel):
     balance_ok: bool = False
     position_limit_ok: bool = False
     depth_ok: bool = False  # FIX 2
+    price_feed_ok: bool = True  # FIX 4: stale feed hard blocker
 
     # P2B enrichment fields
     p2b_source: str = ""
@@ -348,6 +349,8 @@ class SignalState(BaseModel):
     def all_conditions_met(self) -> bool:
         """V2 entry conditions — phase/strike/edge based."""
         return all([
+            # Feed health gate
+            self.price_feed_ok,          # At least one price source alive
             # V2 core gates
             self.terminal_edge_ok,       # Terminal probability edge above minimum
             self.delta_magnitude_ok,     # Strike delta large enough for conviction
