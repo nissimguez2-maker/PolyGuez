@@ -19,6 +19,7 @@ class Prompter:
         strike_delta: float = 0.0,
         terminal_probability: float = 0.0,
         terminal_edge: float = 0.0,
+        binance_price: float = 0.0,
     ) -> str:
         strike_section = f"""
 STRIKE ANALYSIS (primary signal):
@@ -34,7 +35,7 @@ Edge = terminal probability minus the token price you'd pay. Higher edge = more 
         if chainlink_price > 0:
             oracle_section = f"""
 ORACLE GAP (key edge signal):
-- Binance spot: ${velocity * 30 + chainlink_price + binance_chainlink_gap:.2f} (leads)
+- Binance spot: ${binance_price:.2f} (leads)
 - Chainlink oracle: ${chainlink_price:.2f} (follows with delay)
 - Gap: ${binance_chainlink_gap:+.2f} ({"favors " + direction if (binance_chainlink_gap > 0) == (direction == "up") else "AGAINST " + direction})
 - Gap trend: {gap_direction}
