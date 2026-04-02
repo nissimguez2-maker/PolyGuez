@@ -25,32 +25,36 @@ _RTDS_SUBSCRIBE_BINANCE_FALLBACK = json.dumps({
 })
 
 # Multi-source REST price fetcher config
+# Order: Coinbase (primary, no rate limits) → Kraken → CryptoCompare → CoinGecko (last resort, 10k/month cap)
 _PRICE_SOURCES = [
     {
-        "name": "CoinGecko",
-        "tag": "CG",
-        "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
-        "parse": lambda data: float(data["bitcoin"]["usd"]),
-    },
-    {
-        "name": "Coinbase",
+        "key": "coinbase",
         "tag": "CB",
         "url": "https://api.coinbase.com/v2/prices/BTC-USD/spot",
         "parse": lambda data: float(data["data"]["amount"]),
     },
     {
-        "name": "CryptoCompare",
+        "key": "kraken",
+        "tag": "KR",
+        "url": "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+        "parse": lambda data: float(data["result"]["XXBTZUSD"]["c"][0]),
+    },
+    {
+        "key": "cryptocompare",
         "tag": "CC",
         "url": "https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD",
         "parse": lambda data: float(data["USD"]),
     },
     {
-        "name": "Kraken",
-        "tag": "KR",
-        "url": "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
-        "parse": lambda data: float(data["result"]["XXBTZUSD"]["c"][0]),
+        "key": "coingecko",
+        "tag": "CG",
+        "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+        "parse": lambda data: float(data["bitcoin"]["usd"]),
     },
 ]
+
+_SOURCE_MAX_FAILURES = 5
+_SOURCE_COOLDOWN_SECONDS = 60.0
 
 
 class PriceFeedManager:
@@ -87,6 +91,9 @@ class PriceFeedManager:
         self._last_stale_log = 0.0
         self._binance_blocked = False
         self._http_session = None
+        self._btc_source = ""
+        self._source_failures = {s["key"]: 0 for s in _PRICE_SOURCES}
+        self._source_cooldown = {s["key"]: 0.0 for s in _PRICE_SOURCES}
 
     @property
     def is_connected(self):
@@ -219,7 +226,10 @@ class PriceFeedManager:
     async def start(self):
         self._stop.clear()
         self._stats_window_start = time.time()
-        self._http_session = aiohttp.ClientSession()
+        self._http_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=4.0),
+            headers={"User-Agent": "PolyGuez/1.0"},
+        )
         self._binance_task = asyncio.create_task(self._binance_loop())
         self._rtds_task = asyncio.create_task(self._rtds_loop())
         if self._config.chainlink_onchain_fallback:
@@ -343,29 +353,52 @@ class PriceFeedManager:
     # -- Multi-source REST price fetcher ------------------------------------
 
     async def _fetch_btc_price_multi_source(self) -> "float | None":
-        """Try CoinGecko → Coinbase → CryptoCompare → Kraken, return first success."""
+        """Try Coinbase → Kraken → CryptoCompare → CoinGecko, return first success."""
         if not self._http_session:
-            self._http_session = aiohttp.ClientSession()
+            self._http_session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=4.0),
+                headers={"User-Agent": "PolyGuez/1.0"},
+            )
+        now = time.monotonic()
         for src in _PRICE_SOURCES:
+            key = src["key"]
+            # Skip sources in cooldown (5 consecutive failures → 60s cooldown)
+            if self._source_failures[key] >= _SOURCE_MAX_FAILURES:
+                if now - self._source_cooldown[key] < _SOURCE_COOLDOWN_SECONDS:
+                    continue
+                # Cooldown expired, give it another chance
+                log_event(logger, "price_source_retry",
+                          f"[PRICE/{src['tag']}] Cooldown expired, retrying")
+                self._source_failures[key] = 0
             try:
-                async with self._http_session.get(
-                    src["url"], timeout=aiohttp.ClientTimeout(total=5)
-                ) as resp:
+                async with self._http_session.get(src["url"]) as resp:
                     if resp.status != 200:
                         log_event(logger, "price_source_http_error",
                                   f"[PRICE/{src['tag']}] HTTP {resp.status}", level=30)
+                        self._source_failures[key] += 1
+                        if self._source_failures[key] >= _SOURCE_MAX_FAILURES:
+                            self._source_cooldown[key] = now
                         continue
                     data = await resp.json(content_type=None)
                 price = src["parse"](data)
                 if price is None or price <= 0:
                     log_event(logger, "price_source_bad_value",
                               f"[PRICE/{src['tag']}] Bad value: {price}", level=30)
+                    self._source_failures[key] += 1
+                    if self._source_failures[key] >= _SOURCE_MAX_FAILURES:
+                        self._source_cooldown[key] = now
                     continue
+                # Success — reset failures and record source
+                self._source_failures[key] = 0
+                self._btc_source = key
                 log_event(logger, "price_source_ok", f"[PRICE/{src['tag']}] {price}")
                 return price
             except Exception as exc:
                 log_event(logger, "price_source_error",
                           f"[PRICE/{src['tag']}] {type(exc).__name__}: {exc}", level=30)
+                self._source_failures[key] += 1
+                if self._source_failures[key] >= _SOURCE_MAX_FAILURES:
+                    self._source_cooldown[key] = now
                 continue
         return None
 
