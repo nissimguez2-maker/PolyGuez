@@ -68,6 +68,20 @@ class PriceFeedManager:
     def chainlink_source(self):
         return self._chainlink_source
 
+    @property
+    def rtds_msg_age(self):
+        """Seconds since last RTDS message, or -1 if never received."""
+        if self._last_rtds_msg_time <= 0:
+            return -1.0
+        return time.time() - self._last_rtds_msg_time
+
+    @property
+    def binance_msg_age(self):
+        """Seconds since last Binance message, or -1 if never received."""
+        if self._last_binance_msg_time <= 0:
+            return -1.0
+        return time.time() - self._last_binance_msg_time
+
     def is_ready(self):
         if len(self._binance_buffer) < 2:
             return False
@@ -77,10 +91,31 @@ class PriceFeedManager:
         return self._binance_buffer[-1][1] if self._binance_buffer else 0.0
 
     def get_velocity(self):
+        vel, src = self._compute_velocity_with_source()
+        self._velocity_source = src
+        return vel
+
+    @property
+    def velocity_source(self):
+        return getattr(self, '_velocity_source', 'none')
+
+    def _compute_velocity_with_source(self):
+        """Compute velocity from Binance buffer, falling back to Chainlink if stale."""
         now = time.time()
+        # Try Binance first (primary, higher frequency)
         points = [(t, p) for t, p in self._binance_buffer if t >= now - 30.0]
-        if len(points) < 2:
-            return 0.0
+        if len(points) >= 2:
+            return self._linreg_velocity(points), "binance"
+        # Fallback to Chainlink buffer if Binance is stale (>10s)
+        if self._last_binance_msg_time > 0 and now - self._last_binance_msg_time > 10.0:
+            cl_points = [(t, p) for t, p in self._chainlink_buffer if t >= now - 30.0]
+            if len(cl_points) >= 2:
+                return self._linreg_velocity(cl_points), "chainlink-fallback"
+        return 0.0, "none"
+
+    @staticmethod
+    def _linreg_velocity(points):
+        """Linear regression slope over (timestamp, price) points."""
         n = len(points)
         t0 = points[0][0]
         xs = [t - t0 for t, _ in points]
@@ -178,7 +213,7 @@ class PriceFeedManager:
 
     async def _connect_binance_direct(self):
         url = self._config.binance_ws_url
-        self._binance_ws = await asyncio.wait_for(websockets.connect(url), timeout=self._config.btc_feed_connect_timeout)
+        self._binance_ws = await asyncio.wait_for(websockets.connect(url, ping_interval=5, ping_timeout=10), timeout=self._config.btc_feed_connect_timeout)
         self._binance_source = "binance-direct"
         self._binance_connected = True
         self._reconnect_delay_binance = 1.0
@@ -201,7 +236,7 @@ class PriceFeedManager:
             self._maybe_log_stats()
 
     async def _connect_binance_via_rtds(self):
-        ws = await asyncio.wait_for(websockets.connect(self._config.rtds_ws_url), timeout=self._config.btc_feed_connect_timeout)
+        ws = await asyncio.wait_for(websockets.connect(self._config.rtds_ws_url, ping_interval=5, ping_timeout=10), timeout=self._config.btc_feed_connect_timeout)
         self._binance_source = "rtds-fallback"
         self._binance_connected = True
         log_event(logger, "binance_fallback", "Using RTDS for Binance prices")
@@ -246,11 +281,14 @@ class PriceFeedManager:
                 self._reconnect_delay_rtds = min(self._reconnect_delay_rtds * 2, 30.0)
 
     async def _connect_rtds_chainlink(self):
-        self._rtds_ws = await asyncio.wait_for(websockets.connect(self._config.rtds_ws_url), timeout=self._config.btc_feed_connect_timeout)
+        self._rtds_ws = await asyncio.wait_for(
+            websockets.connect(self._config.rtds_ws_url, ping_interval=5, ping_timeout=10),
+            timeout=self._config.btc_feed_connect_timeout,
+        )
         self._rtds_connected = True
         self._chainlink_source = "rtds"
         self._reconnect_delay_rtds = 1.0
-        log_event(logger, "rtds_connected", "Connected to RTDS for Chainlink")
+        log_event(logger, "rtds_connected", "Connected to RTDS for Chainlink (ping_interval=5s)")
         await self._rtds_ws.send(_RTDS_SUBSCRIBE_CHAINLINK)
         self._rtds_ping_task = asyncio.create_task(self._rtds_ping_loop())
         async for raw in self._rtds_ws:
@@ -296,8 +334,8 @@ class PriceFeedManager:
                 await asyncio.sleep(_RTDS_PING_INTERVAL)
                 if self._rtds_ws and self._rtds_ws.open:
                     await self._rtds_ws.send("PING")
-                    if self._last_rtds_msg_time > 0 and time.time() - self._last_rtds_msg_time > 15.0:
-                        log_event(logger, "rtds_stale", "No RTDS message for 15s — forcing reconnect", level=40)
+                    if self._last_rtds_msg_time > 0 and time.time() - self._last_rtds_msg_time > 45.0:
+                        log_event(logger, "rtds_stale", "No RTDS message for 45s — forcing reconnect", level=40)
                         await self._rtds_ws.close()
                         break
         except asyncio.CancelledError: pass

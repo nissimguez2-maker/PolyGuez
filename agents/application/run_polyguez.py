@@ -439,6 +439,11 @@ class PolyGuezRunner:
 
             log_event(logger, "signal_evaluated", f"Signal: {signal.all_conditions_met}", {
                 "velocity": round(signal.btc_velocity, 6),
+                "velocity_source": self._btc_feed.velocity_source,
+                "btc_price": round(self._btc_feed.get_price(), 2),
+                "cl_price": round(self._btc_feed.get_chainlink_price(), 2),
+                "rtds_age": round(self._btc_feed.rtds_msg_age, 1),
+                "binance_age": round(self._btc_feed.binance_msg_age, 1),
                 "edge": round(signal.edge, 4),
                 "required_edge": round(signal.required_edge, 4),
                 "spread": round(signal.spread, 4),
