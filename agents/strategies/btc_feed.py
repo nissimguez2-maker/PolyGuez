@@ -92,6 +92,7 @@ class PriceFeedManager:
         self._binance_blocked = False
         self._http_session = None
         self._btc_source = ""
+        self._multi_source_task = None
         self._source_failures = {s["key"]: 0 for s in _PRICE_SOURCES}
         self._source_cooldown = {s["key"]: 0.0 for s in _PRICE_SOURCES}
 
@@ -232,6 +233,8 @@ class PriceFeedManager:
         )
         self._binance_task = asyncio.create_task(self._binance_loop())
         self._rtds_task = asyncio.create_task(self._rtds_loop())
+        self._multi_source_task = asyncio.create_task(self._multi_source_poll_loop())
+        log_event(logger, "price_poll_task_created", "[PRICE] Poll task created")
         if self._config.chainlink_onchain_fallback:
             self._chainlink_onchain_task = asyncio.create_task(self._chainlink_onchain_loop())
 
@@ -243,7 +246,7 @@ class PriceFeedManager:
             if ws:
                 try: await ws.close()
                 except: pass
-        for task in (self._binance_task, self._rtds_task, self._chainlink_onchain_task):
+        for task in (self._binance_task, self._rtds_task, self._multi_source_task, self._chainlink_onchain_task):
             if task:
                 task.cancel()
                 try: await task
@@ -273,7 +276,7 @@ class PriceFeedManager:
                         self._binance_blocked = True
                         log_event(logger, "binance_451_blocked", "HTTP 451 — Binance WS disabled for this session", level=30)
 
-            # Fallback: try RTDS for BTC prices, then multi-source REST
+            # Fallback: try RTDS for BTC prices
             if self._binance_blocked or not self._binance_connected:
                 try:
                     await self._connect_binance_via_rtds()
@@ -281,14 +284,6 @@ class PriceFeedManager:
                     break
                 except Exception as fb_exc:
                     log_event(logger, "binance_fallback_fail", f"RTDS BTC fallback failed: {fb_exc}", level=40)
-
-                # Multi-source REST polling (runs until stopped or another source reconnects)
-                try:
-                    await self._multi_source_poll_loop()
-                except asyncio.CancelledError:
-                    break
-                except Exception as rest_exc:
-                    log_event(logger, "multi_source_fail", f"Multi-source polling failed: {rest_exc}", level=40)
 
             delay = min(self._reconnect_delay_binance, 30.0)
             await asyncio.sleep(delay)
@@ -403,12 +398,15 @@ class PriceFeedManager:
         return None
 
     async def _multi_source_poll_loop(self):
-        """Poll multi-source REST every 3s, write to _binance_buffer."""
-        self._binance_source = "multi-rest"
-        self._binance_connected = True
-        log_event(logger, "multi_source_start", "Multi-source REST polling active (3s interval)")
-        try:
-            while not self._stop.is_set():
+        """Always-on poll loop: fetch BTC price from multi-source REST every 3s.
+
+        Runs as its own task alongside WS feeds. When WS is active and fresh,
+        this loop still runs but its writes are harmless (buffer dedupes via
+        _last_binance_buffer_ts throttle). When WS is down, this keeps prices flowing.
+        """
+        log_event(logger, "price_poll_started", "[PRICE] Poll loop started")
+        while not self._stop.is_set():
+            try:
                 price = await self._fetch_btc_price_multi_source()
                 if price is not None and price > 0:
                     ts = time.time()
@@ -419,14 +417,20 @@ class PriceFeedManager:
                         self._binance_buffer.append((ts, price))
                         self._last_binance_buffer_ts = ts
                         self._update_gap()
+                    # Only claim source if WS isn't actively providing data
+                    if not self._binance_connected or (time.time() - self._last_binance_msg_time > 5.0):
+                        self._binance_source = "multi-rest"
+                        self._binance_connected = True
                     self._maybe_log_stats()
                 else:
                     log_event(logger, "multi_source_all_failed",
-                              "All price sources failed this cycle", level=40)
-                await asyncio.sleep(3.0)
-        finally:
-            self._binance_connected = False
-            self._binance_source = ""
+                              "[PRICE] All sources failed this cycle", level=40)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                log_event(logger, "price_poll_crash",
+                          f"[PRICE] Poll loop crash: {type(exc).__name__}: {exc}", level=40)
+            await asyncio.sleep(3.0)
 
     # -- RTDS Chainlink loop ------------------------------------------------
 
