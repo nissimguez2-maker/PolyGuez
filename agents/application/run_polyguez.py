@@ -31,6 +31,7 @@ from agents.strategies.polyguez_strategy import (
     settle_with_retry,
 )
 from agents.utils.logger import get_logger, log_event
+from agents.utils.supabase_logger import log_signal, log_trade
 from agents.utils.objects import (
     DashboardSnapshot,
     PolyGuezConfig,
@@ -459,8 +460,38 @@ class PolyGuezRunner:
                 },
             })
 
+            trade_fired = False
             if signal.all_conditions_met:
-                return await self._attempt_entry(signal, market_id, yes_token, no_token)
+                trade_fired = await self._attempt_entry(signal, market_id, yes_token, no_token)
+
+            # Supabase signal log (fire-and-forget)
+            _v2_conds = [
+                signal.terminal_edge_ok, signal.delta_magnitude_ok, signal.edge_ok,
+                signal.spread_ok, signal.depth_ok, signal.no_position,
+                signal.cooldown_ok, signal.daily_loss_ok, signal.balance_ok,
+                signal.position_limit_ok,
+            ]
+            log_signal({
+                "market_id": market_id,
+                "market_question": self._current_market.get("question", "") if self._current_market else "",
+                "elapsed_seconds": round(elapsed, 1),
+                "btc_price": self._btc_feed.get_price(),
+                "chainlink_price": self._btc_feed.get_chainlink_price(),
+                "strike_delta": signal.strike_delta,
+                "terminal_probability": signal.terminal_probability,
+                "terminal_edge": signal.terminal_edge,
+                "entry_side": signal.direction,
+                "yes_price": signal.yes_price,
+                "no_price": signal.no_price,
+                "spread": signal.spread,
+                "conditions_met": sum(_v2_conds),
+                "all_conditions_met": signal.all_conditions_met,
+                "trade_fired": trade_fired,
+                "mode": self.config.mode,
+            })
+
+            if trade_fired:
+                return True
 
             await asyncio.sleep(self.config.clob_poll_interval)
 
@@ -576,6 +607,30 @@ class PolyGuezRunner:
                 )
                 self._rolling_stats.trades.append(record)
                 self._rolling_stats.daily_pnl += pnl
+
+                # Supabase trade log (fire-and-forget)
+                entry_time = self._position.entry_time or ""
+                duration = 0.0
+                if entry_time:
+                    try:
+                        duration = (datetime.now(timezone.utc) - datetime.fromisoformat(entry_time)).total_seconds()
+                    except (ValueError, TypeError):
+                        pass
+                log_trade({
+                    "market_id": self._position.market_id,
+                    "market_question": self._current_market.get("question", "") if self._current_market else "",
+                    "side": "up" if self._position.side == "YES" else "down",
+                    "entry_price": self._position.entry_price,
+                    "exit_price": 0.0,
+                    "size_usdc": self._position.size_usdc,
+                    "pnl": pnl,
+                    "duration_seconds": duration,
+                    "strike_delta_at_entry": self._current_signal.strike_delta if self._current_signal else 0.0,
+                    "terminal_probability_at_entry": self._current_signal.terminal_probability if self._current_signal else 0.0,
+                    "llm_verdict": self._last_llm_verdict,
+                    "outcome": "loss",
+                    "mode": self.config.mode,
+                })
                 if self.config.mode == "dry-run":
                     self._rolling_stats.simulated_balance = round(
                         self._rolling_stats.simulated_balance + pnl, 4
@@ -668,6 +723,24 @@ class PolyGuezRunner:
             "win_rate": self._rolling_stats.win_rate,
             "daily_pnl": self._rolling_stats.daily_pnl,
         })
+
+        # Supabase trade log (fire-and-forget)
+        if outcome_str in ("win", "loss"):
+            log_trade({
+                "market_id": market_id,
+                "market_question": self._current_market.get("question", "") if self._current_market else "",
+                "side": "up" if self._position.side == "YES" else "down",
+                "entry_price": self._position.entry_price,
+                "exit_price": record.exit_price or 0.0,
+                "size_usdc": self._position.size_usdc,
+                "pnl": pnl,
+                "duration_seconds": duration,
+                "strike_delta_at_entry": self._current_signal.strike_delta if self._current_signal else 0.0,
+                "terminal_probability_at_entry": self._current_signal.terminal_probability if self._current_signal else 0.0,
+                "llm_verdict": self._last_llm_verdict,
+                "outcome": outcome_str,
+                "mode": self.config.mode,
+            })
 
         self._position = None
         if outcome_str != "pending":
