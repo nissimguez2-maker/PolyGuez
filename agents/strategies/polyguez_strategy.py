@@ -193,22 +193,31 @@ def check_emergency_exit(btc_velocity, entry_direction, config, chainlink_price=
 
 
 def compute_clob_depth(order_book, side):
-    """FIX 2: Compute ask-side depth within $0.05 of best price."""
+    """FIX 2: Compute ask-side depth within $0.05 of best price.
+
+    Supports both dict-style books and OrderBookSummary objects with
+    .asks/.bids attributes containing OrderSummary objects.
+    """
     if not order_book:
         return 0.0
-    entries = order_book.get("asks", [])
+    # Support both attribute access (OrderBookSummary) and dict access
+    try:
+        entries = order_book.asks if hasattr(order_book, 'asks') else order_book.get("asks", [])
+    except Exception:
+        return 0.0
     if not entries:
         return 0.0
     try:
-        best_price = float(entries[0]["price"])
-    except (KeyError, ValueError, TypeError, IndexError):
+        first = entries[0]
+        best_price = float(first.price if hasattr(first, 'price') else first["price"])
+    except (KeyError, ValueError, TypeError, IndexError, AttributeError):
         return 0.0
     depth = 0.0
     for entry in entries:
         try:
-            price = float(entry["price"])
-            size = float(entry["size"])
-        except (KeyError, ValueError, TypeError):
+            price = float(entry.price if hasattr(entry, 'price') else entry["price"])
+            size = float(entry.size if hasattr(entry, 'size') else entry["size"])
+        except (KeyError, ValueError, TypeError, AttributeError):
             continue
         if price - best_price <= 0.05:
             depth += size

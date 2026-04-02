@@ -824,6 +824,7 @@ class PolyGuezRunner:
         if not self._polymarket:
             return 999.0  # Don't block dry-run without wallet
         loop = asyncio.get_event_loop()
+        book = None
         try:
             book = await loop.run_in_executor(
                 None, self._polymarket.client.get_order_book, token_id,
@@ -832,7 +833,8 @@ class PolyGuezRunner:
             log_event(logger, "clob_depth_fetched", f"Depth for {token_id[:16]}...: {depth:.1f}")
             return depth
         except Exception as exc:
-            log_event(logger, "clob_depth_error", f"Depth fetch failed: {exc}")
+            book_info = f"type={type(book).__name__}, attrs={[a for a in dir(book) if not a.startswith('_')]}" if book else "None"
+            log_event(logger, "clob_depth_error", f"Depth fetch failed: {exc} | book: {book_info}", level=30)
             return 0.0
 
     async def _get_clob_depth(self, token_id):
@@ -844,23 +846,23 @@ class PolyGuezRunner:
             book = await loop.run_in_executor(
                 None, self._polymarket.client.get_order_book, token_id,
             )
-            bids = book.get("bids", [])
-            asks = book.get("asks", [])
+            # Support both OrderBookSummary (attribute) and dict access
+            bids = book.bids if hasattr(book, 'bids') else book.get("bids", [])
+            asks = book.asks if hasattr(book, 'asks') else book.get("asks", [])
 
-            best_bid = float(bids[0]["price"]) if bids else 0.0
-            best_bid_size = float(bids[0]["size"]) if bids else 0.0
-            best_ask = float(asks[0]["price"]) if asks else 0.0
-            best_ask_size = float(asks[0]["size"]) if asks else 0.0
+            def _price(entry):
+                return float(entry.price if hasattr(entry, 'price') else entry["price"])
 
-            # Depth within $0.05 of best price
-            bid_depth = sum(
-                float(b["size"]) for b in bids
-                if best_bid - float(b["price"]) <= 0.05
-            )
-            ask_depth = sum(
-                float(a["size"]) for a in asks
-                if float(a["price"]) - best_ask <= 0.05
-            )
+            def _size(entry):
+                return float(entry.size if hasattr(entry, 'size') else entry["size"])
+
+            best_bid = _price(bids[0]) if bids else 0.0
+            best_bid_size = _size(bids[0]) if bids else 0.0
+            best_ask = _price(asks[0]) if asks else 0.0
+            best_ask_size = _size(asks[0]) if asks else 0.0
+
+            bid_depth = sum(_size(b) for b in bids if best_bid - _price(b) <= 0.05)
+            ask_depth = sum(_size(a) for a in asks if _price(a) - best_ask <= 0.05)
 
             return (
                 f"Best bid: {best_bid:.4f} (size {best_bid_size:.1f}) | "
@@ -869,7 +871,7 @@ class PolyGuezRunner:
                 f"Ask depth (within $0.05): {ask_depth:.1f}"
             )
         except Exception as exc:
-            log_event(logger, "clob_depth_error", f"Depth fetch failed: {exc}")
+            log_event(logger, "clob_depth_error", f"Depth summary failed: {exc} | book type={type(book).__name__}, attrs={dir(book)[:10]}", level=30)
             return ""
 
     async def _refresh_balance(self):
