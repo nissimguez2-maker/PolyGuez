@@ -6,7 +6,6 @@ app = typer.Typer()
 # Lazy-initialized singletons — avoids wallet/API errors at import time
 _polymarket = None
 _newsapi_client = None
-_polymarket_rag = None
 
 
 def _get_polymarket():
@@ -23,14 +22,6 @@ def _get_news():
         from agents.connectors.news import News
         _newsapi_client = News()
     return _newsapi_client
-
-
-def _get_rag():
-    global _polymarket_rag
-    if _polymarket_rag is None:
-        from agents.connectors.chroma import PolymarketRAG
-        _polymarket_rag = PolymarketRAG()
-    return _polymarket_rag
 
 
 @app.command()
@@ -71,84 +62,6 @@ def get_all_events(limit: int = 5, sort_by: str = "number_of_markets") -> None:
         events = sorted(events, key=lambda x: len(x.markets), reverse=True)
     events = events[:limit]
     pprint(events)
-
-
-@app.command()
-def create_local_markets_rag(local_directory: str) -> None:
-    """
-    Create a local markets database for RAG
-    """
-    _get_rag().create_local_markets_rag(local_directory=local_directory)
-
-
-@app.command()
-def query_local_markets_rag(vector_db_directory: str, query: str) -> None:
-    """
-    RAG over a local database of Polymarket's events
-    """
-    response = _get_rag().query_local_markets_rag(
-        local_directory=vector_db_directory, query=query
-    )
-    pprint(response)
-
-
-@app.command()
-def ask_superforecaster(event_title: str, market_question: str, outcome: str) -> None:
-    """
-    Ask a superforecaster about a trade
-    """
-    print(
-        f"event: str = {event_title}, question: str = {market_question}, outcome (usually yes or no): str = {outcome}"
-    )
-    from agents.application.executor import Executor
-    executor = Executor()
-    response = executor.get_superforecast(
-        event_title=event_title, market_question=market_question, outcome=outcome
-    )
-    print(f"Response:{response}")
-
-
-@app.command()
-def create_market() -> None:
-    """
-    Format a request to create a market on Polymarket
-    """
-    from agents.application.creator import Creator
-    c = Creator()
-    market_description = c.one_best_market()
-    print(f"market_description: str = {market_description}")
-
-
-@app.command()
-def ask_llm(user_input: str) -> None:
-    """
-    Ask a question to the LLM and get a response.
-    """
-    from agents.application.executor import Executor
-    executor = Executor()
-    response = executor.get_llm_response(user_input)
-    print(f"LLM Response: {response}")
-
-
-@app.command()
-def ask_polymarket_llm(user_input: str) -> None:
-    """
-    What types of markets do you want trade?
-    """
-    from agents.application.executor import Executor
-    executor = Executor()
-    response = executor.get_polymarket_llm(user_input=user_input)
-    print(f"LLM + current markets&events response: {response}")
-
-
-@app.command()
-def run_autonomous_trader() -> None:
-    """
-    Let an autonomous system trade for you.
-    """
-    from agents.application.trade import Trader
-    trader = Trader()
-    trader.one_best_trade()
 
 
 @app.command()
