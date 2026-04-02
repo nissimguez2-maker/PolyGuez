@@ -221,43 +221,12 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
 
     start = asyncio.get_event_loop().time()
 
-    market_context = {
-        "direction": signal_state.direction,
-        "velocity": signal_state.btc_velocity,
-        "market_question": "",
-        "elapsed_seconds": signal_state.elapsed_seconds,
-        "binance_chainlink_gap": signal_state.binance_chainlink_gap,
-    }
-    context_data = await fetch_all_providers(
-        config.data_providers, market_context, timeout=config.data_provider_timeout,
-    )
-
-    context_str = ""
-    for source, data in context_data.items():
-        if "headlines" in data:
-            context_str += f"NewsAPI headlines: {', '.join(data['headlines'][:5])}\n"
-        if "context" in data and data["context"]:
-            context_str += f"Web search: {data['context'][:500]}\n"
-        if source == "chainlink" and data.get("price"):
-            context_str += f"Chainlink on-chain: ${data['price']:.2f}\n"
-        if "error" in data:
-            context_str += f"({source} unavailable: {data['error']})\n"
-    if not context_str:
-        context_str = "(no external context available)"
-
-    recent = rolling_stats.last_n_trades
-    if recent:
-        trade_lines = [f"  {t.outcome}: P&L={t.pnl or 0:.2f}, side={t.side}" for t in recent[-5:]]
-        trades_summary = "\n".join(trade_lines)
-    else:
-        trades_summary = "(no recent trades)"
-
     prompt = _prompter.momentum_confirmation(
         velocity=signal_state.btc_velocity, direction=signal_state.direction,
         yes_price=signal_state.yes_price, no_price=signal_state.no_price,
         spread=signal_state.spread, elapsed_seconds=signal_state.elapsed_seconds,
-        win_rate=rolling_stats.win_rate, recent_trades_summary=trades_summary,
-        context_data=context_str, chainlink_price=signal_state.chainlink_price,
+        win_rate=rolling_stats.win_rate, recent_trades_summary="",
+        context_data="", chainlink_price=signal_state.chainlink_price,
         binance_chainlink_gap=signal_state.binance_chainlink_gap,
         gap_direction=gap_direction, price_to_beat=price_to_beat,
         clob_depth_summary=clob_depth_summary,
@@ -268,8 +237,15 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
     )
 
     adapter = get_llm_adapter(config)
-    remaining = max(config.llm_timeout - (asyncio.get_event_loop().time() - start), 1.0)
-    verdict, reason = await adapter.confirm_trade(prompt, timeout=remaining)
+    try:
+        verdict, reason = await asyncio.wait_for(
+            adapter.confirm_trade(prompt, timeout=config.llm_timeout),
+            timeout=config.llm_timeout,
+        )
+    except asyncio.TimeoutError:
+        log_event(logger, "llm_timeout", f"LLM confirmation timed out after {config.llm_timeout}s — skipping trade", level=30)
+        return ("NO-GO", "timeout-skipped", adapter.name, config.llm_timeout)
+
     elapsed = asyncio.get_event_loop().time() - start
 
     log_event(logger, "llm_verdict", f"LLM ({adapter.name}): {verdict}", {

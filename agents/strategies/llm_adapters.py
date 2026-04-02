@@ -119,7 +119,7 @@ class GroqAdapter(LLMAdapter):
     name = "groq"
 
     def __init__(self, model=None):
-        self._model = model or os.getenv("LLM_MODEL_GROQ", "llama-3.1-70b-versatile")
+        self._model = model or os.getenv("LLM_MODEL_GROQ", "llama-3.3-70b-versatile")
 
     async def confirm_trade(self, prompt, timeout):
         loop = asyncio.get_event_loop()
@@ -136,7 +136,7 @@ class GroqAdapter(LLMAdapter):
                 return client.chat.completions.create(
                     model=self._model,
                     messages=[{"role": "user", "content": prompt}],
-                    max_tokens=100,
+                    max_tokens=10,
                     temperature=0,
                 )
 
