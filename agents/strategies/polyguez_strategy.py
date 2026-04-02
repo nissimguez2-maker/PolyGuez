@@ -85,7 +85,7 @@ def evaluate_entry_signal(
         effective_velocity_threshold *= config.cooldown_tightened_multiplier
         effective_required_edge *= config.cooldown_tightened_multiplier
 
-    pos_size = calculate_position_size(usdc_balance, config)
+    pos_size = calculate_position_size(usdc_balance, config, edge=edge, depth=clob_depth)
 
     cooldown_ok = True
     if rolling_stats.cooldown_until:
@@ -122,7 +122,7 @@ def evaluate_entry_signal(
         spread_ok=spread < config.max_spread,
         no_position=not has_position, cooldown_ok=cooldown_ok,
         daily_loss_ok=check_daily_loss_limit(rolling_stats, config, usdc_balance),
-        balance_ok=usdc_balance >= pos_size and usdc_balance >= config.min_capital_floor,
+        balance_ok=usdc_balance >= pos_size,
         position_limit_ok=open_position_count < config.max_open_positions,
         depth_ok=depth_ok,
         p2b_value=price_to_beat, p2b_source="description",
@@ -134,18 +134,15 @@ def evaluate_entry_signal(
     )
 
 
-def calculate_position_size(usdc_balance, config):
-    max_capital = usdc_balance * config.max_capital_pct
-    if max_capital < config.min_capital_floor:
-        max_capital = config.min_capital_floor
-    return round(max_capital * config.position_size_pct, 2)
+def calculate_position_size(usdc_balance, config, edge=0.0, depth=0.0):
+    is_strong = edge >= config.strong_edge_threshold and depth >= config.strong_depth_threshold
+    if usdc_balance < config.low_balance_threshold:
+        return config.bet_size_low_balance_strong if is_strong else config.bet_size_low_balance_normal
+    return config.bet_size_strong if is_strong else config.bet_size_normal
 
 
 def calculate_max_capital_at_risk(usdc_balance, config):
-    cap = usdc_balance * config.max_capital_pct
-    if cap < config.min_capital_floor:
-        cap = config.min_capital_floor
-    return round(cap, 2)
+    return max(config.bet_size_strong, 7.0)
 
 
 def check_daily_loss_limit(rolling_stats, config, usdc_balance):

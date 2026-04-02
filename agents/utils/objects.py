@@ -224,9 +224,14 @@ class Article(BaseModel):
 # ---------------------------------------------------------------------------
 
 class PolyGuezConfig(BaseModel):
-    max_capital_pct: float = Field(default=0.10)
-    min_capital_floor: float = Field(default=3.0)
-    position_size_pct: float = Field(default=0.30)
+    # Fixed bet sizing
+    bet_size_normal: float = Field(default=5.0, description="Normal signal bet size")
+    bet_size_strong: float = Field(default=7.0, description="Strong signal bet size")
+    bet_size_low_balance_normal: float = Field(default=3.0, description="Normal bet when balance < low_balance_threshold")
+    bet_size_low_balance_strong: float = Field(default=5.0, description="Strong bet when balance < low_balance_threshold")
+    strong_edge_threshold: float = Field(default=0.25, description="Edge threshold for strong signal")
+    strong_depth_threshold: float = Field(default=40000.0, description="Depth threshold for strong signal")
+    low_balance_threshold: float = Field(default=40.0, description="Balance below which low-balance sizing applies")
     max_daily_loss: Optional[float] = Field(default=None)
     max_open_positions: int = Field(default=1)
     velocity_threshold: float = Field(default=0.05)

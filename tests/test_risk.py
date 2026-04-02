@@ -26,17 +26,17 @@ def _stats_with_trades(outcomes, pnls=None):
 class TestDailyLossLimit(unittest.TestCase):
 
     def test_under_limit(self):
-        config = _default_config(max_capital_pct=0.10)
+        config = _default_config()  # max cap at risk = $7.0
         stats = RollingStats(daily_pnl=-5.0, daily_pnl_reset_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         self.assertTrue(check_daily_loss_limit(stats, config, usdc_balance=100.0))
 
     def test_at_limit(self):
-        config = _default_config(max_capital_pct=0.10)
-        stats = RollingStats(daily_pnl=-10.0, daily_pnl_reset_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+        config = _default_config()  # max cap at risk = $7.0
+        stats = RollingStats(daily_pnl=-7.0, daily_pnl_reset_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         self.assertFalse(check_daily_loss_limit(stats, config, usdc_balance=100.0))
 
     def test_over_limit(self):
-        config = _default_config(max_capital_pct=0.10)
+        config = _default_config()  # max cap at risk = $7.0
         stats = RollingStats(daily_pnl=-15.0, daily_pnl_reset_utc=datetime.now(timezone.utc).strftime("%Y-%m-%d"))
         self.assertFalse(check_daily_loss_limit(stats, config, usdc_balance=100.0))
 
@@ -51,7 +51,7 @@ class TestDailyLossLimit(unittest.TestCase):
         self.assertFalse(check_daily_loss_limit(stats, config, usdc_balance=100.0))
 
     def test_new_day_resets(self):
-        config = _default_config(max_capital_pct=0.10)
+        config = _default_config()
         stats = RollingStats(daily_pnl=-50.0, daily_pnl_reset_utc="2020-01-01")
         self.assertTrue(check_daily_loss_limit(stats, config, usdc_balance=100.0))
 

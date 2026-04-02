@@ -143,7 +143,7 @@ class PolyGuezRunner:
             gamma_connected=self._gamma_ok,
             usdc_balance=self._usdc_balance,
             max_capital_at_risk=calculate_max_capital_at_risk(self._usdc_balance, self.config),
-            position_size_ceiling=calculate_position_size(self._usdc_balance, self.config),
+            position_size_ceiling=calculate_max_capital_at_risk(self._usdc_balance, self.config),
             daily_pnl=self._rolling_stats.daily_pnl,
             killed=self._killed,
             kill_timestamp=self._kill_timestamp,
@@ -255,9 +255,10 @@ class PolyGuezRunner:
             self._usdc_balance, self.config
         )
 
-        # Check if balance allows trading
-        if self._usdc_balance < self.config.min_capital_floor:
-            log_event(logger, "balance_halt", f"Balance ${self._usdc_balance:.2f} < floor ${self.config.min_capital_floor}")
+        # Check if balance allows trading (must cover smallest possible bet)
+        min_bet = self.config.bet_size_low_balance_normal
+        if self._usdc_balance < min_bet:
+            log_event(logger, "balance_halt", f"Balance ${self._usdc_balance:.2f} < min bet ${min_bet}")
             await asyncio.sleep(30)
             return
 
@@ -437,7 +438,12 @@ class PolyGuezRunner:
             )
             self._current_signal = signal
 
-            log_event(logger, "signal_evaluated", f"Signal: {signal.all_conditions_met}", {
+            bet_size = calculate_position_size(self._usdc_balance, self.config, edge=signal.edge, depth=depth)
+            is_strong = signal.edge >= self.config.strong_edge_threshold and depth >= self.config.strong_depth_threshold
+            sig_msg = f"Signal: {signal.all_conditions_met}"
+            if signal.all_conditions_met:
+                sig_msg += f" → bet=${bet_size:.1f} ({'strong' if is_strong else 'normal'})"
+            log_event(logger, "signal_evaluated", sig_msg, {
                 "velocity": round(signal.btc_velocity, 6),
                 "edge": round(signal.edge, 4),
                 "required_edge": round(signal.required_edge, 4),
@@ -445,13 +451,15 @@ class PolyGuezRunner:
                 "oracle_gap": round(signal.binance_chainlink_gap, 2),
                 "depth": round(depth, 1),
                 "elapsed": round(elapsed, 1),
+                "bet_size": bet_size,
+                "bet_tier": "strong" if is_strong else "normal",
                 "conditions": {
                     "velocity_ok": signal.velocity_ok,
                     "oracle_gap_ok": signal.oracle_gap_ok,
                     "clob_mispricing_ok": signal.clob_mispricing_ok,
                     "edge_ok": signal.edge_ok,
                     "spread_ok": signal.spread_ok,
-                    "depth_ok": signal.depth_ok,  # FIX 2
+                    "depth_ok": signal.depth_ok,
                     "no_position": signal.no_position,
                     "cooldown_ok": signal.cooldown_ok,
                     "daily_loss_ok": signal.daily_loss_ok,
@@ -531,8 +539,11 @@ class PolyGuezRunner:
             log_event(logger, "trade_skipped", f"Skipped: LLM NO-GO — {reason}")
             return False
 
-        # Determine position size
-        size = calculate_position_size(self._usdc_balance, self.config)
+        # Determine position size (fixed tiers)
+        depth = getattr(self, '_current_depth', 0.0)
+        size = calculate_position_size(self._usdc_balance, self.config, edge=signal.edge, depth=depth)
+        is_strong = signal.edge >= self.config.strong_edge_threshold and depth >= self.config.strong_depth_threshold
+        log_event(logger, "bet_sizing", f"bet=${size:.1f} ({'strong' if is_strong else 'normal'})")
         if verdict == "REDUCE-SIZE":
             size = round(size * 0.5, 2)
             log_event(logger, "size_reduced", f"LLM REDUCE-SIZE → ${size:.2f}")
