@@ -77,6 +77,7 @@ body { background: var(--bg); color: var(--text-0); font-family: var(--font); mi
 .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; margin-right: 3px; }
 .dot-on { background: var(--green); box-shadow: 0 0 4px var(--green); }
 .dot-off { background: var(--red); }
+.dot-warn { background: var(--amber); box-shadow: 0 0 4px var(--amber); }
 .conn { font-size: 12px; color: var(--text-1); }
 
 /* Stat */
@@ -90,11 +91,6 @@ body { background: var(--bg); color: var(--text-0); font-family: var(--font); mi
 /* Price display */
 .price-yes { color: var(--green); font-family: var(--font-mono); }
 .price-no { color: var(--rose); font-family: var(--font-mono); }
-
-
-/* Progress */
-.progress { background: var(--border-light); border-radius: 4px; height: 6px; overflow: hidden; }
-.progress-fill { height: 100%; border-radius: 4px; background: linear-gradient(90deg, var(--teal), var(--green)); transition: width 0.5s; }
 
 /* Trade table */
 .trade-log { max-height: 300px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
@@ -157,27 +153,53 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
 .last-trade-banner.loss { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
 .last-trade-banner.none { background: var(--card-alt); color: var(--text-2); border: 1px solid var(--border); }
 
-/* Price boxes */
-.price-boxes { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 14px; }
-.price-box { background: var(--card-alt); border: 1px solid var(--border-light); border-radius: var(--radius-sm); padding: 12px; text-align: center; }
-.price-box-label { font-size: 10px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); font-weight: 500; margin-bottom: 4px; }
-.price-box-val { font-family: var(--font-mono); font-size: 18px; font-weight: 700; color: var(--text-0); }
-.price-box-tag { font-size: 10px; color: var(--text-2); margin-top: 2px; }
+/* Phase badge + countdown */
+.phase-badge { padding: 4px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; font-family: var(--font-mono); letter-spacing: 1px; }
+.phase-observe { background: var(--card-alt); color: var(--text-2); border: 1px solid var(--border); }
+.phase-scalp { background: var(--blue-bg); color: var(--blue); border: 1px solid var(--blue-border); }
+.phase-conviction { background: var(--green-bg); color: var(--green); border: 1px solid var(--green-border); }
+.phase-settlement { background: var(--red-bg); color: var(--red); border: 1px solid var(--red-border); }
+.countdown { font-family: var(--font-mono); font-size: 22px; font-weight: 700; color: var(--text-0); }
+.countdown.warn { color: var(--amber); }
+.countdown.critical { color: var(--red); }
 
-/* Delta strike prominent */
-.delta-strike { padding: 12px 16px; border-radius: var(--radius-sm); margin-bottom: 14px; text-align: center; }
-.delta-strike-val { font-family: var(--font-mono); font-size: 24px; font-weight: 700; }
-.delta-strike-sub { font-size: 12px; margin-top: 4px; opacity: 0.8; }
+/* Phase bar */
+.phase-bar { display: flex; height: 20px; border-radius: 4px; overflow: hidden; margin-bottom: 14px; border: 1px solid var(--border-light); font-size: 9px; font-weight: 600; letter-spacing: 0.5px; }
+.phase-seg { display: flex; align-items: center; justify-content: center; background: var(--card-alt); color: var(--text-2); transition: background 0.3s; }
+.phase-seg.active-observe { background: var(--card-alt); color: var(--text-1); font-weight: 700; }
+.phase-seg.active-scalp { background: var(--blue-bg); color: var(--blue); font-weight: 700; }
+.phase-seg.active-conviction { background: var(--green-bg); color: var(--green); font-weight: 700; }
+.phase-seg.active-settlement { background: var(--red-bg); color: var(--red); font-weight: 700; }
 
-/* CLOB compact row */
-.clob-row { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 8px 14px; background: var(--card-alt); border-radius: var(--radius-sm); border: 1px solid var(--border-light); margin-bottom: 14px; font-family: var(--font-mono); font-size: 15px; font-weight: 600; }
+/* Strike hero */
+.strike-hero { padding: 16px 20px; border-radius: var(--radius-sm); margin-bottom: 12px; text-align: center; }
+.strike-hero.up { background: var(--green-bg); border: 1px solid var(--green-border); }
+.strike-hero.down { background: var(--red-bg); border: 1px solid var(--red-border); }
+.strike-hero.neutral { background: var(--card-alt); border: 1px solid var(--border); }
+.strike-value { font-family: var(--font-mono); font-size: 30px; font-weight: 700; }
+.strike-hero.up .strike-value { color: var(--green); }
+.strike-hero.down .strike-value { color: var(--red); }
+.strike-subtitle { font-size: 13px; color: var(--text-1); margin-top: 4px; }
+.strike-p2b { font-size: 12px; color: var(--text-2); margin-top: 4px; }
 
-/* Signal status line */
-.signal-line { padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 500; margin-top: 14px; }
-.signal-line.blocked { background: var(--card-alt); border: 1px solid var(--border-light); color: var(--text-1); }
-.signal-line.fired { background: var(--green-bg); border: 1px solid var(--green-border); color: var(--green); }
-.signal-line .fail-list { color: var(--red); font-weight: 600; }
-.signal-line .llm-status { margin-top: 4px; font-size: 12px; }
+/* V2 metrics row */
+.v2-metrics { display: flex; gap: 8px; margin-bottom: 12px; }
+.v2-metric { flex: 1; padding: 8px 10px; background: var(--card-alt); border-radius: var(--radius-sm); border: 1px solid var(--border-light); text-align: center; }
+.v2-label { display: block; font-size: 9px; text-transform: uppercase; letter-spacing: 1px; color: var(--text-2); font-weight: 600; margin-bottom: 2px; }
+.v2-val { font-family: var(--font-mono); font-size: 14px; font-weight: 600; }
+
+/* Execution row */
+.exec-row { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--text-1); padding: 8px 12px; background: var(--card-alt); border-radius: var(--radius-sm); border: 1px solid var(--border-light); margin-bottom: 12px; }
+.exec-row strong { font-family: var(--font-mono); font-weight: 600; }
+.exec-sep { color: var(--border); }
+
+/* Decision box */
+.decision-box { padding: 12px 16px; border-radius: var(--radius-sm); border: 1px solid var(--border); margin-bottom: 10px; }
+.decision-box.all-go { background: var(--green-bg); border-color: var(--green-border); }
+.decision-box.blocked { background: var(--card-alt); }
+.decision-text { font-size: 13px; font-weight: 500; color: var(--text-0); margin-bottom: 6px; }
+.decision-details { font-size: 12px; color: var(--text-2); }
+.decision-fail { color: var(--red); font-weight: 500; }
 
 /* Config grid */
 .cfg-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
@@ -193,11 +215,12 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
   <div class="topbar-left">
     <div class="logo">Poly<span>Guez</span></div>
     <span class="badge badge-dry" id="modeBadge">DRY-RUN</span>
-    <div style="display:flex;gap:10px">
-      <span class="conn"><span class="dot dot-off" id="dotBtc"></span>BTC</span>
-      <span class="conn"><span class="dot dot-off" id="dotClob"></span>CLOB</span>
-      <span class="conn"><span class="dot dot-off" id="dotGamma"></span>Gamma</span>
-    </div>
+    <span class="dot dot-off" id="dotHealth"></span>
+    <span style="font-size:11px;color:var(--text-2);margin-right:8px">
+      <span class="dot dot-off" id="dotBtc" style="width:5px;height:5px"></span>BTC
+      <span class="dot dot-off" id="dotClob" style="width:5px;height:5px"></span>CLOB
+      <span class="dot dot-off" id="dotGamma" style="width:5px;height:5px"></span>Gamma
+    </span>
     <div class="session"><span class="session-dot"></span><span id="sessionTime">0:00</span></div>
   </div>
   <div class="topbar-stats">
@@ -219,49 +242,72 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
 
   <!-- LIVE MARKET -->
   <div class="card">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
-      <div class="card-title" style="margin-bottom:0">Live Market</div>
-      <span style="font-family:var(--font-mono);font-size:13px;color:var(--text-2)" id="expiry">--:--</span>
-    </div>
-    <div id="marketQuestion" style="font-size:13px;color:var(--text-1);margin-bottom:14px">Waiting for market...</div>
-
-    <!-- Three big price boxes -->
-    <div class="price-boxes">
-      <div class="price-box">
-        <div class="price-box-label">BTC (Binance)</div>
-        <div class="price-box-val" id="btcPrice">--</div>
+    <!-- 2a: Header — phase badge + question + countdown -->
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="display:flex;align-items:center;gap:10px">
+        <span class="phase-badge phase-observe" id="phaseBadge">OBSERVE</span>
+        <span id="marketQuestion" style="font-size:13px;color:var(--text-1)">Waiting for market...</span>
       </div>
-      <div class="price-box">
-        <div class="price-box-label">Chainlink</div>
-        <div class="price-box-val" id="chainlinkPrice">--</div>
-        <div class="price-box-tag" id="chainlinkSrc"></div>
+      <span class="countdown" id="countdown">--:--</span>
+    </div>
+
+    <!-- 2b: Phase bar -->
+    <div class="phase-bar">
+      <div class="phase-seg" id="seg-observe" style="flex:180">OBSERVE</div>
+      <div class="phase-seg" id="seg-scalp" style="flex:60">SCALP</div>
+      <div class="phase-seg" id="seg-conviction" style="flex:40">CONV</div>
+      <div class="phase-seg" id="seg-settlement" style="flex:20">SETTLE</div>
+    </div>
+
+    <!-- 2c: Hero strike block -->
+    <div class="strike-hero neutral" id="strikeHero">
+      <div class="strike-value" id="strikeValue">--</div>
+      <div class="strike-subtitle" id="strikeSubtitle"></div>
+      <div class="strike-p2b" id="strikeP2b"></div>
+    </div>
+
+    <!-- 2d: V2 metrics row -->
+    <div class="v2-metrics">
+      <div class="v2-metric"><span class="v2-label">Terminal Prob</span><span class="v2-val" id="v2TermProb">--</span></div>
+      <div class="v2-metric"><span class="v2-label">Terminal Edge</span><span class="v2-val" id="v2TermEdge">--</span></div>
+      <div class="v2-metric"><span class="v2-label">Delta Stability</span><span class="v2-val" id="v2DeltaStab">--</span></div>
+      <div class="v2-metric"><span class="v2-label">Target Size</span><span class="v2-val" id="v2TargetSize">--</span></div>
+    </div>
+
+    <!-- 2e: Market/execution row -->
+    <div class="exec-row">
+      <span>UP: <strong class="price-yes" id="execUp">--</strong></span>
+      <span>DOWN: <strong class="price-no" id="execDown">--</strong></span>
+      <span>Spread: <strong id="execSpread">--</strong></span>
+      <span class="exec-sep">|</span>
+      <span>BTC: <strong id="execBtc">--</strong></span>
+      <span>CL: <strong id="execCl">--</strong> <small id="execClSrc"></small></span>
+      <span>Gap: <strong id="execGap">--</strong></span>
+    </div>
+
+    <!-- 2f: Decision summary box -->
+    <div class="decision-box blocked" id="decisionBox">
+      <div class="decision-text" id="decisionText">Waiting for market data...</div>
+      <div class="decision-details" id="decisionDetails"></div>
+    </div>
+
+    <!-- 2g: Advanced collapsed section -->
+    <div class="config-toggle" onclick="document.getElementById('advBody').classList.toggle('open')">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>
+      Advanced
+    </div>
+    <div class="config-body" id="advBody">
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 20px;font-size:12px;color:var(--text-1);font-family:var(--font-mono)">
+        <div>Velocity: <span id="advVelocity">--</span> $/sec</div>
+        <div>Oracle Gap: <span id="advGap">--</span></div>
+        <div>Gap Direction: <span id="advGapDir">--</span></div>
+        <div>Edge: <span id="advEdge">--</span> / Req: <span id="advReqEdge">--</span></div>
+        <div>Depth: <span id="advDepth">--</span> / Req: <span id="advReqDepth">--</span></div>
+        <div>P2B source: <span id="advP2bSrc">--</span></div>
+        <div>Cross-check: <span id="advCrossCheck">--</span></div>
+        <div>LLM: <span id="advLlm">--</span></div>
       </div>
-      <div class="price-box">
-        <div class="price-box-label">P2B Strike</div>
-        <div class="price-box-val" id="priceToBeat">--</div>
-        <div class="price-box-tag" id="p2bStatus"></div>
-      </div>
     </div>
-
-    <!-- Delta Strike prominent -->
-    <div class="delta-strike" id="deltaStrikeBox" style="background:var(--card-alt);border:1px solid var(--border-light)">
-      <div class="delta-strike-val" id="deltaStrikeVal">Δ Strike: --</div>
-      <div class="delta-strike-sub" id="deltaStrikeSub">Waiting for data</div>
-    </div>
-
-    <!-- CLOB compact row -->
-    <div class="clob-row">
-      <span>UP: <span class="price-yes" id="yesPrice">0.00</span></span>
-      <span style="color:var(--border)">|</span>
-      <span>DOWN: <span class="price-no" id="noPrice">0.00</span></span>
-    </div>
-
-    <!-- Entry window -->
-    <div style="margin-bottom:2px;display:flex;justify-content:space-between;font-size:11px;color:var(--text-2)"><span>Entry Window</span><span id="entryPct">0%</span></div>
-    <div class="progress"><div class="progress-fill" id="entryBar" style="width:0%"></div></div>
-
-    <!-- Signal status one-line -->
-    <div class="signal-line blocked" id="signalLine">Signal: waiting for data</div>
   </div>
 
   <!-- POSITION -->
@@ -283,8 +329,21 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
 <!-- RIGHT -->
 <div class="grid-right">
 
+  <!-- MONITORING (shown when no trades) -->
+  <div id="rightNoTrades" class="card" style="display:none">
+    <div class="card-title">Monitoring</div>
+    <div style="text-align:center;padding:20px 0;color:var(--text-1)">
+      <div style="font-weight:600;font-size:14px;margin-bottom:8px">No trades yet</div>
+      <div style="font-size:12px;font-family:var(--font-mono);color:var(--text-2)">
+        Session: <span id="monSession">0m</span> ·
+        Markets scanned: <span id="monScanned">0</span><br>
+        <span id="monSkips" style="margin-top:4px;display:inline-block"></span>
+      </div>
+    </div>
+  </div>
+
   <!-- EQUITY CURVE -->
-  <div class="card">
+  <div class="card" id="equityCard">
     <div class="card-title">Equity Curve</div>
     <div id="chartEmpty" class="empty-state">
       <span class="empty-label">No trades yet</span>
@@ -294,7 +353,7 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
   </div>
 
   <!-- PERFORMANCE -->
-  <div class="card">
+  <div class="card" id="perfCard">
     <div class="card-title">Performance</div>
     <div id="statsEmpty" class="empty-state" style="padding:16px">
       <span class="empty-label">Collecting data</span>
@@ -315,7 +374,7 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
   </div>
 
   <!-- TRADE LOG -->
-  <div class="card" style="flex:1;display:flex;flex-direction:column">
+  <div class="card" id="logCard" style="flex:1;display:flex;flex-direction:column">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
       <div class="card-title" style="margin-bottom:0">Trade Log</div>
       <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-2)" id="tradeCount"></span>
@@ -414,12 +473,17 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
-const sigNames = {
-  velocity_ok:'Velocity', oracle_gap_ok:'Oracle Gap', clob_mispricing_ok:'CLOB Mispricing',
-  edge_ok:'Edge', spread_ok:'Spread', depth_ok:'Depth', no_position:'No Position',
-  cooldown_ok:'Cooldown', daily_loss_ok:'Daily Loss', balance_ok:'Balance',
-  position_limit_ok:'Position Limit', p2b_ok:'P2B', delta_magnitude_ok:'Delta Mag',
-  terminal_edge_ok:'Terminal Edge',
+const blockerMap = {
+  terminal_edge_ok: 'Not enough edge',
+  delta_magnitude_ok: "Price hasn't moved enough from strike",
+  edge_ok: 'Edge too small',
+  spread_ok: 'CLOB spread too wide',
+  depth_ok: 'Order book too thin',
+  no_position: 'Already in a position',
+  cooldown_ok: 'Cooldown active',
+  daily_loss_ok: 'Daily loss limit hit',
+  balance_ok: 'Balance too low',
+  position_limit_ok: 'Position limit reached',
 };
 
 function render(s) {
@@ -428,6 +492,10 @@ function render(s) {
   mb.textContent = mode==='live'?'LIVE':mode==='paper'?'PAPER':'DRY-RUN';
   mb.className = 'badge badge-'+(mode==='live'?'live':mode==='paper'?'paper':'dry');
 
+  // Health dot
+  const feedsUp = [s.btc_feed_connected, s.clob_connected, s.gamma_connected].filter(Boolean).length;
+  const hd = document.getElementById('dotHealth');
+  hd.className = 'dot ' + (feedsUp === 3 ? 'dot-on' : feedsUp > 0 ? 'dot-warn' : 'dot-off');
   setDot('dotBtc', s.btc_feed_connected); setDot('dotClob', s.clob_connected); setDot('dotGamma', s.gamma_connected);
 
   txt('balance', '$'+(s.usdc_balance||0).toFixed(2));
@@ -462,97 +530,161 @@ function render(s) {
     lastBanner.className = 'last-trade-banner none';
   }
 
+  // 2a: Phase + question + countdown
+  const elapsed = s.entry_window_elapsed || 0;
+  const remaining = Math.max(0, 300 - elapsed);
+  let phase = 'OBSERVE', phaseClass = 'phase-observe';
+  if (elapsed >= 280) { phase = 'SETTLEMENT'; phaseClass = 'phase-settlement'; }
+  else if (elapsed >= 240) { phase = 'CONVICTION'; phaseClass = 'phase-conviction'; }
+  else if (elapsed >= 180) { phase = 'SCALP'; phaseClass = 'phase-scalp'; }
+
+  const pb = document.getElementById('phaseBadge');
+  pb.textContent = phase;
+  pb.className = 'phase-badge ' + phaseClass;
+
+  const cd = document.getElementById('countdown');
+  cd.textContent = fmtTime(remaining);
+  cd.className = 'countdown' + (remaining < 60 ? ' critical' : remaining < 120 ? ' warn' : '');
+
   txt('marketQuestion', s.current_market_question || 'Waiting for market...');
-  txt('btcPrice', s.btc_price ? '$'+s.btc_price.toFixed(2) : '--');
-  txt('chainlinkPrice', s.chainlink_price ? '$'+s.chainlink_price.toFixed(2) : '--');
-  txt('chainlinkSrc', s.chainlink_source ? s.chainlink_source : '');
 
-  // P2B Strike box
-  const ptb = s.price_to_beat;
-  const ptbEl = document.getElementById('priceToBeat');
-  const p2bStatusEl = document.getElementById('p2bStatus');
-  if(s.p2b_parse_success && ptb){
-    ptbEl.textContent = '$'+ptb.toFixed(2);
-    const xc = s.p2b_cross_check_passed;
-    if(xc === false){ p2bStatusEl.textContent='⚠ cross-check failed'; p2bStatusEl.style.color='var(--amber)'; }
-    else { p2bStatusEl.textContent='✓'; p2bStatusEl.style.color='var(--green)'; }
-  } else {
-    ptbEl.textContent='FAILED ✗';
-    p2bStatusEl.textContent=(s.p2b_consecutive_failures||0)>0?'failures: '+s.p2b_consecutive_failures+'/3':'';
-    p2bStatusEl.style.color='var(--red)';
-  }
+  // 2b: Phase bar
+  ['observe','scalp','conviction','settlement'].forEach(p => {
+    const el = document.getElementById('seg-' + p);
+    el.className = 'phase-seg' + (phase.toLowerCase() === p ? ' active-' + p : '');
+  });
 
-  // Delta Strike prominent
-  const sd = s.strike_delta||0;
-  const dsBox = document.getElementById('deltaStrikeBox');
-  const dsVal = document.getElementById('deltaStrikeVal');
-  const dsSub = document.getElementById('deltaStrikeSub');
-  if(ptb && ptb > 0 && s.chainlink_price){
-    const absDelta = Math.abs(sd);
-    dsVal.textContent = 'Δ Strike: '+(sd>=0?'+$':'-$')+absDelta.toFixed(2);
-    const upWinning = sd > 0;
-    dsVal.style.color = upWinning ? 'var(--green)' : 'var(--red)';
-    dsBox.style.background = upWinning ? 'var(--green-bg)' : 'var(--red-bg)';
-    dsBox.style.borderColor = upWinning ? 'var(--green-border)' : 'var(--red-border)';
-    dsSub.textContent = 'Chainlink is $'+absDelta.toFixed(0)+' '+(upWinning?'above':'below')+' strike → '+(upWinning?'Up':'Down')+' leading';
-    dsSub.style.color = upWinning ? 'var(--green)' : 'var(--red)';
-  } else {
-    dsVal.textContent = 'Δ Strike: --';
-    dsVal.style.color = 'var(--text-2)';
-    dsBox.style.background = 'var(--card-alt)';
-    dsBox.style.borderColor = 'var(--border-light)';
-    dsSub.textContent = 'Waiting for data';
-    dsSub.style.color = 'var(--text-2)';
-  }
+  // 2c: Strike hero
+  const sd = s.strike_delta || 0;
+  const sh = document.getElementById('strikeHero');
+  sh.className = 'strike-hero ' + (sd > 5 ? 'up' : sd < -5 ? 'down' : 'neutral');
+  document.getElementById('strikeValue').textContent = 'Δ Strike: ' + (sd >= 0 ? '+' : '') + '$' + Math.abs(sd).toFixed(2);
+  document.getElementById('strikeSubtitle').textContent =
+    'Chainlink is $' + Math.abs(sd).toFixed(0) + (sd >= 0 ? ' above' : ' below') + ' strike → ' + (sd >= 0 ? 'Up' : 'Down') + ' leading';
 
-  txt('yesPrice', (s.yes_price||0).toFixed(2));
-  txt('noPrice', (s.no_price||0).toFixed(2));
+  const ptb = s.price_to_beat || 0;
+  const p2bOk = s.p2b_parse_success;
+  const p2bIcon = p2bOk ? '✓' : '⚠';
+  document.getElementById('strikeP2b').textContent =
+    'P2B: $' + ptb.toFixed(2) + ' ' + p2bIcon + '  (at market open)';
 
-  if(s.current_market_expiry){ const rem=Math.max(0,(new Date(s.current_market_expiry)-Date.now())/1000); txt('expiry',fmtTime(rem)); } else txt('expiry','--:--');
-  const pct = s.entry_window_total>0?Math.min(100,(s.entry_window_elapsed/s.entry_window_total)*100):0;
-  document.getElementById('entryBar').style.width=pct+'%';
-  txt('entryPct',Math.round(pct)+'%');
+  // 2d: V2 metrics
+  const tp = s.terminal_probability || 0;
+  const tpEl = document.getElementById('v2TermProb');
+  tpEl.textContent = (tp * 100).toFixed(1) + '%';
+  tpEl.style.color = tp > 0.7 ? 'var(--green)' : tp > 0.5 ? 'var(--amber)' : 'var(--red)';
 
-  // Signal — single status line
-  const sigLine = document.getElementById('signalLine');
-  if(s.signal){
-    const conds = { velocity_ok:s.signal.velocity_ok, oracle_gap_ok:s.signal.oracle_gap_ok, clob_mispricing_ok:s.signal.clob_mispricing_ok, edge_ok:s.signal.edge_ok, spread_ok:s.signal.spread_ok, depth_ok:s.signal.depth_ok, no_position:s.signal.no_position, cooldown_ok:s.signal.cooldown_ok, daily_loss_ok:s.signal.daily_loss_ok, balance_ok:s.signal.balance_ok, position_limit_ok:s.signal.position_limit_ok, p2b_ok:s.p2b_parse_success, delta_magnitude_ok:s.signal.delta_magnitude_ok, terminal_edge_ok:s.signal.terminal_edge_ok };
+  const te = s.terminal_edge || 0;
+  const teEl = document.getElementById('v2TermEdge');
+  teEl.textContent = te.toFixed(4);
+  teEl.style.color = te > 0.05 ? 'var(--green)' : te > 0 ? 'var(--amber)' : 'var(--red)';
+
+  const absDelta = Math.abs(sd);
+  const dsEl = document.getElementById('v2DeltaStab');
+  if (absDelta > 80) { dsEl.textContent = 'strong'; dsEl.style.color = 'var(--green)'; }
+  else if (absDelta > 40) { dsEl.textContent = 'moderate'; dsEl.style.color = 'var(--amber)'; }
+  else { dsEl.textContent = 'weak'; dsEl.style.color = 'var(--red)'; }
+
+  const ts = s.position_size_ceiling || 0;
+  document.getElementById('v2TargetSize').textContent = '$' + ts.toFixed(2);
+
+  // 2e: Execution row
+  document.getElementById('execUp').textContent = (s.yes_price || 0).toFixed(4);
+  document.getElementById('execDown').textContent = (s.no_price || 0).toFixed(4);
+  document.getElementById('execSpread').textContent = (s.clob_spread || 0).toFixed(4);
+  document.getElementById('execBtc').textContent = '$' + (s.btc_price || 0).toFixed(2);
+  document.getElementById('execCl').textContent = '$' + (s.chainlink_price || 0).toFixed(2);
+  document.getElementById('execClSrc').textContent = s.chainlink_source ? '(' + s.chainlink_source + ')' : '';
+  const gap = s.binance_chainlink_gap || 0;
+  const gapEl = document.getElementById('execGap');
+  gapEl.textContent = '$' + Math.abs(gap).toFixed(2);
+  gapEl.style.color = Math.abs(gap) > 15 ? 'var(--green)' : 'var(--text-2)';
+
+  // 2f: Decision box
+  if (s.signal) {
+    const conds = {
+      terminal_edge_ok: s.signal.terminal_edge_ok,
+      delta_magnitude_ok: s.signal.delta_magnitude_ok,
+      edge_ok: s.signal.edge_ok,
+      spread_ok: s.signal.spread_ok,
+      depth_ok: s.signal.depth_ok,
+      no_position: s.signal.no_position,
+      cooldown_ok: s.signal.cooldown_ok,
+      daily_loss_ok: s.signal.daily_loss_ok,
+      balance_ok: s.signal.balance_ok,
+      position_limit_ok: s.signal.position_limit_ok,
+    };
     const total = Object.keys(conds).length;
-    const passCount = Object.values(conds).filter(Boolean).length;
-    const blockers = Object.entries(conds).filter(([k,v])=>!v).map(([k])=>sigNames[k]||k);
+    const passing = Object.values(conds).filter(Boolean).length;
+    const failing = Object.entries(conds).filter(([k, v]) => !v);
 
-    if(passCount === total){
-      // All conditions met
-      if(s.llm_verdict === 'GO'){
-        sigLine.innerHTML = 'LLM: GO ✓';
-        sigLine.className = 'signal-line fired';
-      } else if(s.llm_verdict === 'NO-GO'){
-        sigLine.innerHTML = 'LLM: NO-GO ✗' + (s.llm_reason ? ' <span style="font-size:12px;opacity:0.8">('+s.llm_reason+')</span>' : '');
-        sigLine.className = 'signal-line blocked';
-      } else if(s.llm_verdict === 'REDUCE-SIZE'){
-        sigLine.innerHTML = 'LLM: REDUCE-SIZE ⚠' + (s.llm_reason ? ' <span style="font-size:12px;opacity:0.8">('+s.llm_reason+')</span>' : '');
-        sigLine.className = 'signal-line blocked';
-      } else {
-        sigLine.innerHTML = 'SIGNAL FIRED → awaiting LLM';
-        sigLine.className = 'signal-line fired';
-      }
+    const db = document.getElementById('decisionBox');
+    const dt = document.getElementById('decisionText');
+    const dd = document.getElementById('decisionDetails');
+
+    if (failing.length === 0) {
+      db.className = 'decision-box all-go';
+      if (s.llm_verdict === 'GO') { dt.textContent = 'SIGNAL FIRED → LLM confirmed GO'; }
+      else if (s.llm_verdict === 'NO-GO') { dt.textContent = 'Signal fired but LLM vetoed: ' + (s.llm_reason || ''); }
+      else if (s.llm_verdict) { dt.textContent = 'Signal fired → LLM: ' + s.llm_verdict; }
+      else { dt.textContent = 'All conditions met → awaiting LLM confirmation'; }
+      dd.textContent = passing + '/' + total + ' conditions met';
     } else {
-      let html = 'Signal: '+passCount+'/'+total+' conditions met — Blocked by: <span class="fail-list">'+blockers.join(', ')+'</span>';
-      if(s.llm_verdict && s.llm_verdict !== '--'){
-        const llmClass = s.llm_verdict==='GO'?'color:var(--green)':s.llm_verdict==='NO-GO'?'color:var(--red)':'color:var(--amber)';
-        html += '<div class="llm-status" style="'+llmClass+'">LLM: '+s.llm_verdict+(s.llm_reason?' — '+s.llm_reason:'')+'</div>';
-      }
-      sigLine.innerHTML = html;
-      sigLine.className = 'signal-line blocked';
+      db.className = 'decision-box blocked';
+      const reasons = failing.slice(0, 2).map(([k]) => blockerMap[k] || k);
+      let sentence = 'No trade: ' + reasons.join(' and ');
+      if (failing.length > 2) sentence += ' (+' + (failing.length - 2) + ' more)';
+
+      const phaseLC = phase.toLowerCase();
+      if (phaseLC === 'observe') sentence = 'Observing — ' + sentence;
+      else if (s.signal.cooldown_ok === false) sentence = 'Cooldown active — waiting';
+
+      dt.textContent = sentence;
+      dd.innerHTML = passing + '/' + total + ' conditions met<br>' +
+        failing.map(([k]) => '<span class="decision-fail">✗ ' + (blockerMap[k] || k) + '</span>').join('<br>');
     }
-  } else {
-    sigLine.innerHTML = 'Signal: waiting for data';
-    sigLine.className = 'signal-line blocked';
   }
+
+  // 2g: Advanced section
+  txt('advVelocity', (s.btc_velocity || 0).toFixed(6));
+  txt('advGap', '$' + (s.binance_chainlink_gap || 0).toFixed(2));
+  txt('advGapDir', s.gap_direction || '--');
+  txt('advEdge', s.signal ? (s.signal.edge || 0).toFixed(4) : '--');
+  txt('advReqEdge', s.signal ? (s.signal.required_edge || 0).toFixed(4) : '--');
+  txt('advDepth', s.clob_depth && s.clob_depth < 900 ? s.clob_depth.toFixed(1) : 'n/a');
+  txt('advReqDepth', s.config ? s.config.min_clob_depth : '--');
+  const p2bSrc = s.p2b_source || 'none';
+  txt('advP2bSrc', p2bSrc);
+  const xc = s.p2b_cross_check_passed;
+  const xcDiv = s.p2b_cross_check_divergence || 0;
+  if (xc === true) txt('advCrossCheck', 'passed (div: $' + xcDiv.toFixed(2) + ')');
+  else if (xc === false) txt('advCrossCheck', 'FAILED (div: $' + xcDiv.toFixed(2) + ')');
+  else txt('advCrossCheck', 'pending');
+  if (s.llm_verdict) txt('advLlm', s.llm_verdict + ' — ' + (s.llm_reason || '') + ' (' + (s.llm_response_time || 0).toFixed(1) + 's)');
+  else txt('advLlm', 'not triggered');
 
   // Position
   if(s.position){ document.getElementById('posContent').style.display=''; document.getElementById('posEmpty').style.display='none'; txt('posSide',s.position.side); txt('posEntry',s.position.entry_price.toFixed(4)); txt('posSize','$'+s.position.size_usdc.toFixed(2)); const ur=s.unrealized_pnl||0; const urEl=document.getElementById('posUnreal'); urEl.textContent=(ur>=0?'+':'')+('$'+ur.toFixed(4)); urEl.className='stat-val '+(ur>=0?'positive':'negative'); txt('posTtx',fmtTime(s.time_to_expiry||0)); }
   else { document.getElementById('posContent').style.display='none'; document.getElementById('posEmpty').style.display=''; }
+
+  // Right column: monitoring vs trade cards
+  const hasTradesExec = executedTrades.length > 0;
+  document.getElementById('rightNoTrades').style.display = hasTradesExec ? 'none' : '';
+  ['equityCard','perfCard','logCard'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = hasTradesExec ? '' : 'none';
+  });
+
+  if (!hasTradesExec) {
+    const mins = Math.floor((Date.now() - sessionStart) / 60000);
+    txt('monSession', mins + 'm');
+    txt('monScanned', (rs.trades || []).length);
+    const skips = (rs.trades || []).filter(t => t.outcome === 'skipped');
+    const skipReasons = {};
+    skips.forEach(t => { const r = t.reason || 'unknown'; skipReasons[r] = (skipReasons[r] || 0) + 1; });
+    const skipText = Object.entries(skipReasons).map(([r, c]) => c + ' ' + r).join(', ');
+    txt('monSkips', skipText ? 'Skipped: ' + skipText : '');
+  }
 
   // Stats
   const hasTrades=(rs.total_trades||0)>0;
@@ -567,9 +699,9 @@ function render(s) {
   if(hasLog){ txt('tradeCount',rs.trades.length+' total'); const tbody=document.getElementById('tradeBody'); const recent=rs.trades.slice(-60).reverse(); let html=''; for(const t of recent){ const cls=t.outcome==='skipped-no-p2b'?'skipped-no-p2b':(t.outcome||'skipped'); const time=(t.timestamp||'').slice(5,16).replace('T',' '); const p=t.pnl!=null?(t.pnl>=0?'+':'')+('$'+t.pnl.toFixed(4)):'--'; html+=`<tr class="${cls}"><td>${time}</td><td>${t.side}</td><td>${(t.entry_price||0).toFixed(4)}</td><td>${t.exit_price!=null?t.exit_price.toFixed(4):'--'}</td><td>${p}</td><td>${t.llm_verdict||'--'}</td><td>${t.outcome}</td></tr>`; } tbody.innerHTML=html; }
 
   // Chart
-  const executed=(rs.trades||[]).filter(t=>t.pnl!=null);
-  if(executed.length>=2){ document.getElementById('chartEmpty').style.display='none'; document.getElementById('pnlChart').style.display=''; drawChart(executed); }
-  else { document.getElementById('chartEmpty').style.display=''; document.getElementById('pnlChart').style.display='none'; const elapsed=Math.floor((Date.now()-sessionStart)/60000); txt('chartEmptySub',`Session running ${elapsed}m — ${(rs.trades||[]).length} events`); }
+  const executedChart=(rs.trades||[]).filter(t=>t.pnl!=null);
+  if(executedChart.length>=2){ document.getElementById('chartEmpty').style.display='none'; document.getElementById('pnlChart').style.display=''; drawChart(executedChart); }
+  else { document.getElementById('chartEmpty').style.display=''; document.getElementById('pnlChart').style.display='none'; const elapsedMin=Math.floor((Date.now()-sessionStart)/60000); txt('chartEmptySub',`Session running ${elapsedMin}m — ${(rs.trades||[]).length} events`); }
 
   if(s.config&&!cfgDone){ populateConfig(s.config); cfgDone=true; }
 }

@@ -29,7 +29,8 @@ def evaluate_entry_signal(
     chainlink_price=0.0, binance_chainlink_gap=0.0,
     clob_depth=0.0, price_to_beat=None,
 ):
-    direction = "up" if btc_velocity > 0 else "down"
+    # Momentum direction (from velocity) — used for v1 legacy conditions only
+    momentum_direction = "up" if btc_velocity > 0 else "down"
 
     # Short-circuit: no P2B means no entry
     if price_to_beat is None:
@@ -37,7 +38,8 @@ def evaluate_entry_signal(
             btc_velocity=btc_velocity, btc_price=btc_price,
             chainlink_price=chainlink_price, binance_chainlink_gap=binance_chainlink_gap,
             yes_price=yes_price, no_price=no_price, spread=spread,
-            elapsed_seconds=elapsed_seconds, direction=direction,
+            elapsed_seconds=elapsed_seconds, direction=momentum_direction,
+            momentum_direction=momentum_direction,
             p2b_source="none",
         )
 
@@ -48,15 +50,22 @@ def evaluate_entry_signal(
     clamped = max(-500.0, min(500.0, -k * strike_delta))
     terminal_probability_yes = 1.0 / (1.0 + math.exp(clamped))
 
-    if direction == "up":
-        estimated_fv = min(1.0, yes_price + abs(btc_velocity) * 10)
-        token_price = yes_price
-        selected_side_probability = terminal_probability_yes
-    else:
-        estimated_fv = min(1.0, no_price + abs(btc_velocity) * 10)
-        token_price = no_price
-        selected_side_probability = 1.0 - terminal_probability_yes
+    # Delta direction (from Chainlink vs P2B) — used for v2 terminal probability
+    # This is what actually matters: which side is the oracle favoring?
+    delta_direction = "up" if strike_delta >= 0 else "down"
 
+    # Use delta_direction as the primary direction for entry decisions
+    direction = delta_direction
+
+    if delta_direction == "up":
+        selected_side_probability = terminal_probability_yes
+        token_price = yes_price
+    else:
+        selected_side_probability = 1.0 - terminal_probability_yes
+        token_price = no_price
+
+    # v2: fair value IS the terminal probability
+    estimated_fv = selected_side_probability
     terminal_edge = selected_side_probability - token_price
     edge = estimated_fv - token_price
 
@@ -88,9 +97,9 @@ def evaluate_entry_signal(
             pass
 
     gap_favors = False
-    if direction == "up" and binance_chainlink_gap > 0:
+    if momentum_direction == "up" and binance_chainlink_gap > 0:
         gap_favors = True
-    elif direction == "down" and binance_chainlink_gap < 0:
+    elif momentum_direction == "down" and binance_chainlink_gap < 0:
         gap_favors = True
     oracle_gap_ok = gap_favors and abs(binance_chainlink_gap) >= config.min_oracle_gap
 
@@ -104,6 +113,7 @@ def evaluate_entry_signal(
         chainlink_price=chainlink_price, binance_chainlink_gap=binance_chainlink_gap,
         yes_price=yes_price, no_price=no_price, spread=spread,
         elapsed_seconds=elapsed_seconds, direction=direction,
+        momentum_direction=momentum_direction,
         estimated_fair_value=estimated_fv, edge=edge,
         required_edge=effective_required_edge, gap_favors_position=gap_favors,
         velocity_ok=abs(btc_velocity) > effective_velocity_threshold,

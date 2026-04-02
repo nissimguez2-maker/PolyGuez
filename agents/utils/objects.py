@@ -315,7 +315,8 @@ class SignalState(BaseModel):
     no_price: float = 0.0
     spread: float = 0.0
     elapsed_seconds: float = 0.0
-    direction: str = ""
+    direction: str = ""  # delta-based (v2 primary)
+    momentum_direction: str = ""  # velocity-based (v1 legacy)
     estimated_fair_value: float = 0.0
     edge: float = 0.0
     required_edge: float = 0.0
@@ -345,13 +346,21 @@ class SignalState(BaseModel):
 
     @property
     def all_conditions_met(self) -> bool:
+        """V2 entry conditions — phase/strike/edge based."""
         return all([
-            self.velocity_ok, self.oracle_gap_ok, self.clob_mispricing_ok,
-            self.edge_ok, self.spread_ok,
-            self.no_position, self.cooldown_ok, self.daily_loss_ok,
-            self.balance_ok, self.position_limit_ok,
-            self.depth_ok,
-            self.terminal_edge_ok, self.delta_magnitude_ok,
+            # V2 core gates
+            self.terminal_edge_ok,       # Terminal probability edge above minimum
+            self.delta_magnitude_ok,     # Strike delta large enough for conviction
+            self.edge_ok,                # Fair value edge (now based on terminal prob)
+            # Execution gates
+            self.spread_ok,              # CLOB spread acceptable
+            self.depth_ok,               # Order book has sufficient depth
+            # Risk gates
+            self.no_position,            # Not already in a position
+            self.cooldown_ok,            # Not in cooldown
+            self.daily_loss_ok,          # Haven't hit daily loss limit
+            self.balance_ok,             # Have enough capital
+            self.position_limit_ok,      # Under position limit
         ])
 
 
