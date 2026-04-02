@@ -82,6 +82,7 @@ class PolyGuezRunner:
         self._p2b_consecutive_failures = 0
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
+        self._open_position = None  # Dry-run position tracking
 
     # -- Public API for dashboard / CLI ------------------------------------
 
@@ -371,6 +372,10 @@ class PolyGuezRunner:
         if self._position:
             await self._settle(market_id)
 
+        # Settle dry-run tracked position at cycle end
+        if self._open_position:
+            await self._settle_open_position()
+
         # Persist stats and reset for next cycle
         save_rolling_stats(self._rolling_stats)
         old_question = self._current_market.get("question", "") if self._current_market else ""
@@ -585,6 +590,16 @@ class PolyGuezRunner:
             price_to_beat=self._price_to_beat,
         )
 
+        # Track dry-run position for settlement at cycle end
+        self._open_position = {
+            "token_id": token_id,
+            "side": side.lower(),
+            "entry_price": entry_price,
+            "size_usdc": size,
+            "market_name": self._current_market.get("question", "") if self._current_market else "",
+            "entry_time": time.monotonic(),
+        }
+
         log_event(logger, "position_entered", f"Entered {side} @ {entry_price:.4f}, size=${size:.2f}", {
             "market_id": market_id,
             "token_id": token_id,
@@ -761,6 +776,57 @@ class PolyGuezRunner:
         self._position = None
         if outcome_str != "pending":
             self._apply_cooldown()
+
+    async def _settle_open_position(self):
+        """Settle a dry-run tracked position by fetching the final CLOB mid price."""
+        pos = self._open_position
+        if not pos:
+            return
+        token_id = pos["token_id"]
+        side = pos["side"]
+        entry_price = pos["entry_price"]
+        size_usdc = pos["size_usdc"]
+        market_name = pos["market_name"]
+
+        # Fetch final CLOB mid price
+        exit_price = 0.0
+        try:
+            loop = asyncio.get_event_loop()
+            if self._polymarket:
+                exit_price = await loop.run_in_executor(
+                    None, self._get_clob_price_with_log, token_id,
+                    side.upper(),
+                )
+            else:
+                # Fallback: use Gamma outcomePrices if no wallet
+                if self._current_market:
+                    prices = self._current_market.get("outcomePrices", "")
+                    if isinstance(prices, str):
+                        try: prices = json.loads(prices)
+                        except (json.JSONDecodeError, TypeError): prices = []
+                    if isinstance(prices, list) and len(prices) >= 2:
+                        exit_price = float(prices[0]) if side == "yes" else float(prices[1])
+        except Exception as exc:
+            log_event(logger, "dryrun_settle_error", f"Failed to fetch exit price: {exc}", level=30)
+
+        if exit_price <= 0:
+            exit_price = entry_price  # Flat if we can't get a price
+            log_event(logger, "dryrun_settle_flat", "Exit price unavailable, assuming flat")
+
+        pnl = (exit_price - entry_price) * (size_usdc / entry_price) if entry_price > 0 else 0.0
+        pnl = round(pnl, 4)
+
+        log_event(logger, "dryrun_settled",
+            f"[DRY-RUN] SETTLED: {side} entered @ {entry_price:.4f}, "
+            f"exit @ {exit_price:.4f}, PnL: ${pnl:+.2f}")
+
+        self._rolling_stats.simulated_balance = round(
+            self._rolling_stats.simulated_balance + pnl, 4
+        )
+        log_event(logger, "dryrun_balance",
+            f"[DRY-RUN] Balance: ${self._rolling_stats.simulated_balance:.2f}")
+
+        self._open_position = None
 
     # -- Helpers -----------------------------------------------------------
 
