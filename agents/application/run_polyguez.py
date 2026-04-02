@@ -9,6 +9,7 @@ import os
 import time
 from datetime import datetime, timedelta, timezone
 
+import aiohttp
 import websockets
 from dotenv import load_dotenv
 
@@ -93,6 +94,7 @@ class PolyGuezRunner:
         self._clob_ws_last_msg = 0.0
         self._clob_ws_tokens = (None, None)  # (yes_token, no_token)
         self._clob_ws_connected = False
+        self._clob_http_session = None
 
     # -- Public API for dashboard / CLI ------------------------------------
 
@@ -215,6 +217,11 @@ class PolyGuezRunner:
             try: await self._clob_ws.close()
             except: pass
 
+        # Stop CLOB HTTP session
+        if self._clob_http_session:
+            await self._clob_http_session.close()
+            self._clob_http_session = None
+
         # Stop BTC feed
         await self._btc_feed.stop()
 
@@ -248,9 +255,18 @@ class PolyGuezRunner:
         # Start BTC price feed
         await self._btc_feed.start()
 
-        # Start CLOB WebSocket feed
-        self._clob_ws_task = asyncio.create_task(self._clob_ws_loop())
-        log_event(logger, "clob_ws_task_created", "[CLOB/WS] Task created")
+        # Start CLOB WebSocket feed (if enabled)
+        if self.config.clob_ws_enabled:
+            self._clob_ws_task = asyncio.create_task(self._clob_ws_loop())
+            log_event(logger, "clob_ws_task_created", "[CLOB/WS] Task created")
+        else:
+            log_event(logger, "clob_ws_disabled", "[CLOB/WS] Disabled — using REST polling")
+
+        # CLOB REST session
+        self._clob_http_session = aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=4.0),
+            headers={"User-Agent": "PolyGuez/1.0"},
+        )
 
         while not self._killed:
             try:
@@ -861,10 +877,18 @@ class PolyGuezRunner:
     async def _clob_ws_loop(self):
         """Persistent CLOB WS connection. Reconnects on failure."""
         log_event(logger, "clob_ws_started", "[CLOB/WS] Loop started")
+        _ws_headers = {
+            "Origin": "https://polymarket.com",
+            "User-Agent": "Mozilla/5.0",
+        }
         while not self._killed:
             try:
                 self._clob_ws = await asyncio.wait_for(
-                    websockets.connect(self._CLOB_WS_URL, ping_interval=10, ping_timeout=20),
+                    websockets.connect(
+                        self._CLOB_WS_URL,
+                        ping_interval=10, ping_timeout=20,
+                        extra_headers=_ws_headers,
+                    ),
                     timeout=10.0,
                 )
                 self._clob_ws_connected = True
@@ -874,6 +898,8 @@ class PolyGuezRunner:
                 yes_tok, no_tok = self._clob_ws_tokens
                 if yes_tok and no_tok:
                     sub = json.dumps({
+                        "auth": {},
+                        "id": "1",
                         "type": "subscribe",
                         "channel": "market",
                         "markets": [yes_tok, no_tok],
@@ -951,6 +977,10 @@ class PolyGuezRunner:
 
     async def _subscribe_clob_ws(self, yes_token, no_token):
         """Subscribe to new market tokens on the CLOB WS."""
+        if not self.config.clob_ws_enabled:
+            self._clob_ws_tokens = (yes_token, no_token)
+            return
+
         if (yes_token, no_token) == self._clob_ws_tokens:
             return  # Already subscribed to these tokens
 
@@ -962,6 +992,8 @@ class PolyGuezRunner:
         if self._clob_ws and self._clob_ws_connected:
             try:
                 sub = json.dumps({
+                    "auth": {},
+                    "id": "1",
                     "type": "subscribe",
                     "channel": "market",
                     "markets": [yes_token, no_token],
@@ -1020,30 +1052,60 @@ class PolyGuezRunner:
         return await self._poll_clob_rest(yes_token, no_token)
 
     async def _poll_clob_rest(self, yes_token, no_token):
-        """REST fallback for CLOB prices."""
-        loop = asyncio.get_event_loop()
+        """REST fallback for CLOB prices — single combined midpoints call."""
         try:
+            # Try combined midpoints endpoint first (1 call instead of 2)
+            if self._clob_http_session:
+                url = f"https://clob.polymarket.com/midpoints?token_ids={yes_token},{no_token}"
+                try:
+                    async with self._clob_http_session.get(url) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            # Response: {"<yes_token>": {"mid": "0.52"}, "<no_token>": {"mid": "0.48"}}
+                            # or: {"<yes_token>": "0.52", "<no_token>": "0.48"}
+                            yes_raw = data.get(yes_token, {})
+                            no_raw = data.get(no_token, {})
+                            yes_price = float(yes_raw.get("mid", yes_raw) if isinstance(yes_raw, dict) else yes_raw)
+                            no_price = float(no_raw.get("mid", no_raw) if isinstance(no_raw, dict) else no_raw)
+                            if yes_price > 0 and no_price > 0:
+                                log_event(logger, "clob_rest_prices",
+                                          f"[CLOB/REST] UP={yes_price:.4f} DOWN={no_price:.4f}")
+                                spread = abs(1.0 - yes_price - no_price)
+                                self._clob_ok = True
+                                return (yes_price, no_price, spread)
+                            log_event(logger, "clob_rest_bad", f"[CLOB/REST] Bad midpoints: {data}", level=30)
+                        else:
+                            log_event(logger, "clob_rest_http", f"[CLOB/REST] midpoints HTTP {resp.status}", level=30)
+                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                    log_event(logger, "clob_rest_error", f"[CLOB/REST] midpoints failed: {e}", level=30)
+
+            # Fallback: individual midpoint calls via py_clob_client
             if self._polymarket:
+                loop = asyncio.get_event_loop()
                 yes_future = loop.run_in_executor(None, self._get_clob_price_with_log, yes_token, "UP")
                 no_future = loop.run_in_executor(None, self._get_clob_price_with_log, no_token, "DOWN")
                 yes_price, no_price = await asyncio.gather(yes_future, no_future)
-                log_event(logger, "clob_rest_prices", f"[CLOB/REST] UP={yes_price:.4f}, DOWN={no_price:.4f}")
-            else:
-                # Fallback without wallet — use Gamma API outcomePrices
-                yes_price = 0.50
-                no_price = 0.50
-                market_data = self._current_market
-                if market_data:
-                    prices = market_data.get("outcomePrices", "")
-                    log_event(logger, "clob_fallback", f"No wallet, using outcomePrices: {prices}")
-                    if isinstance(prices, str):
-                        try:
-                            prices = json.loads(prices)
-                        except (json.JSONDecodeError, TypeError):
-                            prices = []
-                    if isinstance(prices, list) and len(prices) >= 2:
-                        yes_price = float(prices[0])
-                        no_price = float(prices[1])
+                log_event(logger, "clob_rest_individual",
+                          f"[CLOB/REST] Individual: UP={yes_price:.4f} DOWN={no_price:.4f}")
+                spread = abs(1.0 - yes_price - no_price)
+                self._clob_ok = True
+                return (yes_price, no_price, spread)
+
+            # Last fallback: Gamma outcomePrices
+            yes_price = 0.50
+            no_price = 0.50
+            market_data = self._current_market
+            if market_data:
+                prices = market_data.get("outcomePrices", "")
+                log_event(logger, "clob_fallback", f"No wallet, using outcomePrices: {prices}")
+                if isinstance(prices, str):
+                    try:
+                        prices = json.loads(prices)
+                    except (json.JSONDecodeError, TypeError):
+                        prices = []
+                if isinstance(prices, list) and len(prices) >= 2:
+                    yes_price = float(prices[0])
+                    no_price = float(prices[1])
 
             spread = abs(1.0 - yes_price - no_price)
             self._clob_ok = True

@@ -273,6 +273,7 @@ class PolyGuezConfig(BaseModel):
     coinbase_ws_url: str = Field(default="wss://ws-feed.exchange.coinbase.com")
     btc_feed_connect_timeout: float = Field(default=5.0)
     btc_buffer_min_seconds: float = Field(default=10.0)
+    clob_ws_enabled: bool = Field(default=False, description="Enable CLOB WebSocket (experimental, may get rejected)")
 
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)
