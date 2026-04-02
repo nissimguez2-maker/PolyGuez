@@ -1054,30 +1054,11 @@ class PolyGuezRunner:
     async def _poll_clob_rest(self, yes_token, no_token):
         """REST fallback for CLOB prices — single combined midpoints call."""
         try:
-            # Try combined midpoints endpoint first (1 call instead of 2)
+            # Try combined midpoints endpoint (1 call instead of 2)
             if self._clob_http_session:
-                url = f"https://clob.polymarket.com/midpoints?token_ids={yes_token},{no_token}"
-                try:
-                    async with self._clob_http_session.get(url) as resp:
-                        if resp.status == 200:
-                            data = await resp.json(content_type=None)
-                            # Response: {"<yes_token>": {"mid": "0.52"}, "<no_token>": {"mid": "0.48"}}
-                            # or: {"<yes_token>": "0.52", "<no_token>": "0.48"}
-                            yes_raw = data.get(yes_token, {})
-                            no_raw = data.get(no_token, {})
-                            yes_price = float(yes_raw.get("mid", yes_raw) if isinstance(yes_raw, dict) else yes_raw)
-                            no_price = float(no_raw.get("mid", no_raw) if isinstance(no_raw, dict) else no_raw)
-                            if yes_price > 0 and no_price > 0:
-                                log_event(logger, "clob_rest_prices",
-                                          f"[CLOB/REST] UP={yes_price:.4f} DOWN={no_price:.4f}")
-                                spread = abs(1.0 - yes_price - no_price)
-                                self._clob_ok = True
-                                return (yes_price, no_price, spread)
-                            log_event(logger, "clob_rest_bad", f"[CLOB/REST] Bad midpoints: {data}", level=30)
-                        else:
-                            log_event(logger, "clob_rest_http", f"[CLOB/REST] midpoints HTTP {resp.status}", level=30)
-                except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                    log_event(logger, "clob_rest_error", f"[CLOB/REST] midpoints failed: {e}", level=30)
+                result = await self._try_midpoints_combined(yes_token, no_token)
+                if result:
+                    return result
 
             # Fallback: individual midpoint calls via py_clob_client
             if self._polymarket:
@@ -1114,6 +1095,62 @@ class PolyGuezRunner:
             self._clob_ok = False
             log_event(logger, "clob_error", f"CLOB poll failed: {exc}", level=40)
             return (0.0, 0.0, 1.0)
+
+    async def _try_midpoints_combined(self, yes_token, no_token):
+        """Try both midpoints URL formats, return (yes, no, spread) or None."""
+        base = "https://clob.polymarket.com/midpoints"
+        urls = [
+            f"{base}?token_ids={yes_token},{no_token}",
+            f"{base}?token_ids={yes_token}&token_ids={no_token}",
+        ]
+        for url in urls:
+            try:
+                async with self._clob_http_session.get(url) as resp:
+                    if resp.status != 200:
+                        log_event(logger, "clob_rest_http",
+                                  f"[CLOB/REST] midpoints HTTP {resp.status} for {url.split('?')[1][:40]}", level=30)
+                        continue
+                    data = await resp.json(content_type=None)
+                    log_event(logger, "clob_rest_raw",
+                              f"[CLOB/REST] midpoints raw: {data}", level=10)
+                    yes_price, no_price = self._parse_midpoints(data, yes_token, no_token)
+                    if yes_price > 0 and no_price > 0:
+                        log_event(logger, "clob_rest_prices",
+                                  f"[CLOB/REST] UP={yes_price:.4f} DOWN={no_price:.4f}")
+                        spread = abs(1.0 - yes_price - no_price)
+                        self._clob_ok = True
+                        return (yes_price, no_price, spread)
+                    log_event(logger, "clob_rest_bad",
+                              f"[CLOB/REST] Could not parse prices from: {data}", level=30)
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                log_event(logger, "clob_rest_error",
+                          f"[CLOB/REST] midpoints failed: {e}", level=30)
+        return None
+
+    @staticmethod
+    def _parse_midpoints(data, yes_token, no_token):
+        """Parse midpoints response — handles multiple known formats."""
+        yes_price = 0.0
+        no_price = 0.0
+        try:
+            for token, label in [(yes_token, "yes"), (no_token, "no")]:
+                raw = data.get(token)
+                if raw is None:
+                    continue
+                if isinstance(raw, dict):
+                    val = raw.get("mid") or raw.get("price") or raw.get("midpoint")
+                    price = float(val) if val is not None else 0.0
+                elif isinstance(raw, (str, int, float)):
+                    price = float(raw)
+                else:
+                    price = 0.0
+                if label == "yes":
+                    yes_price = price
+                else:
+                    no_price = price
+        except (ValueError, TypeError, KeyError):
+            pass
+        return yes_price, no_price
 
     def _get_clob_price_with_log(self, token_id, label):
         """Fetch CLOB midpoint price for a token and log the raw response."""
