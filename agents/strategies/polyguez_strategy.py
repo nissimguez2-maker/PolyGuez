@@ -110,6 +110,41 @@ def evaluate_entry_signal(
     terminal_edge_ok = terminal_edge > config.min_terminal_edge
     delta_magnitude_ok = abs(strike_delta) > config.conviction_min_delta
 
+    # Build all conditions for diagnostic logging
+    _velocity_ok = abs(btc_velocity) > effective_velocity_threshold
+    _edge_ok = edge > effective_required_edge
+    _spread_ok = spread < config.max_spread
+    _no_position = not has_position
+    _daily_loss_ok = check_daily_loss_limit(rolling_stats, config, usdc_balance)
+    _balance_ok = usdc_balance >= pos_size and usdc_balance >= config.min_capital_floor
+    _position_limit_ok = open_position_count < config.max_open_positions
+
+    # Log first failing condition for quick bottleneck identification
+    _conditions = [
+        (price_feed_ok, "price_feed_stale"),
+        (terminal_edge_ok, f"terminal_edge={terminal_edge:.4f}<{config.min_terminal_edge}"),
+        (delta_magnitude_ok, f"delta={abs(strike_delta):.1f}<{config.conviction_min_delta}"),
+        (_edge_ok, f"edge={edge:.4f}<{effective_required_edge:.4f}"),
+        (_spread_ok, f"spread={spread:.4f}>={config.max_spread}"),
+        (depth_ok, f"depth={clob_depth:.0f}<{config.min_clob_depth}"),
+        (_no_position, "already_in_position"),
+        (cooldown_ok, "in_cooldown"),
+        (_daily_loss_ok, "daily_loss_limit"),
+        (_balance_ok, f"balance=${usdc_balance:.2f}"),
+        (_position_limit_ok, "position_limit"),
+    ]
+    _first_fail = next((reason for ok, reason in _conditions if not ok), None)
+    if _first_fail:
+        log_event(logger, "signal_blocked",
+            f"[SIGNAL] edge={edge:.4f} depth={clob_depth:.0f} "
+            f"gap={binance_chainlink_gap:.2f} delta={strike_delta:.1f} "
+            f"t_edge={terminal_edge:.4f} spread={spread:.4f} → {_first_fail}")
+    else:
+        log_event(logger, "signal_all_met",
+            f"[SIGNAL] ALL MET edge={edge:.4f} depth={clob_depth:.0f} "
+            f"gap={binance_chainlink_gap:.2f} delta={strike_delta:.1f} "
+            f"t_edge={terminal_edge:.4f} spread={spread:.4f}")
+
     return SignalState(
         btc_velocity=btc_velocity, btc_price=btc_price,
         chainlink_price=chainlink_price, binance_chainlink_gap=binance_chainlink_gap,
@@ -118,14 +153,14 @@ def evaluate_entry_signal(
         momentum_direction=momentum_direction,
         estimated_fair_value=estimated_fv, edge=edge,
         required_edge=effective_required_edge, gap_favors_position=gap_favors,
-        velocity_ok=abs(btc_velocity) > effective_velocity_threshold,
+        velocity_ok=_velocity_ok,
         oracle_gap_ok=oracle_gap_ok, clob_mispricing_ok=clob_mispricing_ok,
-        edge_ok=edge > effective_required_edge,
-        spread_ok=spread < config.max_spread,
-        no_position=not has_position, cooldown_ok=cooldown_ok,
-        daily_loss_ok=check_daily_loss_limit(rolling_stats, config, usdc_balance),
-        balance_ok=usdc_balance >= pos_size and usdc_balance >= config.min_capital_floor,
-        position_limit_ok=open_position_count < config.max_open_positions,
+        edge_ok=_edge_ok,
+        spread_ok=_spread_ok,
+        no_position=_no_position, cooldown_ok=cooldown_ok,
+        daily_loss_ok=_daily_loss_ok,
+        balance_ok=_balance_ok,
+        position_limit_ok=_position_limit_ok,
         depth_ok=depth_ok,
         p2b_value=price_to_beat, p2b_source="description",
         strike_delta=strike_delta,
