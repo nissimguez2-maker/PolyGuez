@@ -694,19 +694,19 @@ function render(s) {
   spreadEl.textContent = spreadVal.toFixed(1) + '¢';
   if (spreadVal === 0) { spreadEl.classList.add('spread-zero'); spreadEl.classList.remove('spread-pos'); }
   else { spreadEl.classList.remove('spread-zero'); spreadEl.classList.add('spread-pos'); }
-  document.getElementById('execBtc').textContent = '$' + fmtPrice(s.btc_price || 0);
-  document.getElementById('execCl').textContent = '$' + fmtPrice(s.chainlink_price || 0);
+  document.getElementById('execBtc').textContent = s.btc_price ? ('$' + fmtPrice(s.btc_price)) : '--';
+  document.getElementById('execCl').textContent = s.chainlink_price ? ('$' + fmtPrice(s.chainlink_price)) : '--';
   document.getElementById('execClSrc').textContent = s.chainlink_source ? '(' + s.chainlink_source + ')' : '';
 
   // BTC flash
   const btcEl = document.getElementById('execBtc');
-  const newBtc = s.btc_price || 0;
-  if (_prevBtc !== 0 && newBtc !== _prevBtc) {
+  const newBtc = s.btc_price || null;
+  if (newBtc && _prevBtc && newBtc !== _prevBtc) {
     btcEl.classList.remove('flash-up', 'flash-down');
     void btcEl.offsetWidth;
     btcEl.classList.add(newBtc > _prevBtc ? 'flash-up' : 'flash-down');
   }
-  _prevBtc = newBtc;
+  if (newBtc) _prevBtc = newBtc;
 
   // CL flash
   const clEl = document.getElementById('execCl');

@@ -149,7 +149,7 @@ class PolyGuezRunner:
             kill_timestamp=self._kill_timestamp,
             current_market_question=self._current_market.get("question", "") if self._current_market else "",
             current_market_expiry=expiry,
-            btc_price=self._btc_feed.get_price(),
+            btc_price=self._btc_feed.get_price() or 0.0,
             chainlink_price=chainlink_price,
             chainlink_source=self._btc_feed.chainlink_source,  # FIX 4
             binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
@@ -417,10 +417,18 @@ class PolyGuezRunner:
             depth = await self._fetch_depth(target_token)
             self._current_depth = depth
 
+            # Null-guard: get_price() returns None when buffer is empty
+            btc_price_raw = self._btc_feed.get_price()
+            if btc_price_raw is None or btc_price_raw == 0:
+                log_event(logger, "price_feed_stale", "BTC price is None/0 — skipping signal evaluation", level=40)
+                self._current_signal = SignalState(price_feed_ok=False)
+                await asyncio.sleep(self.config.clob_poll_interval)
+                continue
+
             # Evaluate signal (three-price-gap model)
             signal = evaluate_entry_signal(
                 btc_velocity=self._btc_feed.get_velocity(),
-                btc_price=self._btc_feed.get_price(),
+                btc_price=btc_price_raw,
                 yes_price=yes_price,
                 no_price=no_price,
                 spread=spread,
@@ -441,7 +449,7 @@ class PolyGuezRunner:
             log_event(logger, "signal_evaluated", f"Signal: {signal.all_conditions_met}", {
                 "velocity": round(signal.btc_velocity, 6),
                 "velocity_source": self._btc_feed.velocity_source,
-                "btc_price": round(self._btc_feed.get_price(), 2),
+                "btc_price": round(btc_price_raw, 2),
                 "cl_price": round(self._btc_feed.get_chainlink_price(), 2),
                 "rtds_age": round(self._btc_feed.rtds_msg_age, 1),
                 "binance_age": round(self._btc_feed.binance_msg_age, 1),
@@ -483,7 +491,7 @@ class PolyGuezRunner:
                 "market_id": market_id,
                 "market_question": self._current_market.get("question", "") if self._current_market else "",
                 "elapsed_seconds": round(elapsed, 1),
-                "btc_price": self._btc_feed.get_price(),
+                "btc_price": self._btc_feed.get_price() or 0.0,
                 "chainlink_price": self._btc_feed.get_chainlink_price(),
                 "strike_delta": signal.strike_delta,
                 "terminal_probability": signal.terminal_probability,

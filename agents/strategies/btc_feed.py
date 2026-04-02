@@ -104,7 +104,7 @@ class PriceFeedManager:
         return (self._binance_buffer[-1][0] - self._binance_buffer[0][0]) >= self._config.btc_buffer_min_seconds
 
     def get_price(self):
-        return self._binance_buffer[-1][1] if self._binance_buffer else 0.0
+        return self._binance_buffer[-1][1] if self._binance_buffer else None
 
     def get_velocity(self):
         vel, src = self._compute_velocity_with_source()
@@ -317,16 +317,27 @@ class PriceFeedManager:
                                 log_event(logger, "binance_rest_http_error", f"REST returned {resp.status}", level=30)
                                 await asyncio.sleep(2.0)
                                 continue
-                            data = await resp.json()
-                            price = float(data["price"])
-                            ts = time.time()
-                    except (aiohttp.ClientError, asyncio.TimeoutError, KeyError, ValueError) as e:
+                            data = await resp.json(content_type=None)
+                    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                         log_event(logger, "binance_rest_poll_error", f"REST poll error: {e}", level=30)
                         await asyncio.sleep(2.0)
                         continue
+                    # Parse price from {"symbol": "BTCUSDT", "price": "82500.12"}
+                    try:
+                        price = float(data["price"])
+                    except (KeyError, ValueError, TypeError):
+                        log_event(logger, "binance_rest_bad_response", f"[REST] Bad response: {data}", level=30)
+                        await asyncio.sleep(2.0)
+                        continue
+                    if price <= 0:
+                        log_event(logger, "binance_rest_zero_price", f"[REST] Bad response: {data}", level=30)
+                        await asyncio.sleep(2.0)
+                        continue
+                    ts = time.time()
+                    log_event(logger, "binance_rest_price", f"[REST] BTC price: {price}")
                     self._binance_msg_count += 1
                     self._binance_msg_count_window += 1
-                    self._last_binance_msg_time = time.time()
+                    self._last_binance_msg_time = ts
                     if ts - self._last_binance_buffer_ts >= 0.1:
                         self._binance_buffer.append((ts, price))
                         self._last_binance_buffer_ts = ts
