@@ -31,7 +31,7 @@
   --teal-bg: #1a1740;
   --rose: #ef4444;
   --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'Geist Mono', 'SF Mono', 'Menlo', monospace;
+  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
   --font-mono-jb: 'JetBrains Mono', 'Geist Mono', 'SF Mono', monospace;
   --text: var(--text-0);
   --text-muted: var(--text-2);
@@ -262,6 +262,18 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
 
 /* WEAK badge */
 .badge-weak { background: rgba(239,68,68,0.12); color: #ef4444; border: 1px solid rgba(239,68,68,0.25); }
+
+/* Price flash animations */
+@keyframes flash-up {
+  0% { color: var(--green); background: rgba(34,197,94,0.15); border-radius: 3px; }
+  100% { color: inherit; background: transparent; }
+}
+@keyframes flash-down {
+  0% { color: var(--red); background: rgba(239,68,68,0.15); border-radius: 3px; }
+  100% { color: inherit; background: transparent; }
+}
+.flash-up { animation: flash-up 0.6s ease-out; }
+.flash-down { animation: flash-down 0.6s ease-out; }
 
 /* Spread zero coloring */
 .spread-zero { color: #ef4444 !important; }
@@ -546,6 +558,19 @@ function connect() {
   ws.onerror = () => ws.close();
 }
 
+function fmtPrice(val, decimals = 2) {
+  if (val == null || isNaN(val)) return '--';
+  return val.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+function fmtDollar(val, decimals = 2) {
+  if (val == null || isNaN(val)) return '--';
+  return '$' + Math.abs(val).toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+}
+
+let _prevBtc = 0;
+let _prevCl = 0;
+
 const blockerMap = {
   terminal_edge_ok: 'Not enough edge',
   delta_magnitude_ok: "Price hasn't moved enough from strike",
@@ -571,7 +596,7 @@ function render(s) {
   hd.className = 'dot ' + (feedsUp === 3 ? 'dot-on' : feedsUp > 0 ? 'dot-warn' : 'dot-off');
   setDot('dotBtc', s.btc_feed_connected); setDot('dotClob', s.clob_connected); setDot('dotGamma', s.gamma_connected);
 
-  txt('balance', '$'+(s.usdc_balance||0).toFixed(2));
+  txt('balance', fmtDollar(s.usdc_balance||0));
   pnlText('dailyPnl', s.daily_pnl||0);
   const rs = s.rolling_stats||{};
   pnlText('totalPnl', rs.total_pnl||0);
@@ -639,7 +664,7 @@ function render(s) {
   const p2bOk = s.p2b_parse_success;
   const p2bIcon = p2bOk ? '✓' : '⚠';
   document.getElementById('strikeP2b').textContent =
-    'P2B: $' + ptb.toFixed(2) + ' ' + p2bIcon + '  (at market open)';
+    'P2B: $' + fmtPrice(ptb) + ' ' + p2bIcon + '  (at market open)';
 
   // 2d: V2 metrics
   const tp = s.terminal_probability || 0;
@@ -669,12 +694,33 @@ function render(s) {
   spreadEl.textContent = spreadVal.toFixed(1) + '¢';
   if (spreadVal === 0) { spreadEl.classList.add('spread-zero'); spreadEl.classList.remove('spread-pos'); }
   else { spreadEl.classList.remove('spread-zero'); spreadEl.classList.add('spread-pos'); }
-  document.getElementById('execBtc').textContent = '$' + (s.btc_price || 0).toFixed(2);
-  document.getElementById('execCl').textContent = '$' + (s.chainlink_price || 0).toFixed(2);
+  document.getElementById('execBtc').textContent = '$' + fmtPrice(s.btc_price || 0);
+  document.getElementById('execCl').textContent = '$' + fmtPrice(s.chainlink_price || 0);
   document.getElementById('execClSrc').textContent = s.chainlink_source ? '(' + s.chainlink_source + ')' : '';
+
+  // BTC flash
+  const btcEl = document.getElementById('execBtc');
+  const newBtc = s.btc_price || 0;
+  if (_prevBtc !== 0 && newBtc !== _prevBtc) {
+    btcEl.classList.remove('flash-up', 'flash-down');
+    void btcEl.offsetWidth;
+    btcEl.classList.add(newBtc > _prevBtc ? 'flash-up' : 'flash-down');
+  }
+  _prevBtc = newBtc;
+
+  // CL flash
+  const clEl = document.getElementById('execCl');
+  const newCl = s.chainlink_price || 0;
+  if (_prevCl !== 0 && newCl !== _prevCl) {
+    clEl.classList.remove('flash-up', 'flash-down');
+    void clEl.offsetWidth;
+    clEl.classList.add(newCl > _prevCl ? 'flash-up' : 'flash-down');
+  }
+  _prevCl = newCl;
+
   const gap = s.binance_chainlink_gap || 0;
   const gapEl = document.getElementById('execGap');
-  gapEl.textContent = '$' + Math.abs(gap).toFixed(2);
+  gapEl.textContent = '$' + fmtPrice(Math.abs(gap));
   gapEl.style.color = Math.abs(gap) > 15 ? 'var(--green)' : 'var(--text-2)';
 
   // 2f: Decision box
@@ -775,7 +821,7 @@ function render(s) {
   const hasLog=rs.trades&&rs.trades.length>0;
   document.getElementById('logEmpty').style.display=hasLog?'none':'';
   document.getElementById('logContent').style.display=hasLog?'':'none';
-  if(hasLog){ txt('tradeCount',rs.trades.length+' total'); const tbody=document.getElementById('tradeBody'); const recent=rs.trades.slice(-60).reverse(); let html=''; for(const t of recent){ const cls=t.outcome==='skipped-no-p2b'?'skipped-no-p2b':(t.outcome||'skipped'); const time=(t.timestamp||'').slice(5,16).replace('T',' '); const p=t.pnl!=null?(t.pnl>=0?'+':'')+('$'+t.pnl.toFixed(4)):'--'; html+=`<tr class="${cls}"><td>${time}</td><td>${t.side}</td><td>${((t.entry_price||0)*100).toFixed(1)}¢</td><td>${t.exit_price!=null?(t.exit_price*100).toFixed(1)+'¢':'--'}</td><td>${p}</td><td>${t.llm_verdict||'--'}</td><td>${t.outcome}</td></tr>`; } tbody.innerHTML=html; }
+  if(hasLog){ txt('tradeCount',rs.trades.length+' total'); const tbody=document.getElementById('tradeBody'); const recent=rs.trades.slice(-60).reverse(); let html=''; for(const t of recent){ const cls=t.outcome==='skipped-no-p2b'?'skipped-no-p2b':(t.outcome||'skipped'); const time=(t.timestamp||'').slice(5,16).replace('T',' '); const p=t.pnl!=null?(t.pnl>=0?'+$':'-$')+Math.abs(t.pnl).toLocaleString('en-US',{minimumFractionDigits:4,maximumFractionDigits:4}):'--'; html+=`<tr class="${cls}"><td>${time}</td><td>${t.side}</td><td>${((t.entry_price||0)*100).toFixed(1)}¢</td><td>${t.exit_price!=null?(t.exit_price*100).toFixed(1)+'¢':'--'}</td><td>${p}</td><td>${t.llm_verdict||'--'}</td><td>${t.outcome}</td></tr>`; } tbody.innerHTML=html; }
 
   // Chart
   const executedChart=(rs.trades||[]).filter(t=>t.pnl!=null);
@@ -787,7 +833,7 @@ function render(s) {
 
 function setDot(id,ok){ document.getElementById(id).className='dot '+(ok?'dot-on':'dot-off'); }
 function txt(id,v){ const el=document.getElementById(id); if(el) el.textContent=v; }
-function pnlText(id,v){ const el=document.getElementById(id); el.textContent=(v>=0?'+$':'−$')+Math.abs(v).toFixed(2); el.className='stat-val '+(v>=0?'positive':'negative'); }
+function pnlText(id,v){ const el=document.getElementById(id); el.textContent=(v>=0?'+$':'−$')+Math.abs(v).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); el.className='stat-val '+(v>=0?'positive':'negative'); }
 function fmtTime(s){ return Math.floor(s/60)+':'+String(Math.floor(s%60)).padStart(2,'0'); }
 
 function drawChart(executed){
@@ -808,9 +854,9 @@ function drawChart(executed){
   const zy=H-pad-((0-mn)/range)*(H-2*pad);
   ctx.strokeStyle='rgba(255,255,255,0.08)'; ctx.lineWidth=1; ctx.setLineDash([4,4]);
   ctx.beginPath();ctx.moveTo(pad,zy);ctx.lineTo(W-pad,zy);ctx.stroke();ctx.setLineDash([]);
-  ctx.fillStyle=cum>=0?'#10b981':'#ef4444'; ctx.font='600 12px "Geist Mono"'; ctx.textAlign='right';
+  ctx.fillStyle=cum>=0?'#10b981':'#ef4444'; ctx.font='600 12px "JetBrains Mono"'; ctx.textAlign='right';
   const lastY=H-pad-((pts[pts.length-1]-mn)/range)*(H-2*pad);
-  ctx.fillText((cum>=0?'+':'')+('$'+cum.toFixed(2)),W-pad,lastY-6);
+  ctx.fillText((cum>=0?'+$':'-$')+Math.abs(cum).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}),W-pad,lastY-6);
 }
 
 function populateConfig(cfg){
