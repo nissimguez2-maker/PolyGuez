@@ -775,12 +775,9 @@ class PolyGuezRunner:
         try:
             if self._polymarket:
                 log_event(logger, "clob_poll", f"Polling CLOB: yes_token={yes_token[:16]}..., no_token={no_token[:16]}...")
-                yes_price = await loop.run_in_executor(
-                    None, self._get_clob_price_with_log, yes_token, "UP",
-                )
-                no_price = await loop.run_in_executor(
-                    None, self._get_clob_price_with_log, no_token, "DOWN",
-                )
+                yes_future = loop.run_in_executor(None, self._get_clob_price_with_log, yes_token, "UP")
+                no_future = loop.run_in_executor(None, self._get_clob_price_with_log, no_token, "DOWN")
+                yes_price, no_price = await asyncio.gather(yes_future, no_future)
                 log_event(logger, "clob_prices", f"CLOB prices: UP={yes_price:.4f}, DOWN={no_price:.4f}")
             else:
                 # Fallback without wallet — use Gamma API outcomePrices

@@ -266,7 +266,7 @@ class PolyGuezConfig(BaseModel):
     data_provider_timeout: float = Field(default=3.0)
     market_slug_pattern: str = Field(default="btc-updown-5m")
     market_question_pattern: str = Field(default="Bitcoin Up or Down")
-    clob_poll_interval: float = Field(default=0.5)
+    clob_poll_interval: float = Field(default=0.35)
     mode: str = Field(default="dry-run")
     rtds_ws_url: str = Field(default="wss://ws-live-data.polymarket.com")
     binance_ws_url: str = Field(default="wss://stream.binance.com:9443/ws/btcusdt@trade")
