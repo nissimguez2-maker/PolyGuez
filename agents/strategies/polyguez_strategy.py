@@ -347,11 +347,39 @@ def save_rolling_stats(stats):
     os.makedirs(_DATA_DIR, exist_ok=True)
     with open(_HISTORY_FILE, "w") as f:
         f.write(stats.model_dump_json(indent=2))
+    # Upsert to Supabase as durable backup
+    try:
+        from agents.utils.supabase_logger import _client
+        client = _client()
+        if client:
+            client.table("rolling_stats").upsert({
+                "id": "singleton",
+                "data": stats.model_dump(),
+            }).execute()
+    except Exception as exc:
+        logger.warning(f"[STATS] Supabase save failed: {exc}")
 
 
 def load_rolling_stats():
+    # Try local file first
     try:
         with open(_HISTORY_FILE, "r") as f:
-            return RollingStats.model_validate_json(f.read())
+            data = f.read().strip()
+            if data:
+                logger.info("[STATS] Loaded from file")
+                return RollingStats.model_validate_json(data)
     except (FileNotFoundError, json.JSONDecodeError, Exception):
-        return RollingStats()
+        pass
+    # Fallback to Supabase
+    try:
+        from agents.utils.supabase_logger import _client
+        client = _client()
+        if client:
+            resp = client.table("rolling_stats").select("data").eq("id", "singleton").execute()
+            if resp.data and len(resp.data) > 0:
+                logger.info("[STATS] Loaded from Supabase (file missing)")
+                return RollingStats.model_validate(resp.data[0]["data"])
+    except Exception as exc:
+        logger.warning(f"[STATS] Supabase load failed: {exc}")
+    logger.info("[STATS] Starting fresh — no history found")
+    return RollingStats()
