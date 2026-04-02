@@ -395,7 +395,7 @@ class PolyGuezRunner:
 
         # Hold loop (if we entered a position)
         if entered and self._position:
-            await self._hold_loop(expiry_dt)
+            await self._hold_loop(expiry_dt, yes_token, no_token)
 
         # Wait for settlement — short wait for Gamma to mark market as closed
         if expiry_dt:
@@ -513,7 +513,8 @@ class PolyGuezRunner:
                     "clob_mispricing_ok": signal.clob_mispricing_ok,
                     "edge_ok": signal.edge_ok,
                     "spread_ok": signal.spread_ok,
-                    "depth_ok": signal.depth_ok,  # FIX 2
+                    "depth_ok": signal.depth_ok,
+                    "clob_consensus_ok": signal.clob_consensus_ok,
                     "no_position": signal.no_position,
                     "cooldown_ok": signal.cooldown_ok,
                     "daily_loss_ok": signal.daily_loss_ok,
@@ -530,7 +531,7 @@ class PolyGuezRunner:
             _v2_conds = [
                 signal.price_feed_ok,
                 signal.terminal_edge_ok, signal.delta_magnitude_ok, signal.edge_ok,
-                signal.spread_ok, signal.depth_ok, signal.no_position,
+                signal.spread_ok, signal.depth_ok, signal.clob_consensus_ok, signal.no_position,
                 signal.cooldown_ok, signal.daily_loss_ok, signal.balance_ok,
                 signal.position_limit_ok,
             ]
@@ -649,7 +650,7 @@ class PolyGuezRunner:
         })
         return True
 
-    async def _hold_loop(self, expiry_dt):
+    async def _hold_loop(self, expiry_dt, yes_token=None, no_token=None):
         """Monitor position for emergency exit until expiry."""
         entry_direction = "up" if self._position.side == "YES" else "down"
 
@@ -658,6 +659,14 @@ class PolyGuezRunner:
                 remaining = (expiry_dt - datetime.now(timezone.utc)).total_seconds()
                 if remaining < 5:
                     break  # Let it settle
+
+            # Keep CLOB prices live for dashboard
+            if yes_token and no_token:
+                yes_price, no_price, spread = await self._poll_clob(yes_token, no_token)
+                if self._current_signal and yes_price > 0 and no_price > 0:
+                    self._current_signal.yes_price = yes_price
+                    self._current_signal.no_price = no_price
+                    self._current_signal.spread = spread
 
             velocity = self._btc_feed.get_velocity()
             if check_emergency_exit(

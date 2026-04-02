@@ -17,12 +17,32 @@ def _client():
         return None
     _supabase_init_attempted = True
     try:
-        from supabase import create_client
+        from supabase import create_client, Client
         url = os.environ.get("SUPABASE_URL", "")
         key = os.environ.get("SUPABASE_SERVICE_KEY", "")
         if not url or not key:
             return None
-        _supabase_client = create_client(url, key)
+        # supabase 2.x may pass proxy= to httpx internally depending on versions.
+        # Patch httpx.Client/AsyncClient to ignore proxy kwarg if it causes TypeError.
+        import httpx
+        _orig_client_init = httpx.Client.__init__
+        _orig_async_init = httpx.AsyncClient.__init__
+        def _patched_client_init(self, *args, **kwargs):
+            kwargs.pop("proxy", None)
+            kwargs.pop("proxies", None)
+            return _orig_client_init(self, *args, **kwargs)
+        def _patched_async_init(self, *args, **kwargs):
+            kwargs.pop("proxy", None)
+            kwargs.pop("proxies", None)
+            return _orig_async_init(self, *args, **kwargs)
+        httpx.Client.__init__ = _patched_client_init
+        httpx.AsyncClient.__init__ = _patched_async_init
+        try:
+            _supabase_client = create_client(url, key)
+        finally:
+            # Restore original inits
+            httpx.Client.__init__ = _orig_client_init
+            httpx.AsyncClient.__init__ = _orig_async_init
         return _supabase_client
     except Exception as e:
         logger.warning(f"Supabase client init failed: {e}")

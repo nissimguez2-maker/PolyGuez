@@ -111,6 +111,10 @@ def evaluate_entry_signal(
     terminal_edge_ok = terminal_edge > config.min_terminal_edge
     delta_magnitude_ok = abs(strike_delta) > config.conviction_min_delta
 
+    # CLOB consensus: don't trade against overwhelming market consensus
+    our_price = yes_price if direction == "up" else no_price
+    clob_consensus_ok = our_price >= config.min_clob_consensus
+
     # Build all conditions for diagnostic logging
     _velocity_ok = abs(btc_velocity) > effective_velocity_threshold
     _edge_ok = edge > effective_required_edge
@@ -128,6 +132,7 @@ def evaluate_entry_signal(
         (_edge_ok, f"edge={edge:.4f}<{effective_required_edge:.4f}"),
         (_spread_ok, f"spread={spread:.4f}>={config.max_spread}"),
         (depth_ok, f"depth={clob_depth:.0f}<{config.min_clob_depth}"),
+        (clob_consensus_ok, f"consensus={our_price:.3f}<{config.min_clob_consensus}"),
         (_no_position, "already_in_position"),
         (cooldown_ok, "in_cooldown"),
         (_daily_loss_ok, "daily_loss_limit"),
@@ -163,6 +168,7 @@ def evaluate_entry_signal(
         balance_ok=_balance_ok,
         position_limit_ok=_position_limit_ok,
         depth_ok=depth_ok,
+        clob_consensus_ok=clob_consensus_ok,
         p2b_value=price_to_beat, p2b_source="description",
         strike_delta=strike_delta,
         terminal_probability=selected_side_probability,

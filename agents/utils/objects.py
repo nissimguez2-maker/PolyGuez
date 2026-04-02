@@ -287,6 +287,7 @@ class PolyGuezConfig(BaseModel):
     min_terminal_edge: float = Field(default=0.05, description="Min edge at terminal probability for entry")
     conviction_min_delta: float = Field(default=5.0, description="Min $ delta between Chainlink and P2B for conviction")
     conviction_min_delta_strict: float = Field(default=40.0, description="Strict delta threshold for fast-moving markets")
+    min_clob_consensus: float = Field(default=0.35, description="Min CLOB price on our side to confirm market consensus")
 
     dashboard_secret: str = Field(default="")
 
@@ -334,6 +335,7 @@ class SignalState(BaseModel):
     balance_ok: bool = False
     position_limit_ok: bool = False
     depth_ok: bool = False  # FIX 2
+    clob_consensus_ok: bool = True  # Block entry against overwhelming market consensus
     price_feed_ok: bool = True  # FIX 4: stale feed hard blocker
 
     # P2B enrichment fields
@@ -360,6 +362,7 @@ class SignalState(BaseModel):
             # Execution gates
             self.spread_ok,              # CLOB spread acceptable
             self.depth_ok,               # Order book has sufficient depth
+            self.clob_consensus_ok,      # Market not overwhelmingly against us
             # Risk gates
             self.no_position,            # Not already in a position
             self.cooldown_ok,            # Not in cooldown
