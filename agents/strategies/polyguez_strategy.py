@@ -106,7 +106,8 @@ def evaluate_entry_signal(
     oracle_gap_ok = gap_favors and abs(binance_chainlink_gap) >= config.min_oracle_gap
 
     clob_mispricing_ok = edge > 0 and token_price < estimated_fv
-    depth_ok = clob_depth >= config.min_clob_depth
+    # depth < 0 means unmeasurable (no wallet / API error) — skip gate
+    depth_ok = True if clob_depth < 0 else clob_depth >= config.min_clob_depth
     terminal_edge_ok = terminal_edge > config.min_terminal_edge
     delta_magnitude_ok = abs(strike_delta) > config.conviction_min_delta
 

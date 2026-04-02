@@ -1168,9 +1168,13 @@ class PolyGuezRunner:
             return 0.0
 
     async def _fetch_depth(self, token_id):
-        """FIX 2: Fetch CLOB depth for deterministic gate."""
+        """FIX 2: Fetch CLOB depth for deterministic gate.
+
+        Returns -1.0 when depth cannot be measured (no wallet, API error)
+        so the signal evaluator can skip the depth gate instead of blocking.
+        """
         if not self._polymarket:
-            return 999.0  # Don't block dry-run without wallet
+            return -1.0
         loop = asyncio.get_event_loop()
         book = None
         try:
@@ -1183,7 +1187,7 @@ class PolyGuezRunner:
         except Exception as exc:
             book_info = f"type={type(book).__name__}, attrs={[a for a in dir(book) if not a.startswith('_')]}" if book else "None"
             log_event(logger, "clob_depth_error", f"Depth fetch failed: {exc} | book: {book_info}", level=30)
-            return 0.0
+            return -1.0
 
     async def _get_clob_depth(self, token_id):
         """Get CLOB depth summary: top-of-book + depth within $0.05 per side."""
