@@ -1,4 +1,4 @@
-"""Price feed manager — direct Binance + RTDS Chainlink + on-chain fallback."""
+"""Price feed manager — direct Binance + RTDS Chainlink + multi-source REST fallback."""
 
 import asyncio
 import json
@@ -12,7 +12,7 @@ from agents.utils.logger import get_logger, log_event
 
 logger = get_logger("polyguez.price_feed")
 
-_RTDS_PING_INTERVAL = 5.0
+_RTDS_PING_INTERVAL = 4.0
 
 _RTDS_SUBSCRIBE_CHAINLINK = json.dumps({
     "action": "subscribe",
@@ -23,6 +23,34 @@ _RTDS_SUBSCRIBE_BINANCE_FALLBACK = json.dumps({
     "action": "subscribe",
     "subscriptions": [{"topic": "crypto_prices", "type": "*", "filters": json.dumps({"symbol": "btcusdt"})}],
 })
+
+# Multi-source REST price fetcher config
+_PRICE_SOURCES = [
+    {
+        "name": "CoinGecko",
+        "tag": "CG",
+        "url": "https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd",
+        "parse": lambda data: float(data["bitcoin"]["usd"]),
+    },
+    {
+        "name": "Coinbase",
+        "tag": "CB",
+        "url": "https://api.coinbase.com/v2/prices/BTC-USD/spot",
+        "parse": lambda data: float(data["data"]["amount"]),
+    },
+    {
+        "name": "CryptoCompare",
+        "tag": "CC",
+        "url": "https://min-api.cryptocompare.com/data/price?fsym=BTC&tsyms=USD",
+        "parse": lambda data: float(data["USD"]),
+    },
+    {
+        "name": "Kraken",
+        "tag": "KR",
+        "url": "https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+        "parse": lambda data: float(data["result"]["XXBTZUSD"]["c"][0]),
+    },
+]
 
 
 class PriceFeedManager:
@@ -57,6 +85,8 @@ class PriceFeedManager:
         self._onchain_feed = None
         self._onchain_active = False
         self._last_stale_log = 0.0
+        self._binance_blocked = False
+        self._http_session = None
 
     @property
     def is_connected(self):
@@ -189,6 +219,7 @@ class PriceFeedManager:
     async def start(self):
         self._stop.clear()
         self._stats_window_start = time.time()
+        self._http_session = aiohttp.ClientSession()
         self._binance_task = asyncio.create_task(self._binance_loop())
         self._rtds_task = asyncio.create_task(self._rtds_loop())
         if self._config.chainlink_onchain_fallback:
@@ -207,44 +238,51 @@ class PriceFeedManager:
                 task.cancel()
                 try: await task
                 except asyncio.CancelledError: pass
+        if self._http_session:
+            await self._http_session.close()
+            self._http_session = None
         self._binance_connected = False
         self._rtds_connected = False
         self._onchain_active = False
 
+    # -- Binance loop: WS attempt → multi-source REST fallback -------------
+
     async def _binance_loop(self):
         while not self._stop.is_set():
-            try:
-                await self._connect_binance_direct()
-            except asyncio.CancelledError:
-                break
-            except Exception as exc:
-                self._binance_connected = False
-                exc_str = str(exc)
-                log_event(logger, "binance_disconnect", f"Binance direct failed: {type(exc).__name__}: {exc}", level=40)
-                # HTTP 451 = geo-blocked — skip WS retries, go straight to REST polling
-                if "451" in exc_str:
-                    log_event(logger, "binance_451_detected", "HTTP 451 geo-block detected — switching to REST polling fallback", level=30)
-                    try:
-                        await self._connect_binance_rest_poll()
-                    except asyncio.CancelledError:
-                        break
-                    except Exception as rest_exc:
-                        log_event(logger, "binance_rest_fail", f"REST polling failed: {rest_exc}", level=40)
-                else:
-                    # Try RTDS fallback for non-451 errors
-                    try: await self._connect_binance_via_rtds()
-                    except Exception as fb_exc:
-                        log_event(logger, "binance_fallback_fail", f"RTDS fallback failed: {fb_exc}", level=40)
-                        # If RTDS also fails, try REST as last resort
-                        try:
-                            await self._connect_binance_rest_poll()
-                        except asyncio.CancelledError:
-                            break
-                        except Exception as rest_exc:
-                            log_event(logger, "binance_rest_fail", f"REST polling also failed: {rest_exc}", level=40)
-                delay = min(self._reconnect_delay_binance, 30.0)
-                await asyncio.sleep(delay)
-                self._reconnect_delay_binance = min(self._reconnect_delay_binance * 2, 30.0)
+            # Skip WS entirely if previously 451-blocked
+            if not self._binance_blocked:
+                try:
+                    await self._connect_binance_direct()
+                except asyncio.CancelledError:
+                    break
+                except Exception as exc:
+                    self._binance_connected = False
+                    exc_str = str(exc)
+                    log_event(logger, "binance_disconnect", f"Binance WS failed: {type(exc).__name__}: {exc}", level=40)
+                    if "451" in exc_str:
+                        self._binance_blocked = True
+                        log_event(logger, "binance_451_blocked", "HTTP 451 — Binance WS disabled for this session", level=30)
+
+            # Fallback: try RTDS for BTC prices, then multi-source REST
+            if self._binance_blocked or not self._binance_connected:
+                try:
+                    await self._connect_binance_via_rtds()
+                except asyncio.CancelledError:
+                    break
+                except Exception as fb_exc:
+                    log_event(logger, "binance_fallback_fail", f"RTDS BTC fallback failed: {fb_exc}", level=40)
+
+                # Multi-source REST polling (runs until stopped or another source reconnects)
+                try:
+                    await self._multi_source_poll_loop()
+                except asyncio.CancelledError:
+                    break
+                except Exception as rest_exc:
+                    log_event(logger, "multi_source_fail", f"Multi-source polling failed: {rest_exc}", level=40)
+
+            delay = min(self._reconnect_delay_binance, 30.0)
+            await asyncio.sleep(delay)
+            self._reconnect_delay_binance = min(self._reconnect_delay_binance * 2, 30.0)
 
     async def _connect_binance_direct(self):
         url = self._config.binance_ws_url
@@ -271,7 +309,7 @@ class PriceFeedManager:
             self._maybe_log_stats()
 
     async def _connect_binance_via_rtds(self):
-        ws = await asyncio.wait_for(websockets.connect(self._config.rtds_ws_url, ping_interval=5, ping_timeout=10), timeout=self._config.btc_feed_connect_timeout)
+        ws = await asyncio.wait_for(websockets.connect(self._config.rtds_ws_url, ping_interval=_RTDS_PING_INTERVAL, ping_timeout=10), timeout=self._config.btc_feed_connect_timeout)
         self._binance_source = "rtds-fallback"
         self._binance_connected = True
         log_event(logger, "binance_fallback", "Using RTDS for Binance prices")
@@ -302,39 +340,45 @@ class PriceFeedManager:
                 self._update_gap()
         await ws.close()
 
-    async def _connect_binance_rest_poll(self):
-        """Fallback: poll Binance REST API every 500ms when WS is unavailable (e.g. HTTP 451)."""
-        url = "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
-        self._binance_source = "binance-rest"
+    # -- Multi-source REST price fetcher ------------------------------------
+
+    async def _fetch_btc_price_multi_source(self) -> "float | None":
+        """Try CoinGecko → Coinbase → CryptoCompare → Kraken, return first success."""
+        if not self._http_session:
+            self._http_session = aiohttp.ClientSession()
+        for src in _PRICE_SOURCES:
+            try:
+                async with self._http_session.get(
+                    src["url"], timeout=aiohttp.ClientTimeout(total=5)
+                ) as resp:
+                    if resp.status != 200:
+                        log_event(logger, "price_source_http_error",
+                                  f"[PRICE/{src['tag']}] HTTP {resp.status}", level=30)
+                        continue
+                    data = await resp.json(content_type=None)
+                price = src["parse"](data)
+                if price is None or price <= 0:
+                    log_event(logger, "price_source_bad_value",
+                              f"[PRICE/{src['tag']}] Bad value: {price}", level=30)
+                    continue
+                log_event(logger, "price_source_ok", f"[PRICE/{src['tag']}] {price}")
+                return price
+            except Exception as exc:
+                log_event(logger, "price_source_error",
+                          f"[PRICE/{src['tag']}] {type(exc).__name__}: {exc}", level=30)
+                continue
+        return None
+
+    async def _multi_source_poll_loop(self):
+        """Poll multi-source REST every 3s, write to _binance_buffer."""
+        self._binance_source = "multi-rest"
         self._binance_connected = True
-        log_event(logger, "binance_rest_start", "Binance REST polling active (500ms interval)")
+        log_event(logger, "multi_source_start", "Multi-source REST polling active (3s interval)")
         try:
-            async with aiohttp.ClientSession() as session:
-                while not self._stop.is_set():
-                    try:
-                        async with session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
-                            if resp.status != 200:
-                                log_event(logger, "binance_rest_http_error", f"REST returned {resp.status}", level=30)
-                                await asyncio.sleep(2.0)
-                                continue
-                            data = await resp.json(content_type=None)
-                    except (aiohttp.ClientError, asyncio.TimeoutError) as e:
-                        log_event(logger, "binance_rest_poll_error", f"REST poll error: {e}", level=30)
-                        await asyncio.sleep(2.0)
-                        continue
-                    # Parse price from {"symbol": "BTCUSDT", "price": "82500.12"}
-                    try:
-                        price = float(data["price"])
-                    except (KeyError, ValueError, TypeError):
-                        log_event(logger, "binance_rest_bad_response", f"[REST] Bad response: {data}", level=30)
-                        await asyncio.sleep(2.0)
-                        continue
-                    if price <= 0:
-                        log_event(logger, "binance_rest_zero_price", f"[REST] Bad response: {data}", level=30)
-                        await asyncio.sleep(2.0)
-                        continue
+            while not self._stop.is_set():
+                price = await self._fetch_btc_price_multi_source()
+                if price is not None and price > 0:
                     ts = time.time()
-                    log_event(logger, "binance_rest_price", f"[REST] BTC price: {price}")
                     self._binance_msg_count += 1
                     self._binance_msg_count_window += 1
                     self._last_binance_msg_time = ts
@@ -343,10 +387,15 @@ class PriceFeedManager:
                         self._last_binance_buffer_ts = ts
                         self._update_gap()
                     self._maybe_log_stats()
-                    await asyncio.sleep(0.5)
+                else:
+                    log_event(logger, "multi_source_all_failed",
+                              "All price sources failed this cycle", level=40)
+                await asyncio.sleep(3.0)
         finally:
             self._binance_connected = False
             self._binance_source = ""
+
+    # -- RTDS Chainlink loop ------------------------------------------------
 
     async def _rtds_loop(self):
         while not self._stop.is_set():
@@ -365,13 +414,13 @@ class PriceFeedManager:
 
     async def _connect_rtds_chainlink(self):
         self._rtds_ws = await asyncio.wait_for(
-            websockets.connect(self._config.rtds_ws_url, ping_interval=5, ping_timeout=10),
+            websockets.connect(self._config.rtds_ws_url, ping_interval=_RTDS_PING_INTERVAL, ping_timeout=10),
             timeout=self._config.btc_feed_connect_timeout,
         )
         self._rtds_connected = True
         self._chainlink_source = "rtds"
         self._reconnect_delay_rtds = 1.0
-        log_event(logger, "rtds_connected", "Connected to RTDS for Chainlink (ping_interval=5s)")
+        log_event(logger, "rtds_connected", f"Connected to RTDS for Chainlink (ping_interval={_RTDS_PING_INTERVAL}s)")
         await self._rtds_ws.send(_RTDS_SUBSCRIBE_CHAINLINK)
         self._rtds_ping_task = asyncio.create_task(self._rtds_ping_loop())
         async for raw in self._rtds_ws:
@@ -416,15 +465,22 @@ class PriceFeedManager:
             while not self._stop.is_set():
                 await asyncio.sleep(_RTDS_PING_INTERVAL)
                 if self._rtds_ws and self._rtds_ws.open:
-                    await self._rtds_ws.send("PING")
-                    if self._last_rtds_msg_time > 0 and time.time() - self._last_rtds_msg_time > 10.0:
-                        log_event(logger, "rtds_stale", "No RTDS message for 10s — forcing reconnect", level=40)
+                    try:
+                        await asyncio.wait_for(self._rtds_ws.send("PING"), timeout=5.0)
+                    except (asyncio.TimeoutError, websockets.exceptions.ConnectionClosed) as exc:
+                        log_event(logger, "rtds_ping_fail", f"RTDS ping failed: {exc}", level=30)
+                        await self._rtds_ws.close()
+                        break
+                    if self._last_rtds_msg_time > 0 and time.time() - self._last_rtds_msg_time > 20.0:
+                        log_event(logger, "rtds_stale", "No RTDS message for 20s — forcing reconnect", level=40)
                         await self._rtds_ws.close()
                         break
         except asyncio.CancelledError: pass
 
+    # -- Chainlink on-chain fallback ----------------------------------------
+
     async def _chainlink_onchain_loop(self):
-        """FIX 4: Poll Chainlink on-chain when RTDS is down."""
+        """Poll Chainlink on-chain when RTDS is down."""
         log_event(logger, "onchain_fallback_init", "On-chain fallback monitor started (dormant)")
         while not self._stop.is_set():
             try:
@@ -470,6 +526,8 @@ class PriceFeedManager:
                 log_event(logger, "onchain_loop_error", f"Error: {exc}", level=40)
                 await asyncio.sleep(5.0)
         self._onchain_active = False
+
+    # -- Helpers ------------------------------------------------------------
 
     def _update_gap(self):
         gap = self.get_binance_chainlink_gap()
