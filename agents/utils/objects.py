@@ -229,6 +229,8 @@ class PolyGuezConfig(BaseModel):
     bet_size_strong: float = Field(default=7.0, ge=0.5, le=50.0, description="Strong signal bet size")
     bet_size_low_balance_normal: float = Field(default=3.0, ge=0.5, le=50.0, description="Normal bet when balance < low_balance_threshold")
     bet_size_low_balance_strong: float = Field(default=5.0, ge=0.5, le=50.0, description="Strong bet when balance < low_balance_threshold")
+    use_maker_orders: bool = Field(default=True, description="Use limit orders as maker to avoid taker fees")
+    maker_price_offset: float = Field(default=0.005, ge=0.001, le=0.05, description="Place limit price this much below best ask")
     strong_edge_threshold: float = Field(default=0.25, ge=0.01, le=0.5, description="Edge threshold for strong signal")
     strong_depth_threshold: float = Field(default=40000.0, ge=0.0, description="Depth threshold for strong signal")
     low_balance_threshold: float = Field(default=40.0, ge=1.0, le=500.0, description="Balance below which low-balance sizing applies")
@@ -364,6 +366,8 @@ class SignalState(BaseModel):
             self.price_feed_ok,          # At least one price source alive
             self.chainlink_fresh_ok,     # Chainlink not stale near expiry
             # V2 core gates
+            self.velocity_ok,            # BTC must be moving fast enough
+            self.oracle_gap_ok,          # Binance-Chainlink gap must confirm direction
             self.terminal_edge_ok,       # Terminal probability edge above minimum
             self.delta_magnitude_ok,     # Strike delta large enough for conviction
             self.edge_ok,                # Fair value edge (now based on terminal prob)

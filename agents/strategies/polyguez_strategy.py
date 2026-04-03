@@ -324,9 +324,26 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
     return (verdict, reason, adapter.name, round(elapsed, 2))
 
 
-async def execute_entry(polymarket_client, token_id, size_usdc, mode):
+async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=None):
     if mode == "live":
         loop = asyncio.get_event_loop()
+        # Maker limit order path — avoid taker fees
+        if config and getattr(config, 'use_maker_orders', False):
+            try:
+                from py_clob_client.clob_types import OrderArgs, OrderType
+                from py_clob_client.constants import BUY
+                book = polymarket_client.client.get_order_book(token_id)
+                if book and book.asks:
+                    best_ask = float(book.asks[0].price)
+                    limit_price = max(0.01, round(best_ask - config.maker_price_offset, 4))
+                    order_args = OrderArgs(token_id=token_id, price=limit_price, size=size_usdc, side=BUY)
+                    signed = await loop.run_in_executor(None, polymarket_client.client.create_order, order_args)
+                    resp = await loop.run_in_executor(None, lambda: polymarket_client.client.post_order(signed, orderType=OrderType.GTC))
+                    log_event(logger, "maker_order_posted", f"[MAKER] Limit order at {limit_price:.4f}")
+                    return {"status": "maker_posted", "price": limit_price, "response": resp}
+            except Exception as exc:
+                log_event(logger, "maker_order_fallback", f"Maker order failed, falling back to FOK: {exc}", level=30)
+        # FOK market order fallback
         try:
             from py_clob_client.clob_types import MarketOrderArgs, OrderType
             order_args = MarketOrderArgs(token_id=token_id, amount=size_usdc)
@@ -339,7 +356,8 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode):
             return {"status": "error", "error": str(exc)}
     else:
         tag = "[DRY-RUN]" if mode == "dry-run" else "[PAPER]"
-        log_event(logger, "order_simulated", f"{tag} Simulated buy {size_usdc} USDC on {token_id}")
+        maker_tag = " [MAKER]" if config and getattr(config, 'use_maker_orders', False) else ""
+        log_event(logger, "order_simulated", f"{tag}{maker_tag} Simulated buy {size_usdc} USDC on {token_id}")
         return {"status": "simulated", "mode": mode}
 
 

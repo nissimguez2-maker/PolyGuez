@@ -76,7 +76,7 @@ class OpenAIAdapter(LLMAdapter):
                 loop.run_in_executor(
                     None,
                     lambda: llm.invoke([
-                        SystemMessage(content="Respond with exactly one word: GO or NO-GO. No explanation."),
+                        SystemMessage(content="Reply in EXACTLY this format on one line: VERDICT: GO | REASON: <one sentence>  OR  VERDICT: NO-GO | REASON: <one sentence>. No other text."),
                         HumanMessage(content=prompt),
                     ]).content,
                 ),
@@ -111,8 +111,8 @@ class AnthropicAdapter(LLMAdapter):
             response = await asyncio.wait_for(
                 client.messages.create(
                     model=self._model,
-                    max_tokens=5,
-                    system="Respond with exactly one word: GO or NO-GO. No explanation.",
+                    max_tokens=60,
+                    system="Reply in EXACTLY this format on one line: VERDICT: GO | REASON: <one sentence>  OR  VERDICT: NO-GO | REASON: <one sentence>. No other text.",
                     messages=[{"role": "user", "content": prompt}],
                 ),
                 timeout=timeout,
@@ -150,10 +150,10 @@ class GroqAdapter(LLMAdapter):
                 return client.chat.completions.create(
                     model=self._model,
                     messages=[
-                        {"role": "system", "content": "Respond with exactly one word: GO or NO-GO. No explanation."},
+                        {"role": "system", "content": "Reply in EXACTLY this format on one line: VERDICT: GO | REASON: <one sentence>  OR  VERDICT: NO-GO | REASON: <one sentence>. No other text."},
                         {"role": "user", "content": prompt},
                     ],
-                    max_tokens=5,
+                    max_tokens=60,
                     temperature=0,
                 )
 

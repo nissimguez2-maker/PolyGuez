@@ -450,7 +450,7 @@ class PolyGuezRunner:
         while not self._killed:
             if expiry_dt:
                 remaining = (expiry_dt - datetime.now(timezone.utc)).total_seconds()
-                elapsed = 300.0 - remaining
+                elapsed = max(0.0, 300.0 - remaining)
                 if remaining < 30:
                     log_event(logger, "entry_skip", f"Too close to expiry ({remaining:.0f}s remaining), skipping entry")
                     return False
@@ -632,7 +632,7 @@ class PolyGuezRunner:
         entry_price = signal.yes_price if side == "YES" else signal.no_price
 
         # Execute
-        result = await execute_entry(self._polymarket, token_id, size, self.config.mode)
+        result = await execute_entry(self._polymarket, token_id, size, self.config.mode, config=self.config)
 
         if result["status"] == "error":
             record = TradeRecord(
