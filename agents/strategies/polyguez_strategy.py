@@ -26,7 +26,7 @@ def evaluate_entry_signal(
     btc_velocity, btc_price, yes_price, no_price, spread,
     elapsed_seconds, usdc_balance, config, rolling_stats,
     has_position, open_position_count=0,
-    chainlink_price=0.0, binance_chainlink_gap=0.0,
+    chainlink_price=0.0, chainlink_age=-1.0, binance_chainlink_gap=0.0,
     clob_depth=0.0, price_to_beat=None,
     price_feed_ok=True,
 ):
@@ -111,6 +111,13 @@ def evaluate_entry_signal(
     terminal_edge_ok = terminal_edge > config.min_terminal_edge
     delta_magnitude_ok = abs(strike_delta) > config.conviction_min_delta
 
+    # Stale Chainlink guard near expiry
+    chainlink_fresh_ok = True
+    if chainlink_age > 15.0 and elapsed_seconds > 240.0:
+        chainlink_fresh_ok = False
+        log_event(logger, "signal_stale_cl",
+            f"[SIGNAL] stale_cl={chainlink_age:.0f}s near_expiry={300.0 - elapsed_seconds:.0f}s → blocked")
+
     # CLOB consensus: don't trade against overwhelming market consensus
     our_price = yes_price if direction == "up" else no_price
     clob_consensus_ok = our_price >= config.min_clob_consensus
@@ -127,6 +134,7 @@ def evaluate_entry_signal(
     # Log first failing condition for quick bottleneck identification
     _conditions = [
         (price_feed_ok, "price_feed_stale"),
+        (chainlink_fresh_ok, f"stale_chainlink={chainlink_age:.0f}s_near_expiry"),
         (terminal_edge_ok, f"terminal_edge={terminal_edge:.4f}<{config.min_terminal_edge}"),
         (delta_magnitude_ok, f"delta={abs(strike_delta):.1f}<{config.conviction_min_delta}"),
         (_edge_ok, f"edge={edge:.4f}<{effective_required_edge:.4f}"),
@@ -168,6 +176,7 @@ def evaluate_entry_signal(
         balance_ok=_balance_ok,
         position_limit_ok=_position_limit_ok,
         depth_ok=depth_ok,
+        chainlink_fresh_ok=chainlink_fresh_ok,
         clob_consensus_ok=clob_consensus_ok,
         p2b_value=price_to_beat, p2b_source="description",
         strike_delta=strike_delta,

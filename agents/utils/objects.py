@@ -290,9 +290,9 @@ class PolyGuezConfig(BaseModel):
     p2b_sanity_max: float = Field(default=500000.0, description="Max plausible BTC price for P2B")
     p2b_consecutive_failure_halt: int = Field(default=50, description="Halt after N consecutive P2B parse failures")
     min_terminal_edge: float = Field(default=0.05, description="Min edge at terminal probability for entry")
-    conviction_min_delta: float = Field(default=5.0, description="Min $ delta between Chainlink and P2B for conviction")
+    conviction_min_delta: float = Field(default=15.0, description="Min $ delta between Chainlink and P2B for conviction")
     conviction_min_delta_strict: float = Field(default=40.0, description="Strict delta threshold for fast-moving markets")
-    min_clob_consensus: float = Field(default=0.35, description="Min CLOB price on our side to confirm market consensus")
+    min_clob_consensus: float = Field(default=0.40, description="Min CLOB price on our side to confirm market consensus")
 
     dashboard_secret: str = Field(default="")
 
@@ -341,6 +341,7 @@ class SignalState(BaseModel):
     position_limit_ok: bool = False
     depth_ok: bool = False  # FIX 2
     clob_consensus_ok: bool = True  # Block entry against overwhelming market consensus
+    chainlink_fresh_ok: bool = True  # Block entry when Chainlink is stale near expiry
     price_feed_ok: bool = True  # FIX 4: stale feed hard blocker
 
     # P2B enrichment fields
@@ -358,8 +359,9 @@ class SignalState(BaseModel):
     def all_conditions_met(self) -> bool:
         """V2 entry conditions — phase/strike/edge based."""
         return all([
-            # Feed health gate
+            # Feed health gates
             self.price_feed_ok,          # At least one price source alive
+            self.chainlink_fresh_ok,     # Chainlink not stale near expiry
             # V2 core gates
             self.terminal_edge_ok,       # Terminal probability edge above minimum
             self.delta_magnitude_ok,     # Strike delta large enough for conviction
@@ -387,6 +389,15 @@ class PositionState(BaseModel):
     price_to_beat: float = 0.0
 
 
+class PendingSettlement(BaseModel):
+    market_id: str
+    side: str
+    entry_price: float
+    size_usdc: float
+    entry_time: str = ""
+    market_question: str = ""
+
+
 class RollingStats(BaseModel):
     trades: List[TradeRecord] = Field(default_factory=list)
     daily_pnl: float = 0.0
@@ -395,6 +406,7 @@ class RollingStats(BaseModel):
     max_capital_at_risk: float = 0.0
     simulated_balance: float = 100.0  # Persistent dry-run balance, starts at $100
     p2b_skips: int = 0
+    pending_settlements: List[PendingSettlement] = Field(default_factory=list)
 
     @property
     def last_n_trades(self) -> List[TradeRecord]:

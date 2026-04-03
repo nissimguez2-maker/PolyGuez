@@ -183,7 +183,12 @@ class PriceFeedManager:
         return (n * sum_xy - sum_x * sum_y) / denom
 
     def get_chainlink_price(self):
-        return self._chainlink_buffer[-1][1] if self._chainlink_buffer else 0.0
+        """Return (price, age_seconds). Age is seconds since last update, or -1 if no data."""
+        if not self._chainlink_buffer:
+            return (0.0, -1.0)
+        ts, price = self._chainlink_buffer[-1]
+        age = time.time() - ts
+        return (price, age)
 
     def get_chainlink_price_at(self, target_timestamp):
         """Look up the Chainlink price closest to a target timestamp.
@@ -211,7 +216,8 @@ class PriceFeedManager:
         return len(self._chainlink_buffer) > 0
 
     def get_binance_chainlink_gap(self):
-        bp, cp = self.get_price(), self.get_chainlink_price()
+        bp = self.get_price()
+        cp, _ = self.get_chainlink_price()
         return bp - cp if bp and cp else 0.0
 
     def get_gap_direction(self):

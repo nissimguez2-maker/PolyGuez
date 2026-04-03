@@ -36,6 +36,7 @@ from agents.utils.logger import get_logger, log_event
 from agents.utils.supabase_logger import log_signal, log_trade
 from agents.utils.objects import (
     DashboardSnapshot,
+    PendingSettlement,
     PolyGuezConfig,
     PositionState,
     RollingStats,
@@ -146,7 +147,7 @@ class PolyGuezRunner:
             except (ValueError, TypeError):
                 pass
 
-        chainlink_price = self._btc_feed.get_chainlink_price()
+        chainlink_price, _cl_age = self._btc_feed.get_chainlink_price()
         chainlink_vs_ptb = chainlink_price - self._price_to_beat if chainlink_price and self._price_to_beat is not None else 0.0
 
         return DashboardSnapshot(
@@ -282,6 +283,9 @@ class PolyGuezRunner:
 
     async def _cycle(self):
         """One full market cycle: discover → trade → settle."""
+        # Resolve any pending settlements from prior cycles
+        await self._resolve_pending_settlements()
+
         # Reset daily P&L if new day
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if self._rolling_stats.daily_pnl_reset_utc != today:
@@ -344,7 +348,7 @@ class PolyGuezRunner:
                     {"source": "chainlink_buffer", "offset_seconds": round(cl_offset, 1)})
 
                 # Cross-check buffer P2B against current Chainlink
-                current_cl = self._btc_feed.get_chainlink_price()
+                current_cl, _ = self._btc_feed.get_chainlink_price()
                 if current_cl and current_cl > 0:
                     divergence = abs(self._price_to_beat - current_cl)
                     # Tight tolerance if offset < 5s, wider if older
@@ -358,7 +362,7 @@ class PolyGuezRunner:
                     self._p2b_cross_check_divergence = 0.0
             else:
                 # Buffer doesn't have a price near eventStartTime — fall back to current Chainlink
-                current_cl = self._btc_feed.get_chainlink_price()
+                current_cl, _ = self._btc_feed.get_chainlink_price()
                 if current_cl and current_cl > 0:
                     self._price_to_beat = current_cl
                     self._p2b_source = "chainlink_current"
@@ -486,7 +490,8 @@ class PolyGuezRunner:
                 rolling_stats=self._rolling_stats,
                 has_position=self._position is not None,
                 open_position_count=1 if self._position else 0,
-                chainlink_price=self._btc_feed.get_chainlink_price(),
+                chainlink_price=self._btc_feed.get_chainlink_price()[0],
+                chainlink_age=self._btc_feed.get_chainlink_price()[1],
                 binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
                 clob_depth=depth,  # FIX 2
                 price_to_beat=self._price_to_beat,
@@ -503,7 +508,7 @@ class PolyGuezRunner:
                 "velocity": round(signal.btc_velocity, 6),
                 "velocity_source": self._btc_feed.velocity_source,
                 "btc_price": round(btc_price_raw, 2),
-                "cl_price": round(self._btc_feed.get_chainlink_price(), 2),
+                "cl_price": round(self._btc_feed.get_chainlink_price()[0], 2),
                 "rtds_age": round(self._btc_feed.rtds_msg_age, 1),
                 "binance_age": round(self._btc_feed.binance_msg_age, 1),
                 "edge": round(signal.edge, 4),
@@ -548,7 +553,7 @@ class PolyGuezRunner:
                 "market_question": self._current_market.get("question", "") if self._current_market else "",
                 "elapsed_seconds": round(elapsed, 1),
                 "btc_price": self._btc_feed.get_price() or 0.0,
-                "chainlink_price": self._btc_feed.get_chainlink_price(),
+                "chainlink_price": self._btc_feed.get_chainlink_price()[0],
                 "strike_delta": signal.strike_delta,
                 "terminal_probability": signal.terminal_probability,
                 "terminal_edge": signal.terminal_edge,
@@ -682,7 +687,7 @@ class PolyGuezRunner:
             velocity = self._btc_feed.get_velocity()
             if check_emergency_exit(
                 velocity, entry_direction, self.config,
-                chainlink_price=self._btc_feed.get_chainlink_price(),
+                chainlink_price=self._btc_feed.get_chainlink_price()[0],
                 price_to_beat=self._position.price_to_beat,
             ):
                 result = await execute_emergency_exit(
@@ -729,6 +734,7 @@ class PolyGuezRunner:
                         self._rolling_stats.simulated_balance + pnl, 4
                     )
                 self._position = None
+                self._open_position = None  # Prevent double PnL in _settle_open_position
                 self._apply_cooldown()
                 return
 
@@ -835,9 +841,77 @@ class PolyGuezRunner:
                 "mode": self.config.mode,
             })
 
+        if outcome_str == "pending":
+            self._rolling_stats.pending_settlements.append(PendingSettlement(
+                market_id=market_id,
+                side=self._position.side,
+                entry_price=self._position.entry_price,
+                size_usdc=self._position.size_usdc,
+                entry_time=self._position.entry_time,
+                market_question=self._current_market.get("question", "") if self._current_market else "",
+            ))
+            log_event(logger, "pending_settlement_queued",
+                f"Market {market_id} queued for re-settlement ({len(self._rolling_stats.pending_settlements)} pending)")
+
         self._position = None
         if outcome_str != "pending":
             self._apply_cooldown()
+
+    async def _resolve_pending_settlements(self):
+        """Re-query Gamma for any pending settlements and resolve them."""
+        if not self._rolling_stats.pending_settlements:
+            return
+        resolved = []
+        for ps in self._rolling_stats.pending_settlements:
+            try:
+                loop = asyncio.get_event_loop()
+                market = await loop.run_in_executor(None, self._discovery.get_market_by_id, ps.market_id)
+                if not market or not market.get("closed"):
+                    continue
+                outcome_prices = market.get("outcomePrices", "")
+                if isinstance(outcome_prices, str):
+                    try:
+                        outcome_prices = json.loads(outcome_prices)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                if not isinstance(outcome_prices, list) or len(outcome_prices) < 2:
+                    continue
+                yes_settled = float(outcome_prices[0])
+                no_settled = float(outcome_prices[1])
+                settled_price = yes_settled if ps.side == "YES" else no_settled
+                if settled_price > 0.5:
+                    pnl = round((1.0 - ps.entry_price) * ps.size_usdc, 4)
+                    outcome = "win"
+                else:
+                    pnl = round(-ps.entry_price * ps.size_usdc, 4)
+                    outcome = "loss"
+                record = TradeRecord(
+                    market_id=ps.market_id,
+                    market_question=ps.market_question,
+                    side=ps.side,
+                    entry_price=ps.entry_price,
+                    pnl=pnl,
+                    outcome=outcome,
+                    reason="resolved-from-pending",
+                )
+                self._rolling_stats.trades.append(record)
+                self._rolling_stats.daily_pnl += pnl
+                if self.config.mode == "dry-run":
+                    self._rolling_stats.simulated_balance = round(
+                        self._rolling_stats.simulated_balance + pnl, 4)
+                log_event(logger, "pending_resolved",
+                    f"Pending settlement resolved: {ps.market_id} → {outcome} PnL=${pnl:+.4f}")
+                resolved.append(ps)
+            except Exception as exc:
+                log_event(logger, "pending_resolve_error",
+                    f"Error resolving {ps.market_id}: {exc}", level=30)
+        if resolved:
+            self._rolling_stats.pending_settlements = [
+                ps for ps in self._rolling_stats.pending_settlements if ps not in resolved
+            ]
+            save_rolling_stats(self._rolling_stats)
+            log_event(logger, "pending_resolved_batch",
+                f"Resolved {len(resolved)} pending settlements, {len(self._rolling_stats.pending_settlements)} remaining")
 
     async def _settle_open_position(self):
         """Settle a dry-run tracked position by fetching the final CLOB mid price."""
