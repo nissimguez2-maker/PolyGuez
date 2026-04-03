@@ -225,19 +225,19 @@ class Article(BaseModel):
 
 class PolyGuezConfig(BaseModel):
     # Fixed bet sizing
-    bet_size_normal: float = Field(default=5.0, description="Normal signal bet size")
-    bet_size_strong: float = Field(default=7.0, description="Strong signal bet size")
-    bet_size_low_balance_normal: float = Field(default=3.0, description="Normal bet when balance < low_balance_threshold")
-    bet_size_low_balance_strong: float = Field(default=5.0, description="Strong bet when balance < low_balance_threshold")
-    strong_edge_threshold: float = Field(default=0.25, description="Edge threshold for strong signal")
-    strong_depth_threshold: float = Field(default=40000.0, description="Depth threshold for strong signal")
-    low_balance_threshold: float = Field(default=40.0, description="Balance below which low-balance sizing applies")
+    bet_size_normal: float = Field(default=5.0, ge=0.5, le=50.0, description="Normal signal bet size")
+    bet_size_strong: float = Field(default=7.0, ge=0.5, le=50.0, description="Strong signal bet size")
+    bet_size_low_balance_normal: float = Field(default=3.0, ge=0.5, le=50.0, description="Normal bet when balance < low_balance_threshold")
+    bet_size_low_balance_strong: float = Field(default=5.0, ge=0.5, le=50.0, description="Strong bet when balance < low_balance_threshold")
+    strong_edge_threshold: float = Field(default=0.25, ge=0.01, le=0.5, description="Edge threshold for strong signal")
+    strong_depth_threshold: float = Field(default=40000.0, ge=0.0, description="Depth threshold for strong signal")
+    low_balance_threshold: float = Field(default=40.0, ge=1.0, le=500.0, description="Balance below which low-balance sizing applies")
     max_daily_loss: Optional[float] = Field(default=None)
-    max_open_positions: int = Field(default=1)
-    velocity_threshold: float = Field(default=0.05)
-    min_edge: float = Field(default=0.03)
-    max_spread: float = Field(default=0.10)
-    min_oracle_gap: float = Field(default=15.0)
+    max_open_positions: int = Field(default=1, ge=1, le=5)
+    velocity_threshold: float = Field(default=0.05, ge=0.001, le=1.0)
+    min_edge: float = Field(default=0.03, ge=0.01, le=0.5)
+    max_spread: float = Field(default=0.10, ge=0.01, le=0.5)
+    min_oracle_gap: float = Field(default=15.0, ge=0.0)
 
     # FIX 1: Split reversal_threshold into two fields
     reversal_velocity_threshold: float = Field(default=0.08, description="$/sec for velocity-based emergency exit fallback")
@@ -289,10 +289,10 @@ class PolyGuezConfig(BaseModel):
     p2b_sanity_min: float = Field(default=10000.0, description="Min plausible BTC price for P2B")
     p2b_sanity_max: float = Field(default=500000.0, description="Max plausible BTC price for P2B")
     p2b_consecutive_failure_halt: int = Field(default=50, description="Halt after N consecutive P2B parse failures")
-    min_terminal_edge: float = Field(default=0.05, description="Min edge at terminal probability for entry")
-    conviction_min_delta: float = Field(default=15.0, description="Min $ delta between Chainlink and P2B for conviction")
-    conviction_min_delta_strict: float = Field(default=40.0, description="Strict delta threshold for fast-moving markets")
-    min_clob_consensus: float = Field(default=0.40, description="Min CLOB price on our side to confirm market consensus")
+    min_terminal_edge: float = Field(default=0.05, ge=0.01, le=0.5, description="Min edge at terminal probability for entry")
+    conviction_min_delta: float = Field(default=15.0, ge=1.0, le=200.0, description="Min $ delta between Chainlink and P2B for conviction")
+    conviction_min_delta_strict: float = Field(default=40.0, ge=1.0, le=500.0, description="Strict delta threshold for fast-moving markets")
+    min_clob_consensus: float = Field(default=0.40, ge=0.10, le=0.90, description="Min CLOB price on our side to confirm market consensus")
 
     dashboard_secret: str = Field(default="")
 
@@ -310,6 +310,7 @@ class TradeRecord(BaseModel):
     llm_verdict: str = ""
     llm_reason: str = ""
     llm_provider: str = ""
+    size_usdc: float = 0.0
     outcome: str = ""  # win, loss, skipped, emergency-exit, pending
     reason: str = ""
 

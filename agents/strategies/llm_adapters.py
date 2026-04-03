@@ -19,7 +19,7 @@ _VERDICT_RE = re.compile(
 
 
 def parse_llm_response(raw):
-    """Extract (verdict, reason) from LLM output. Returns ('GO', 'parse-fallback') on failure."""
+    """Extract (verdict, reason) from LLM output. Returns ('NO-GO', 'parse-fallback') on failure."""
     match = _VERDICT_RE.search(raw.strip())
     if match:
         return (match.group(1).upper(), match.group(2).strip())
@@ -30,7 +30,7 @@ def parse_llm_response(raw):
         return ("REDUCE-SIZE", raw.strip()[:200])
     if "GO" in upper:
         return ("GO", raw.strip()[:200])
-    return ("GO", "parse-fallback")
+    return ("NO-GO", "parse-fallback")
 
 
 class LLMAdapter(ABC):
@@ -42,7 +42,7 @@ class LLMAdapter(ABC):
     async def confirm_trade(self, prompt, timeout):
         """Send prompt to LLM, return (verdict, reason).
 
-        Must respect timeout (seconds). On any failure, return ('GO', 'error-default').
+        Must respect timeout (seconds). On any failure, return ('NO-GO', 'llm-unavailable').
         """
         raise NotImplementedError
 
@@ -72,10 +72,10 @@ class OpenAIAdapter(LLMAdapter):
             return parse_llm_response(result)
         except asyncio.TimeoutError:
             log_event(logger, "llm_timeout", f"OpenAI timed out after {timeout}s")
-            return ("GO", "timeout-default")
+            return ("NO-GO", "llm-unavailable")
         except Exception as exc:
             log_event(logger, "llm_error", f"OpenAI error: {exc}")
-            return ("GO", f"error-default: {exc}")
+            return ("NO-GO", f"llm-unavailable: {exc}")
 
 
 class AnthropicAdapter(LLMAdapter):
@@ -92,7 +92,7 @@ class AnthropicAdapter(LLMAdapter):
 
             api_key = os.getenv("ANTHROPIC_API_KEY", "")
             if not api_key:
-                return ("GO", "no-anthropic-key")
+                return ("NO-GO", "llm-unavailable")
 
             client = anthropic.AsyncAnthropic(api_key=api_key)
             response = await asyncio.wait_for(
@@ -107,10 +107,10 @@ class AnthropicAdapter(LLMAdapter):
             return parse_llm_response(raw)
         except asyncio.TimeoutError:
             log_event(logger, "llm_timeout", f"Anthropic timed out after {timeout}s")
-            return ("GO", "timeout-default")
+            return ("NO-GO", "llm-unavailable")
         except Exception as exc:
             log_event(logger, "llm_error", f"Anthropic error: {exc}")
-            return ("GO", f"error-default: {exc}")
+            return ("NO-GO", f"llm-unavailable: {exc}")
 
 
 class GroqAdapter(LLMAdapter):
@@ -128,7 +128,7 @@ class GroqAdapter(LLMAdapter):
 
             api_key = os.getenv("GROQ_API_KEY", "")
             if not api_key:
-                return ("GO", "no-groq-key")
+                return ("NO-GO", "llm-unavailable")
 
             client = Groq(api_key=api_key)
 
@@ -148,10 +148,10 @@ class GroqAdapter(LLMAdapter):
             return parse_llm_response(raw)
         except asyncio.TimeoutError:
             log_event(logger, "llm_timeout", f"Groq timed out after {timeout}s")
-            return ("GO", "timeout-default")
+            return ("NO-GO", "llm-unavailable")
         except Exception as exc:
             log_event(logger, "llm_error", f"Groq error: {exc}")
-            return ("GO", f"error-default: {exc}")
+            return ("NO-GO", f"llm-unavailable: {exc}")
 
 
 # -- Registry ----------------------------------------------------------------

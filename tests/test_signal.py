@@ -248,7 +248,7 @@ class TestSignalEvaluation(unittest.TestCase):
 
     def test_terminal_edge_too_small_blocks(self):
         """Near 50/50 probability → terminal_edge near 0 → fails gate."""
-        config = _default_config(min_terminal_edge=0.05, conviction_min_delta=0.0)
+        config = _default_config(min_terminal_edge=0.05, conviction_min_delta=1.0)
         stats = _stats_with_trades(["win"] * 6)
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,

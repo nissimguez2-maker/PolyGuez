@@ -384,7 +384,24 @@ _DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
 _HISTORY_FILE = os.path.join(_DATA_DIR, "trade_history.json")
 
 
+_MAX_TRADES = 500
+
+
 def save_rolling_stats(stats):
+    # Cap trades list — archive overflow to Supabase
+    if len(stats.trades) > _MAX_TRADES:
+        overflow = stats.trades[:-_MAX_TRADES]
+        stats.trades = stats.trades[-_MAX_TRADES:]
+        try:
+            from agents.utils.supabase_logger import _client
+            client = _client()
+            if client:
+                rows = [{"ts": t.timestamp, "data": t.model_dump()} for t in overflow]
+                client.table("trade_archive").insert(rows).execute()
+                logger.info(f"[STATS] Archived {len(overflow)} trades to Supabase")
+        except Exception as exc:
+            logger.warning(f"[STATS] Trade archive failed: {exc}")
+
     os.makedirs(_DATA_DIR, exist_ok=True)
     with open(_HISTORY_FILE, "w") as f:
         f.write(stats.model_dump_json(indent=2))

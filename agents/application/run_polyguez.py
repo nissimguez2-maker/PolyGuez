@@ -6,6 +6,7 @@ Separate from existing Trader.one_best_trade() pipeline.
 import asyncio
 import json
 import os
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 
@@ -56,7 +57,7 @@ class PolyGuezRunner:
 
     def __init__(self, config=None):
         self.config = config or PolyGuezConfig()
-        self._config_lock = asyncio.Lock()
+        self._config_lock = threading.Lock()
 
         # Existing repo components
         self._polymarket = None  # Lazy init — needs wallet key
@@ -105,7 +106,7 @@ class PolyGuezRunner:
 
     async def update_config(self, partial):
         """Update config from dashboard. Takes effect next cycle."""
-        async with self._config_lock:
+        with self._config_lock:
             current = self.config.model_dump()
             current.update(partial)
             self.config = PolyGuezConfig(**current)
@@ -268,6 +269,9 @@ class PolyGuezRunner:
             timeout=aiohttp.ClientTimeout(total=4.0),
             headers={"User-Agent": "PolyGuez/1.0"},
         )
+
+        # Position recovery: if last trade is pending, reconstruct position and settle
+        await self._recover_pending_position()
 
         while not self._killed:
             try:
@@ -699,11 +703,23 @@ class PolyGuezRunner:
                     self._polymarket, self._position, self.config.mode,
                 )
                 # Record as emergency exit
-                pnl = -self._position.size_usdc * 0.5  # Estimate — actual depends on fill
+                # Fetch CLOB mid price for accurate emergency exit PnL
+                try:
+                    book = await self._polymarket.get_order_book(self._position.market_id)
+                    best_bid = float(book.get("bids", [{}])[0].get("price", 0))
+                    best_ask = float(book.get("asks", [{}])[0].get("price", 0))
+                    mid_price = (best_bid + best_ask) / 2.0 if best_bid and best_ask else 0.0
+                    if mid_price > 0:
+                        pnl = round(self._position.size_usdc * (mid_price / self._position.entry_price - 1.0), 4)
+                    else:
+                        pnl = -self._position.size_usdc
+                except Exception:
+                    pnl = -self._position.size_usdc
                 record = TradeRecord(
                     market_id=self._position.market_id,
                     side=self._position.side,
                     entry_price=self._position.entry_price,
+                    size_usdc=self._position.size_usdc,
                     pnl=pnl,
                     outcome="emergency-exit",
                     reason="Velocity reversal exceeded threshold",
@@ -771,10 +787,10 @@ class PolyGuezRunner:
                 settled_price = yes_settled if self._position.side == "YES" else no_settled
 
                 if settled_price > 0.5:
-                    pnl = (1.0 - self._position.entry_price) * self._position.size_usdc
+                    pnl = round(self._position.size_usdc * (1.0 / self._position.entry_price - 1.0), 4)
                     outcome_str = "win"
                 else:
-                    pnl = -self._position.entry_price * self._position.size_usdc
+                    pnl = -self._position.size_usdc
                     outcome_str = "loss"
             else:
                 outcome_str = "pending"
@@ -800,6 +816,7 @@ class PolyGuezRunner:
             market_question=self._current_market.get("question", "") if self._current_market else "",
             side=self._position.side,
             entry_price=self._position.entry_price,
+            size_usdc=self._position.size_usdc,
             exit_price=1.0 if outcome_str == "win" else (0.0 if outcome_str == "loss" else None),
             pnl=pnl if outcome_str != "pending" else None,
             duration_seconds=duration,
@@ -847,30 +864,51 @@ class PolyGuezRunner:
             })
 
         if outcome_str == "pending":
-            self._rolling_stats.pending_settlements.append(PendingSettlement(
-                market_id=market_id,
-                side=self._position.side,
-                entry_price=self._position.entry_price,
-                size_usdc=self._position.size_usdc,
-                entry_time=self._position.entry_time,
-                market_question=self._current_market.get("question", "") if self._current_market else "",
-            ))
+            pending_count = len([t for t in self._rolling_stats.trades if t.outcome == "pending"])
             log_event(logger, "pending_settlement_queued",
-                f"Market {market_id} queued for re-settlement ({len(self._rolling_stats.pending_settlements)} pending)")
+                f"Market {market_id} queued for re-settlement ({pending_count} pending)")
+            save_rolling_stats(self._rolling_stats)
 
         self._position = None
         if outcome_str != "pending":
             self._apply_cooldown()
 
-    async def _resolve_pending_settlements(self):
-        """Re-query Gamma for any pending settlements and resolve them."""
-        if not self._rolling_stats.pending_settlements:
+    async def _recover_pending_position(self):
+        """On restart, detect most recent pending trade and attempt immediate settlement."""
+        pending_trades = [t for t in self._rolling_stats.trades if t.outcome == "pending"]
+        if not pending_trades:
             return
-        resolved = []
-        for ps in self._rolling_stats.pending_settlements:
+        # Take the most recent pending trade
+        last_pending = pending_trades[-1]
+        log_event(logger, "position_recovery",
+            f"Recovering pending position: {last_pending.market_id} "
+            f"side={last_pending.side} entry={last_pending.entry_price} size=${last_pending.size_usdc}")
+        # Reconstruct position so _settle() can work
+        self._position = PositionState(
+            side=last_pending.side,
+            entry_price=last_pending.entry_price,
+            entry_time=last_pending.timestamp,
+            market_id=last_pending.market_id,
+            size_usdc=last_pending.size_usdc,
+        )
+        self._open_position = self._position
+        # Remove the pending trade record — _settle() will create a fresh one
+        self._rolling_stats.trades.remove(last_pending)
+        # Attempt settlement
+        await self._settle(last_pending.market_id)
+        log_event(logger, "position_recovery_done",
+            f"Recovery complete — position={'active' if self._position else 'cleared'}")
+
+    async def _resolve_pending_settlements(self):
+        """Scan rolling_stats.trades for outcome=='pending', re-query Gamma, update in-place."""
+        pending_trades = [t for t in self._rolling_stats.trades if t.outcome == "pending"]
+        if not pending_trades:
+            return
+        resolved_count = 0
+        for trade in pending_trades:
             try:
                 loop = asyncio.get_event_loop()
-                market = await loop.run_in_executor(None, self._discovery.get_market_by_id, ps.market_id)
+                market = await loop.run_in_executor(None, self._discovery.get_market_by_id, trade.market_id)
                 if not market or not market.get("closed"):
                     continue
                 outcome_prices = market.get("outcomePrices", "")
@@ -883,40 +921,32 @@ class PolyGuezRunner:
                     continue
                 yes_settled = float(outcome_prices[0])
                 no_settled = float(outcome_prices[1])
-                settled_price = yes_settled if ps.side == "YES" else no_settled
+                settled_price = yes_settled if trade.side == "YES" else no_settled
                 if settled_price > 0.5:
-                    pnl = round((1.0 - ps.entry_price) * ps.size_usdc, 4)
-                    outcome = "win"
+                    pnl = round(trade.size_usdc * (1.0 / trade.entry_price - 1.0), 4)
+                    trade.outcome = "win"
+                    trade.exit_price = 1.0
                 else:
-                    pnl = round(-ps.entry_price * ps.size_usdc, 4)
-                    outcome = "loss"
-                record = TradeRecord(
-                    market_id=ps.market_id,
-                    market_question=ps.market_question,
-                    side=ps.side,
-                    entry_price=ps.entry_price,
-                    pnl=pnl,
-                    outcome=outcome,
-                    reason="resolved-from-pending",
-                )
-                self._rolling_stats.trades.append(record)
+                    pnl = -trade.size_usdc
+                    trade.outcome = "loss"
+                    trade.exit_price = 0.0
+                trade.pnl = pnl
+                trade.reason = "resolved-from-pending"
                 self._rolling_stats.daily_pnl += pnl
                 if self.config.mode == "dry-run":
                     self._rolling_stats.simulated_balance = round(
                         self._rolling_stats.simulated_balance + pnl, 4)
                 log_event(logger, "pending_resolved",
-                    f"Pending settlement resolved: {ps.market_id} → {outcome} PnL=${pnl:+.4f}")
-                resolved.append(ps)
+                    f"Pending settlement resolved: {trade.market_id} → {trade.outcome} PnL=${pnl:+.4f}")
+                resolved_count += 1
             except Exception as exc:
                 log_event(logger, "pending_resolve_error",
-                    f"Error resolving {ps.market_id}: {exc}", level=30)
-        if resolved:
-            self._rolling_stats.pending_settlements = [
-                ps for ps in self._rolling_stats.pending_settlements if ps not in resolved
-            ]
+                    f"Error resolving {trade.market_id}: {exc}", level=30)
+        if resolved_count > 0:
+            remaining = len([t for t in self._rolling_stats.trades if t.outcome == "pending"])
             save_rolling_stats(self._rolling_stats)
             log_event(logger, "pending_resolved_batch",
-                f"Resolved {len(resolved)} pending settlements, {len(self._rolling_stats.pending_settlements)} remaining")
+                f"Resolved {resolved_count} pending settlements, {remaining} remaining")
 
     async def _settle_open_position(self):
         """Settle a dry-run tracked position by fetching the final CLOB mid price."""
