@@ -195,7 +195,7 @@ class TestSignalEvaluation(unittest.TestCase):
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
             elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
-            has_position=False, clob_depth=100.0, price_to_beat=None,
+            has_position=False, chainlink_price=64950.0, clob_depth=100.0, price_to_beat=None,
         )
         self.assertFalse(signal.all_conditions_met)
         self.assertEqual(signal.p2b_source, "none")
@@ -257,6 +257,40 @@ class TestSignalEvaluation(unittest.TestCase):
             price_to_beat=65000.0,
         )
         self.assertFalse(signal.terminal_edge_ok)
+
+    def test_strict_delta_in_fast_market(self):
+        """Fast velocity (>3x threshold) uses conviction_min_delta_strict."""
+        config = _default_config(
+            velocity_threshold=0.05, conviction_min_delta=15.0,
+            conviction_min_delta_strict=40.0, min_clob_depth=0.0,
+        )
+        stats = _stats_with_trades(["win"] * 6)
+        # velocity=0.20 > 0.05*3=0.15 → fast market → strict threshold (40)
+        # delta=25 passes normal (15) but fails strict (40)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.20, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
+            elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
+            has_position=False, chainlink_price=64975.0, clob_depth=100.0,
+            price_to_beat=64950.0,
+        )
+        self.assertFalse(signal.delta_magnitude_ok)
+
+    def test_normal_delta_in_slow_market(self):
+        """Slow velocity uses conviction_min_delta (normal)."""
+        config = _default_config(
+            velocity_threshold=0.05, conviction_min_delta=15.0,
+            conviction_min_delta_strict=40.0, min_clob_depth=0.0,
+        )
+        stats = _stats_with_trades(["win"] * 6)
+        # velocity=0.10 < 0.05*3=0.15 → normal threshold (15)
+        # delta=25 passes normal (15)
+        signal = evaluate_entry_signal(
+            btc_velocity=0.10, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
+            elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
+            has_position=False, chainlink_price=64975.0, clob_depth=100.0,
+            price_to_beat=64950.0,
+        )
+        self.assertTrue(signal.delta_magnitude_ok)
 
 
 class TestComputeClobDepth(unittest.TestCase):

@@ -109,7 +109,11 @@ def evaluate_entry_signal(
     # depth < 0 means unmeasurable (no wallet / API error) — skip gate
     depth_ok = True if clob_depth < 0 else clob_depth >= config.min_clob_depth
     terminal_edge_ok = terminal_edge > config.min_terminal_edge
-    delta_magnitude_ok = abs(strike_delta) > config.conviction_min_delta
+
+    # Use strict delta threshold in fast-moving markets
+    fast_market = abs(btc_velocity) > config.velocity_threshold * 3
+    active_delta_threshold = config.conviction_min_delta_strict if fast_market else config.conviction_min_delta
+    delta_magnitude_ok = abs(strike_delta) > active_delta_threshold
 
     # Stale Chainlink guard near expiry
     chainlink_fresh_ok = True
@@ -136,7 +140,7 @@ def evaluate_entry_signal(
         (price_feed_ok, "price_feed_stale"),
         (chainlink_fresh_ok, f"stale_chainlink={chainlink_age:.0f}s_near_expiry"),
         (terminal_edge_ok, f"terminal_edge={terminal_edge:.4f}<{config.min_terminal_edge}"),
-        (delta_magnitude_ok, f"delta={abs(strike_delta):.1f}<{config.conviction_min_delta}"),
+        (delta_magnitude_ok, f"delta={abs(strike_delta):.1f}<{active_delta_threshold}({'strict' if fast_market else 'normal'})"),
         (_edge_ok, f"edge={edge:.4f}<{effective_required_edge:.4f}"),
         (_spread_ok, f"spread={spread:.4f}>={config.max_spread}"),
         (depth_ok, f"depth={clob_depth:.0f}<{config.min_clob_depth}"),
@@ -154,9 +158,10 @@ def evaluate_entry_signal(
             f"gap={binance_chainlink_gap:.2f} delta={strike_delta:.1f} "
             f"t_edge={terminal_edge:.4f} spread={spread:.4f} → {_first_fail}")
     else:
+        _delta_tag = "strict" if fast_market else "normal"
         log_event(logger, "signal_all_met",
             f"[SIGNAL] ALL MET edge={edge:.4f} depth={clob_depth:.0f} "
-            f"gap={binance_chainlink_gap:.2f} delta={strike_delta:.1f} "
+            f"gap={binance_chainlink_gap:.2f} delta={strike_delta:.1f}(thr={active_delta_threshold}/{_delta_tag}) "
             f"t_edge={terminal_edge:.4f} spread={spread:.4f}")
 
     return SignalState(
