@@ -1,11 +1,16 @@
 {
   "name": "polyguez-control",
-  "version": "2.0.0",
-  "description": "PolyGuez Agent Control Panel — permanent conversational agent",
+  "version": "3.0.0",
+  "description": "PolyGuez Agent — always-on AI agent on Railway",
   "scripts": {
-    "start": "node server/index.js"
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
   },
   "dependencies": {
-    "express": "^4.22.1"
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@octokit/rest": "^21.0.0",
+    "express": "^4.19.2"
   }
 }
