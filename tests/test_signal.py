@@ -131,6 +131,21 @@ class TestSignalEvaluation(unittest.TestCase):
         )
         self.assertFalse(signal.oracle_gap_ok)
 
+    def test_oracle_gap_uses_delta_direction_not_velocity(self):
+        """oracle_gap_ok must match delta_direction (oracle), not momentum_direction (velocity).
+        velocity=down, but chainlink > p2b → delta=up, gap=+15 (positive) → oracle_gap_ok=True."""
+        config = _default_config(min_oracle_gap=10.0, velocity_threshold=0.01, min_edge=0.02, max_spread=0.10, min_clob_depth=0.0)
+        stats = _stats_with_trades(["win"] * 6)
+        signal = evaluate_entry_signal(
+            btc_velocity=-0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
+            elapsed_seconds=30.0, usdc_balance=100.0, config=config, rolling_stats=stats,
+            has_position=False, chainlink_price=65050.0, binance_chainlink_gap=15.0, clob_depth=100.0,
+            price_to_beat=65000.0,
+        )
+        # delta_direction="up" (chainlink 65050 > p2b 65000), gap=+15 → gap confirms delta → True
+        self.assertTrue(signal.oracle_gap_ok)
+        self.assertEqual(signal.direction, "up")
+
     # -- Depth gate tests --
 
     def test_depth_ok_sufficient(self):

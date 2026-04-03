@@ -21,6 +21,10 @@ def _client():
         url = os.environ.get("SUPABASE_URL", "")
         key = os.environ.get("SUPABASE_SERVICE_KEY", "")
         if not url or not key:
+            logger.warning(
+                "Supabase disabled: SUPABASE_URL and/or SUPABASE_SERVICE_KEY not set — "
+                "signal_log and trade_log will be skipped"
+            )
             return None
         # supabase 2.x may pass proxy= to httpx internally depending on versions.
         # Patch httpx.Client/AsyncClient to ignore proxy kwarg if it causes TypeError.

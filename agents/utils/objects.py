@@ -239,7 +239,7 @@ class PolyGuezConfig(BaseModel):
     velocity_threshold: float = Field(default=0.05, ge=0.001, le=1.0)
     min_edge: float = Field(default=0.03, ge=0.01, le=0.5)
     max_spread: float = Field(default=0.10, ge=0.01, le=0.5)
-    min_oracle_gap: float = Field(default=15.0, ge=0.0)
+    min_oracle_gap: float = Field(default=5.0, ge=0.0)
 
     # FIX 1: Split reversal_threshold into two fields
     reversal_velocity_threshold: float = Field(default=0.08, description="$/sec for velocity-based emergency exit fallback")

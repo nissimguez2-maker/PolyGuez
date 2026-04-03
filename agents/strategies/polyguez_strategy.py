@@ -99,9 +99,9 @@ def evaluate_entry_signal(
             pass
 
     gap_favors = False
-    if momentum_direction == "up" and binance_chainlink_gap > 0:
+    if delta_direction == "up" and binance_chainlink_gap > 0:
         gap_favors = True
-    elif momentum_direction == "down" and binance_chainlink_gap < 0:
+    elif delta_direction == "down" and binance_chainlink_gap < 0:
         gap_favors = True
     oracle_gap_ok = gap_favors and abs(binance_chainlink_gap) >= config.min_oracle_gap
 
