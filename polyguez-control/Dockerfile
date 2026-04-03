@@ -6,10 +6,8 @@ RUN apt-get update && apt-get install -y \
     --no-install-recommends && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install claude CLI and make sure it's on PATH
-RUN npm install -g @anthropic-ai/claude-code && \
-    ln -sf $(npm root -g)/.bin/claude-code /usr/local/bin/claude && \
-    claude --version
+# Install claude CLI — it lands at /usr/local/bin/claude automatically
+RUN npm install -g @anthropic-ai/claude-code
 
 WORKDIR /app
 
