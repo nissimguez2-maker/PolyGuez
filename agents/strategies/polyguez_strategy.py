@@ -313,6 +313,10 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
 
     elapsed = asyncio.get_event_loop().time() - start
 
+    logger.debug(f"LLM raw reason: {reason}")
+    if reason == "parse-fallback":
+        logger.warning(f"LLM parse-fallback fired — raw response could not be parsed, defaulting to NO-GO")
+
     log_event(logger, "llm_verdict", f"LLM ({adapter.name}): {verdict}", {
         "verdict": verdict, "reason": reason,
         "provider": adapter.name, "response_time": round(elapsed, 2),

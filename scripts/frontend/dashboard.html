@@ -806,13 +806,13 @@ function render(s) {
   if(executedChart.length>=2){ document.getElementById('chartEmpty').style.display='none'; document.getElementById('pnlChart').style.display=''; drawChart(executedChart); }
   else { document.getElementById('chartEmpty').style.display=''; document.getElementById('pnlChart').style.display='none'; const elapsedMin=Math.floor((Date.now()-sessionStart)/60000); txt('chartEmptySub',`Session running ${elapsedMin}m — ${(rs.trades||[]).length} events`); }
 
-  // Live signal chart data push
-  pushBuf(chartBuf.btc, s.btc_price||0);
-  pushBuf(chartBuf.cl, s.chainlink_price||0);
-  pushBuf(chartBuf.strike, s.price_to_beat||0);
-  pushBuf(chartBuf.termProb, s.terminal_probability||0.5);
-  pushBuf(chartBuf.yes, s.yes_price||0.5);
-  pushBuf(chartBuf.no, s.no_price||0.5);
+  // Live signal chart data push — skip zero/null/undefined to avoid lines dropping to y=0
+  if (s.btc_price) pushBuf(chartBuf.btc, s.btc_price);
+  if (s.chainlink_price) pushBuf(chartBuf.cl, s.chainlink_price);
+  if (s.price_to_beat) pushBuf(chartBuf.strike, s.price_to_beat);
+  pushBuf(chartBuf.termProb, s.terminal_probability || 0.5);
+  if (s.yes_price) pushBuf(chartBuf.yes, s.yes_price);
+  if (s.no_price) pushBuf(chartBuf.no, s.no_price);
   if(s.signal && s.signal.all_conditions_met) pushBuf(chartBuf.signals, Date.now());
   _chartPhase = phase;
   _chartDelta = sd;
@@ -952,11 +952,12 @@ async function doKill(){
       return 1 - (age - FADE_START) / (WINDOW - FADE_START);
     }
 
-    // Filter to window
+    // Filter to window, skip zero/null values for price arrays
     function inWindow(arr) { return arr.filter(p => p.t >= tMin); }
-    const btcPts = inWindow(chartBuf.btc);
+    function inWindowValid(arr) { return arr.filter(p => p.t >= tMin && p.v > 0); }
+    const btcPts = inWindowValid(chartBuf.btc);
     const tpPts = inWindow(chartBuf.termProb);
-    const strikePts = inWindow(chartBuf.strike);
+    const strikePts = inWindowValid(chartBuf.strike);
 
     // P2B reference price (always centered on Y-axis)
     const p2b = strikePts.length > 0 ? strikePts[strikePts.length - 1].v : 0;
@@ -1138,16 +1139,17 @@ async function doKill(){
       }
     }
 
-    // Helper: draw price line (bezier, fading)
+    // Helper: draw price line (bezier, fading, skips zero/invalid values)
     function drawPriceLine(ctx, pts, color, lw) {
       if (pts.length < 2) return;
       ctx.save();
       ctx.lineWidth = lw;
+      ctx.strokeStyle = color;
       for (let i = 1; i < pts.length; i++) {
+        if (!pts[i-1].v || !pts[i].v) continue;
         const a = Math.min(fadeAlpha(pts[i-1].t), fadeAlpha(pts[i].t));
         if (a <= 0) continue;
         ctx.globalAlpha = a;
-        ctx.strokeStyle = color;
         const x0 = tx(pts[i-1].t), y0 = pyPrice(pts[i-1].v);
         const x1 = tx(pts[i].t), y1 = pyPrice(pts[i].v);
         const cpx = (x0 + x1) / 2;

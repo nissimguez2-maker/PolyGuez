@@ -18,6 +18,12 @@ _VERDICT_RE = re.compile(
 )
 
 
+_NEGATIVE_RE = re.compile(
+    r"\bNO\b|REJECT|DECLINE|AGAINST|WOULDN'T|NOT ADVISABLE",
+    re.IGNORECASE,
+)
+
+
 def parse_llm_response(raw):
     """Extract (verdict, reason) from LLM output. Returns ('NO-GO', 'parse-fallback') on failure."""
     match = _VERDICT_RE.search(raw.strip())
@@ -30,6 +36,8 @@ def parse_llm_response(raw):
         return ("REDUCE-SIZE", raw.strip()[:200])
     if "GO" in upper:
         return ("GO", raw.strip()[:200])
+    if _NEGATIVE_RE.search(raw.strip()):
+        return ("NO-GO", raw.strip()[:200])
     return ("NO-GO", "parse-fallback")
 
 
@@ -61,11 +69,16 @@ class OpenAIAdapter(LLMAdapter):
             from langchain_openai import ChatOpenAI
             from langchain_core.messages import HumanMessage
 
+            from langchain_core.messages import SystemMessage
+
             llm = ChatOpenAI(model=self._model, temperature=0, request_timeout=timeout)
             result = await asyncio.wait_for(
                 loop.run_in_executor(
                     None,
-                    lambda: llm.invoke([HumanMessage(content=prompt)]).content,
+                    lambda: llm.invoke([
+                        SystemMessage(content="Respond with exactly one word: GO or NO-GO. No explanation."),
+                        HumanMessage(content=prompt),
+                    ]).content,
                 ),
                 timeout=timeout,
             )
@@ -98,7 +111,8 @@ class AnthropicAdapter(LLMAdapter):
             response = await asyncio.wait_for(
                 client.messages.create(
                     model=self._model,
-                    max_tokens=100,
+                    max_tokens=5,
+                    system="Respond with exactly one word: GO or NO-GO. No explanation.",
                     messages=[{"role": "user", "content": prompt}],
                 ),
                 timeout=timeout,
@@ -135,8 +149,11 @@ class GroqAdapter(LLMAdapter):
             def _call():
                 return client.chat.completions.create(
                     model=self._model,
-                    messages=[{"role": "user", "content": prompt}],
-                    max_tokens=10,
+                    messages=[
+                        {"role": "system", "content": "Respond with exactly one word: GO or NO-GO. No explanation."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=5,
                     temperature=0,
                 )
 
