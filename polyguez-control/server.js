@@ -109,7 +109,6 @@ function runInstruction(content) {
     const child = spawn(claudeBin, [
       "-p", fullPrompt,
       "--output-format", "stream-json",
-      "--dangerously-skip-permissions",
       "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep",
       "--max-turns", "30",
     ], {

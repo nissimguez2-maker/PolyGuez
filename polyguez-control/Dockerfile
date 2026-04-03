@@ -18,6 +18,13 @@ COPY server.js ./
 COPY entrypoint.sh ./
 RUN chmod +x entrypoint.sh
 
+# Create non-root user so claude CLI works (blocks --dangerously-skip-permissions for root)
+RUN useradd -m -s /bin/bash agent && \
+    mkdir -p /repo && \
+    chown -R agent:agent /app /repo
+
+USER agent
+
 EXPOSE 3333
 
 CMD ["./entrypoint.sh"]
