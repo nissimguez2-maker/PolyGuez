@@ -98,17 +98,10 @@ function runInstruction(content) {
 
     const fullPrompt = `${systemContext}\n\nUSER INSTRUCTION: ${content}`;
 
-    // claude CLI is installed globally — try known paths
-    const claudeBin = [
-      "/usr/local/bin/claude",
-      "/usr/local/lib/node_modules/.bin/claude",
-      "/root/.npm-global/bin/claude",
-      "claude",
-    ].find(p => { try { require('fs').accessSync(p); return true; } catch { return false; } }) || "claude";
-
-    const child = spawn(claudeBin, [
+    const child = spawn("claude", [
       "-p", fullPrompt,
       "--output-format", "stream-json",
+      "--verbose",
       "--allowedTools", "Read,Write,Edit,Bash,Glob,Grep",
       "--max-turns", "30",
     ], {
