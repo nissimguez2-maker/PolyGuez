@@ -360,7 +360,13 @@ canvas { width: 100%; border-radius: 8px; }
   <!-- LIVE SIGNAL CHART -->
   <div class="card" style="padding:20px">
     <div style="font-size:14px;font-weight:600;color:var(--text-1);margin-bottom:12px">Live Signal Chart</div>
+    <div style="display:flex;gap:16px;margin-bottom:8px;align-items:center">
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-2)"><span style="width:8px;height:8px;border-radius:50%;background:#1E3A8A;display:inline-block"></span>BTC</span>
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-2)"><span id="probLegendDot" style="width:8px;height:8px;border-radius:50%;background:#12B76A;display:inline-block"></span>Prob</span>
+      <span style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-2)"><span style="width:8px;height:8px;border-radius:50%;background:#F79009;display:inline-block"></span>P2B</span>
+    </div>
     <canvas id="liveSignalChart" height="260" style="width:100%;border-radius:8px;cursor:crosshair"></canvas>
+    <div style="font-size:11px;color:var(--text-3);margin-top:8px;line-height:1.5">Watch BTC (navy) relative to P2B (amber dashed). When BTC crosses above P2B and terminal probability (green/red) rises, the strategy looks for entry. Vertical green flashes mark signal fires.</div>
   </div>
 
   <!-- POSITION -->
@@ -508,6 +514,7 @@ let chartDirty = false;
 let _chartPhase = 'OBSERVE';
 let _chartDelta = 0;
 let _chartHoverX = -1;
+let _chartProbColor = '#12B76A';
 
 const params = new URLSearchParams(location.search);
 const secret = params.get('secret') || '';
@@ -893,10 +900,11 @@ async function doKill(){
   // Canvas resize — only when dimensions actually change
   function resizeIfNeeded() {
     const dpr = window.devicePixelRatio || 1;
-    const w = cv.clientWidth * dpr, h = 260 * dpr;
+    const w = Math.round(cv.clientWidth * dpr);
+    const h = Math.round(260 * dpr);
     if (cv.width !== w || cv.height !== h) {
-      cv.width = w; cv.height = h;
-      cv.getContext('2d').scale(dpr, dpr);
+      cv.width = w;
+      cv.height = h;
     }
   }
 
@@ -912,7 +920,9 @@ async function doKill(){
 
   function drawLiveChart() {
     resizeIfNeeded();
+    const dpr = window.devicePixelRatio || 1;
     const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     const W = cv.clientWidth, H = 260;
     ctx.clearRect(0, 0, W, H);
     const now = Date.now();
@@ -944,36 +954,37 @@ async function doKill(){
     // Filter to window
     function inWindow(arr) { return arr.filter(p => p.t >= tMin); }
     const btcPts = inWindow(chartBuf.btc);
-    const clPts = inWindow(chartBuf.cl);
     const tpPts = inWindow(chartBuf.termProb);
-    const yesPts = inWindow(chartBuf.yes);
-    const noPts = inWindow(chartBuf.no);
+    const strikePts = inWindow(chartBuf.strike);
 
-    // Left Y-axis: BTC/CL auto-scale
-    let priceMin = Infinity, priceMax = -Infinity;
-    btcPts.concat(clPts).forEach(p => { if(p.v>0){ priceMin=Math.min(priceMin,p.v); priceMax=Math.max(priceMax,p.v); }});
-    if (!isFinite(priceMin)) { priceMin = 60000; priceMax = 70000; }
-    const priceRange = priceMax - priceMin || 1;
-    const pricePad = priceRange * 0.02;
-    priceMin -= pricePad; priceMax += pricePad;
+    // P2B reference price (always centered on Y-axis)
+    const p2bPrice = strikePts.length > 0 ? strikePts[strikePts.length - 1].v : 0;
+
+    // Left Y-axis: P2B pinned to center, symmetric zoom
+    let btcMin = Infinity, btcMax = -Infinity;
+    btcPts.forEach(p => { if(p.v>0){ btcMin=Math.min(btcMin,p.v); btcMax=Math.max(btcMax,p.v); }});
+    if (!isFinite(btcMin)) { btcMin = p2bPrice || 60000; btcMax = p2bPrice || 70000; }
+    const halfRange = Math.max(
+      Math.abs(btcMax - p2bPrice),
+      Math.abs(btcMin - p2bPrice),
+      500
+    ) * 1.15;
+    const priceMin = p2bPrice - halfRange;
+    const priceMax = p2bPrice + halfRange;
     function pyPrice(v) { return TOP_PAD + (1 - (v - priceMin) / (priceMax - priceMin)) * plotH; }
 
     // Right Y-axis: probability 0→1
     function pyProb(v) { return TOP_PAD + (1 - v) * plotH; }
 
-    // Strike reference line (dashed amber horizontal)
-    const strikePts = inWindow(chartBuf.strike);
-    if (strikePts.length > 0) {
-      const lastStrike = strikePts[strikePts.length - 1].v;
-      if (lastStrike > 0) {
-        const sy = pyPrice(lastStrike);
-        ctx.save();
-        ctx.strokeStyle = '#F79009';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([6, 4]);
-        ctx.beginPath(); ctx.moveTo(LEFT_PAD, sy); ctx.lineTo(W - RIGHT_PAD, sy); ctx.stroke();
-        ctx.restore();
-      }
+    // P2B dashed amber horizontal (always at vertical center)
+    if (p2bPrice > 0) {
+      const sy = pyPrice(p2bPrice);
+      ctx.save();
+      ctx.strokeStyle = '#F79009';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([6, 4]);
+      ctx.beginPath(); ctx.moveTo(LEFT_PAD, sy); ctx.lineTo(W - RIGHT_PAD, sy); ctx.stroke();
+      ctx.restore();
     }
 
     // 0.5 midline (dotted)
@@ -985,43 +996,27 @@ async function doKill(){
     ctx.beginPath(); ctx.moveTo(LEFT_PAD, midY); ctx.lineTo(W - RIGHT_PAD, midY); ctx.stroke();
     ctx.restore();
 
-    // Terminal probability filled area with breathing effect
+    // Terminal probability line (bezier, no fill)
+    const lastTP = tpPts.length > 0 ? tpPts[tpPts.length - 1].v : 0.5;
+    _chartProbColor = lastTP > 0.5 ? '#12B76A' : '#F04438';
+    const probDot = document.getElementById('probLegendDot');
+    if (probDot) probDot.style.background = _chartProbColor;
     if (tpPts.length >= 2) {
-      const breathT = (Math.sin(Date.now() / 1000 * Math.PI) + 1) / 2;
-      const fillAlpha = 0.12 + breathT * 0.10;
-      const lastTP = tpPts[tpPts.length - 1].v;
-      const tpColor = lastTP >= 0.5 ? `rgba(18,183,106,${fillAlpha})` : `rgba(240,68,56,${fillAlpha})`;
-
       ctx.save();
-      ctx.beginPath();
-      ctx.moveTo(tx(tpPts[0].t), midY);
-      for (const p of tpPts) ctx.lineTo(tx(p.t), pyProb(p.v));
-      ctx.lineTo(tx(tpPts[tpPts.length-1].t), midY);
-      ctx.closePath();
-      ctx.fillStyle = tpColor;
-      ctx.fill();
-
-      // TP line on top
-      ctx.beginPath();
-      for (let i = 0; i < tpPts.length; i++) {
-        const x = tx(tpPts[i].t), y = pyProb(tpPts[i].v);
-        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-      }
-      ctx.strokeStyle = lastTP >= 0.5 ? '#12B76A' : '#F04438';
+      ctx.strokeStyle = _chartProbColor;
       ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(tx(tpPts[0].t), pyProb(tpPts[0].v));
+      for (let i = 1; i < tpPts.length; i++) {
+        const cpx = (tx(tpPts[i-1].t) + tx(tpPts[i].t)) / 2;
+        ctx.bezierCurveTo(cpx, pyProb(tpPts[i-1].v), cpx, pyProb(tpPts[i].v), tx(tpPts[i].t), pyProb(tpPts[i].v));
+      }
       ctx.stroke();
       ctx.restore();
     }
 
-    // YES dashed line
-    drawProbLine(ctx, yesPts, '#12B76A', [4, 3], 1);
-    // NO dashed line
-    drawProbLine(ctx, noPts, '#F04438', [4, 3], 1);
-
-    // BTC line
+    // BTC price line (bezier, fading)
     drawPriceLine(ctx, btcPts, '#1E3A8A', 2);
-    // CL line
-    drawPriceLine(ctx, clPts, '#94A3B8', 1.5);
 
     // Signal flash vertical bars
     const recentSignals = chartBuf.signals.filter(s => now - s.v < 2000 && s.v >= tMin);
@@ -1093,8 +1088,7 @@ async function doKill(){
           for (const p of arr) { const d = Math.abs(p.t - hoverT); if (d < bestD) { best = p; bestD = d; } }
           return best;
         }
-        const nBtc = nearest(btcPts), nCl = nearest(clPts), nTp = nearest(tpPts);
-        const nYes = nearest(yesPts), nNo = nearest(noPts);
+        const nBtc = nearest(btcPts), nTp = nearest(tpPts);
         const refT = nBtc ? nBtc.t : hoverT;
         const timeStr = new Date(refT).toLocaleTimeString('en-US', {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
 
@@ -1102,10 +1096,7 @@ async function doKill(){
         const lines = [
           timeStr,
           'BTC: $' + (nBtc ? fmtPrice(nBtc.v) : '--'),
-          'CL: $' + (nCl ? fmtPrice(nCl.v) : '--'),
           'Prob: ' + (nTp ? (nTp.v * 100).toFixed(1) + '%' : '--'),
-          'YES: ' + (nYes ? (nYes.v * 100).toFixed(1) + '¢' : '--'),
-          'NO: ' + (nNo ? (nNo.v * 100).toFixed(1) + '¢' : '--'),
         ];
         const tw = 130, th = lines.length * 16 + 12;
         let ttx = hx + 12, tty = TOP_PAD + 8;
@@ -1134,24 +1125,7 @@ async function doKill(){
       }
     }
 
-    // Helper: draw probability line (dashed)
-    function drawProbLine(ctx, pts, color, dash, lw) {
-      if (pts.length < 2) return;
-      ctx.save();
-      ctx.setLineDash(dash);
-      ctx.strokeStyle = color;
-      ctx.lineWidth = lw;
-      ctx.beginPath();
-      for (let i = 0; i < pts.length; i++) {
-        const x = tx(pts[i].t), y = pyProb(pts[i].v);
-        const a = fadeAlpha(pts[i].t);
-        if (i === 0) { ctx.moveTo(x, y); } else { ctx.lineTo(x, y); }
-      }
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    // Helper: draw price line (straight segments, fading)
+    // Helper: draw price line (bezier, fading)
     function drawPriceLine(ctx, pts, color, lw) {
       if (pts.length < 2) return;
       ctx.save();
@@ -1161,9 +1135,12 @@ async function doKill(){
         if (a <= 0) continue;
         ctx.globalAlpha = a;
         ctx.strokeStyle = color;
+        const x0 = tx(pts[i-1].t), y0 = pyPrice(pts[i-1].v);
+        const x1 = tx(pts[i].t), y1 = pyPrice(pts[i].v);
+        const cpx = (x0 + x1) / 2;
         ctx.beginPath();
-        ctx.moveTo(tx(pts[i-1].t), pyPrice(pts[i-1].v));
-        ctx.lineTo(tx(pts[i].t), pyPrice(pts[i].v));
+        ctx.moveTo(x0, y0);
+        ctx.bezierCurveTo(cpx, y0, cpx, y1, x1, y1);
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
