@@ -64,10 +64,6 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 /* Card */
 .card { background: var(--card-bg); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; box-shadow: var(--shadow); }
 
-/* Theme toggle button */
-[data-theme-toggle] { background: none !important; border: none !important; outline: none; box-shadow: none; padding: 8px; border-radius: 8px; color: var(--text-3); cursor: pointer; display: flex; align-items: center; transition: background 150ms ease; }
-[data-theme-toggle]:hover { background: rgba(0,0,0,0.05) !important; }
-[data-theme="light"] [data-theme-toggle]:hover { background: rgba(0,0,0,0.05) !important; }
 .card-title { font-size: 14px; font-weight: 600; color: var(--text-2); margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
 .card-title::before { content: ''; width: 3px; height: 14px; border-radius: 2px; background: var(--primary); flex-shrink: 0; }
 
@@ -184,22 +180,29 @@ canvas { width: 100%; border-radius: 8px; }
 
 /* Phase tabs (compact pills) */
 .phase-bar { display: flex; gap: 4px; margin-bottom: 12px; }
-.phase-seg { padding: 4px 12px; border-radius: 8px; font-size: 12px; font-weight: 500; color: var(--text-3); background: transparent; transition: all 150ms ease; cursor: default; flex: none; }
+.phase-seg { padding: 8px 12px; border-radius: 8px; font-size: 12px; font-weight: 500; color: var(--text-3); background: transparent; transition: all 150ms ease; cursor: default; flex: none; display: flex; flex-direction: column; gap: 2px; opacity: 0.4; }
+.phase-seg-name { font-weight: 500; font-size: 12px; }
+.phase-seg-sub { font-size: 9px; font-weight: 400; color: var(--text-2); }
+.phase-seg.active-observe, .phase-seg.active-scalp, .phase-seg.active-conviction, .phase-seg.active-settlement { opacity: 1; }
 .phase-seg.active-observe { background: var(--primary); color: #fff; }
+.phase-seg.active-observe .phase-seg-sub { color: rgba(255,255,255,0.7); }
 .phase-seg.active-scalp { background: var(--primary); color: #fff; }
+.phase-seg.active-scalp .phase-seg-sub { color: rgba(255,255,255,0.7); }
 .phase-seg.active-conviction { background: var(--success); color: #fff; }
+.phase-seg.active-conviction .phase-seg-sub { color: rgba(255,255,255,0.7); }
 .phase-seg.active-settlement { background: var(--error); color: #fff; }
+.phase-seg.active-settlement .phase-seg-sub { color: rgba(255,255,255,0.7); }
 
 /* Strike hero */
-.strike-hero { padding: 12px 16px; border-radius: 8px; margin-bottom: 12px; text-align: left; }
+.strike-hero { padding: 20px 16px; border-radius: 8px; margin-bottom: 12px; text-align: left; }
 .strike-hero.up { background: var(--success-bg); border: 1px solid #A6F4C5; }
 .strike-hero.down { background: var(--error-bg); border: 1px solid var(--red-border); }
 .strike-hero.neutral { background: #F2F4F7; border: 1px solid var(--border); }
-.strike-value { font-size: 28px; font-weight: 700; text-align: left; }
-.strike-hero.up .strike-value { color: var(--success); }
-.strike-hero.down .strike-value { color: var(--error); }
-.strike-subtitle { font-size: 13px; color: var(--text-3); margin-top: 4px; }
-.strike-p2b { font-size: 13px; color: var(--text-3); margin-top: 4px; }
+.strike-value { font-size: 42px; font-weight: 800; text-align: left; color: var(--text-1); }
+.strike-hero.up .strike-value { color: #12B76A; text-shadow: 0 1px 8px rgba(18,183,106,0.15); }
+.strike-hero.down .strike-value { color: #F04438; text-shadow: 0 1px 8px rgba(240,68,56,0.15); }
+.strike-subtitle { font-size: 13px; color: var(--text-2); margin-top: 4px; }
+.strike-p2b { font-size: 13px; color: var(--text-2); margin-top: 4px; }
 
 /* V2 metrics row (pills) */
 .v2-metrics { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
@@ -208,14 +211,19 @@ canvas { width: 100%; border-radius: 8px; }
 .v2-val { font-size: 14px; font-weight: 600; }
 #v2DeltaStab { font-size: 12px; display: inline-block; padding: 4px 12px; border-radius: 99px; font-weight: 600; }
 
-/* Execution row */
-.exec-row { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; color: var(--text-2); padding: 8px 12px; background: #F9FAFB; border: 1px solid var(--border); border-radius: 8px; margin-bottom: 12px; align-items: center; }
-.exec-row strong { font-weight: 600; font-size: 13px; color: var(--text-1); }
-.exec-row > span { color: var(--text-3); font-size: 12px; }
-.exec-sep { color: var(--border); }
+/* Execution rows */
+.exec-rows { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+.exec-row-1 { display: flex; align-items: center; gap: 12px; }
+.exec-row-1 .pill-spread { color: var(--text-2); font-size: 14px; font-weight: 500; margin-left: auto; }
+.exec-row-1 .pill-spread strong { font-weight: 600; color: var(--text-1); }
+.exec-row-2 { display: flex; align-items: center; gap: 8px; }
+.exec-data-pill { background: rgba(0,0,0,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 4px 12px; display: inline-flex; align-items: center; gap: 4px; }
+.exec-data-label { font-size: 11px; color: var(--text-3); }
+.exec-data-pill strong { font-size: 13px; font-weight: 600; color: var(--text-1); }
+.exec-data-pill small { font-size: 11px; color: var(--text-3); }
 /* Price pills */
-.pill-yes { background: var(--success-bg); color: var(--success); border: 1px solid #A6F4C5; border-radius: 999px; padding: 4px 12px; font-weight: 600; font-size: 13px; display: inline-block; }
-.pill-no { background: var(--error-bg); color: var(--error); border: 1px solid var(--red-border); border-radius: 999px; padding: 4px 12px; font-weight: 600; font-size: 13px; display: inline-block; }
+.pill-yes { background: var(--success-bg); color: var(--success); border: 1px solid #A6F4C5; border-radius: 999px; padding: 6px 16px; font-weight: 800; font-size: 18px; display: inline-block; }
+.pill-no { background: var(--error-bg); color: var(--error); border: 1px solid var(--red-border); border-radius: 999px; padding: 6px 16px; font-weight: 800; font-size: 18px; display: inline-block; }
 
 /* Decision box */
 .decision-box { padding: 12px 16px; border-radius: 8px; border: 1px solid var(--border); margin-bottom: 12px; }
@@ -231,6 +239,12 @@ canvas { width: 100%; border-radius: 8px; }
 
 /* WEAK badge */
 .badge-weak { background: var(--error-bg); color: var(--error); border: 1px solid var(--red-border); }
+
+/* Price flash animations — 300ms exception */
+@keyframes flash-up { 0% { color: #12B76A; } 100% { color: inherit; } }
+@keyframes flash-down { 0% { color: #F04438; } 100% { color: inherit; } }
+.flash-up { animation: flash-up 300ms ease-out; }
+.flash-down { animation: flash-down 300ms ease-out; }
 
 /* Spread zero coloring */
 .spread-zero { color: var(--error) !important; }
@@ -253,7 +267,6 @@ canvas { width: 100%; border-radius: 8px; }
       <span class="dot dot-off" id="dotGamma" style="width:5px;height:5px"></span>Gamma
     </span>
     <div class="session"><span class="session-dot"></span><span id="sessionTime">0:00</span></div>
-    <button data-theme-toggle aria-label="Toggle theme" style="background:none;border:none;cursor:pointer;padding:6px 8px;color:var(--text-muted);display:flex;align-items:center;"></button>
   </div>
   <div class="topbar-stats">
     <div class="stat"><span class="stat-label">Balance</span><span class="stat-val" id="balance">$100.00</span></div>
@@ -285,10 +298,10 @@ canvas { width: 100%; border-radius: 8px; }
 
     <!-- 2b: Phase bar -->
     <div class="phase-bar">
-      <div class="phase-seg" id="seg-observe">OBSERVE</div>
-      <div class="phase-seg" id="seg-scalp">SCALP</div>
-      <div class="phase-seg" id="seg-conviction">CONV</div>
-      <div class="phase-seg" id="seg-settlement">SETTLE</div>
+      <div class="phase-seg" id="seg-observe"><span class="phase-seg-name">Observe</span><span class="phase-seg-sub">Scanning for opportunity</span></div>
+      <div class="phase-seg" id="seg-scalp"><span class="phase-seg-name">Scalp</span><span class="phase-seg-sub">Window open — fast signals</span></div>
+      <div class="phase-seg" id="seg-conviction"><span class="phase-seg-name">Conv</span><span class="phase-seg-sub">High conviction entry</span></div>
+      <div class="phase-seg" id="seg-settlement"><span class="phase-seg-name">Settle</span><span class="phase-seg-sub">Awaiting market close</span></div>
     </div>
 
     <!-- 2c: Hero strike block -->
@@ -303,18 +316,20 @@ canvas { width: 100%; border-radius: 8px; }
       <div class="v2-metric"><span class="v2-label">Terminal Prob</span><span class="v2-val" id="v2TermProb">--</span></div>
       <div class="v2-metric"><span class="v2-label">Terminal Edge</span><span class="v2-val" id="v2TermEdge">--</span></div>
       <div class="v2-metric"><span class="v2-label">Delta Stability</span><span class="v2-val" id="v2DeltaStab">--</span></div>
-      <div class="v2-metric"><span class="v2-label">Target Size</span><span class="v2-val" id="v2TargetSize">--</span></div>
     </div>
 
-    <!-- 2e: Market/execution row -->
-    <div class="exec-row">
-      <span class="pill-yes" id="execUp">YES --</span>
-      <span class="pill-no" id="execDown">NO --</span>
-      <span style="color:var(--text-2);font-family:var(--font-mono)">Sprd <strong id="execSpread">--</strong></span>
-      <span class="exec-sep">|</span>
-      <span>BTC <strong id="execBtc">--</strong></span>
-      <span>CL <strong id="execCl">--</strong> <small id="execClSrc"></small></span>
-      <span>Gap <strong id="execGap">--</strong></span>
+    <!-- 2e: Market/execution rows -->
+    <div class="exec-rows">
+      <div class="exec-row-1">
+        <span class="pill-yes" id="execUp">YES --</span>
+        <span class="pill-no" id="execDown">NO --</span>
+        <span class="pill-spread">Spread <strong id="execSpread">--</strong></span>
+      </div>
+      <div class="exec-row-2">
+        <span class="exec-data-pill"><span class="exec-data-label">BTC</span><strong id="execBtc">--</strong></span>
+        <span class="exec-data-pill"><span class="exec-data-label">CL</span><strong id="execCl">--</strong> <small id="execClSrc"></small></span>
+        <span class="exec-data-pill"><span class="exec-data-label">Gap</span><strong id="execGap">--</strong></span>
+      </div>
     </div>
 
     <!-- 2f: Decision summary box -->
@@ -479,24 +494,6 @@ canvas { width: 100%; border-radius: 8px; }
 </div>
 
 <script>
-(function(){
-  const btn = document.querySelector('[data-theme-toggle]');
-  const html = document.documentElement;
-  let theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
-
-  const moon = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>';
-  const sun = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg>';
-
-  function apply(t) {
-    theme = t;
-    html.setAttribute('data-theme', t);
-    if (btn) btn.innerHTML = t === 'dark' ? sun : moon;
-  }
-
-  apply(theme);
-  if (btn) btn.addEventListener('click', () => apply(theme === 'dark' ? 'light' : 'dark'));
-})();
-
 const params = new URLSearchParams(location.search);
 const secret = params.get('secret') || '';
 const wsProto = location.protocol === "https:" ? "wss:" : "ws:";
@@ -640,12 +637,9 @@ function render(s) {
 
   const absDelta = Math.abs(sd);
   const dsEl = document.getElementById('v2DeltaStab');
-  if (absDelta > 80) { dsEl.textContent = 'STRONG'; dsEl.style.color = '#22c55e'; dsEl.style.background = '#0d2b1a'; }
-  else if (absDelta > 40) { dsEl.textContent = 'MODERATE'; dsEl.style.color = '#fbbf24'; dsEl.style.background = '#92400e44'; }
-  else { dsEl.textContent = 'WEAK'; dsEl.style.color = '#ef4444'; dsEl.style.background = '#2b0d12'; }
-
-  const ts = s.position_size_ceiling || 0;
-  document.getElementById('v2TargetSize').textContent = '$' + ts.toFixed(2);
+  if (absDelta > 80) { dsEl.textContent = 'STRONG'; dsEl.style.color = '#12B76A'; dsEl.style.background = '#ECFDF3'; dsEl.style.border = '1px solid rgba(18,183,106,0.25)'; }
+  else if (absDelta > 40) { dsEl.textContent = 'MODERATE'; dsEl.style.color = 'var(--warning)'; dsEl.style.background = 'var(--warning-bg)'; dsEl.style.border = '1px solid rgba(247,144,9,0.25)'; }
+  else { dsEl.textContent = 'WEAK'; dsEl.style.color = 'var(--text-2)'; dsEl.style.background = 'rgba(0,0,0,0.05)'; dsEl.style.border = '1px solid var(--border)'; }
 
   // 2e: Execution row
   document.getElementById('execUp').textContent = 'YES ' + ((s.yes_price || 0) * 100).toFixed(1) + '¢';
