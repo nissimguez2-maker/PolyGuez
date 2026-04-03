@@ -515,6 +515,7 @@ let _chartPhase = 'OBSERVE';
 let _chartDelta = 0;
 let _chartHoverX = -1;
 let _chartProbColor = '#12B76A';
+let chartState = { halfRange: 15 };
 
 const params = new URLSearchParams(location.search);
 const secret = params.get('secret') || '';
@@ -888,7 +889,7 @@ async function doKill(){
   if (!cv) return;
   const WINDOW = 60000; // 60s rolling window
   const FADE_START = 45000;
-  const LEFT_PAD = 52, RIGHT_PAD = 48, TOP_PAD = 24, BOT_PAD = 28;
+  const LEFT_PAD = 52, RIGHT_PAD = 8, TOP_PAD = 24, BOT_PAD = 28;
 
   cv.addEventListener('mousemove', e => {
     const r = cv.getBoundingClientRect();
@@ -958,27 +959,42 @@ async function doKill(){
     const strikePts = inWindow(chartBuf.strike);
 
     // P2B reference price (always centered on Y-axis)
-    const p2bPrice = strikePts.length > 0 ? strikePts[strikePts.length - 1].v : 0;
+    const p2b = strikePts.length > 0 ? strikePts[strikePts.length - 1].v : 0;
+    const btcLatest = btcPts.length > 0 ? btcPts[btcPts.length - 1].v : p2b;
 
-    // Left Y-axis: P2B pinned to center, symmetric zoom
-    let btcMin = Infinity, btcMax = -Infinity;
-    btcPts.forEach(p => { if(p.v>0){ btcMin=Math.min(btcMin,p.v); btcMax=Math.max(btcMax,p.v); }});
-    if (!isFinite(btcMin)) { btcMin = p2bPrice || 60000; btcMax = p2bPrice || 70000; }
-    const halfRange = Math.max(
-      Math.abs(btcMax - p2bPrice),
-      Math.abs(btcMin - p2bPrice),
-      500
-    ) * 1.15;
-    const priceMin = p2bPrice - halfRange;
-    const priceMax = p2bPrice + halfRange;
-    function pyPrice(v) { return TOP_PAD + (1 - (v - priceMin) / (priceMax - priceMin)) * plotH; }
+    // Dynamic Y-axis scaling
+    const EDGE_BUFFER = 5;
+    const ZOOM_STEP = 5;
+    const ZOOM_IN_THRESHOLD = 20;
+    const ZOOM_IN_SPEED = 0.1;
+    const MIN_HALF_RANGE = 15;
 
-    // Right Y-axis: probability 0→1
+    let yMin = p2b - chartState.halfRange;
+    let yMax = p2b + chartState.halfRange;
+    if (btcLatest > 0 && p2b > 0) {
+      while ((btcLatest - yMin) < EDGE_BUFFER || (yMax - btcLatest) < EDGE_BUFFER) {
+        chartState.halfRange += ZOOM_STEP;
+        yMin = p2b - chartState.halfRange;
+        yMax = p2b + chartState.halfRange;
+      }
+      const distTop = yMax - btcLatest;
+      const distBottom = btcLatest - yMin;
+      if (distTop > ZOOM_IN_THRESHOLD && distBottom > ZOOM_IN_THRESHOLD
+          && chartState.halfRange > MIN_HALF_RANGE) {
+        chartState.halfRange = Math.max(MIN_HALF_RANGE, chartState.halfRange - ZOOM_IN_SPEED);
+        yMin = p2b - chartState.halfRange;
+        yMax = p2b + chartState.halfRange;
+      }
+    }
+
+    function pyPrice(v) { return TOP_PAD + (1 - (v - yMin) / (yMax - yMin)) * plotH; }
+
+    // Probability: mapped linearly 0=bottom, 1=top (no right axis)
     function pyProb(v) { return TOP_PAD + (1 - v) * plotH; }
 
     // P2B dashed amber horizontal (always at vertical center)
-    if (p2bPrice > 0) {
-      const sy = pyPrice(p2bPrice);
+    if (p2b > 0) {
+      const sy = pyPrice(p2b);
       ctx.save();
       ctx.strokeStyle = '#F79009';
       ctx.lineWidth = 1;
@@ -1027,22 +1043,19 @@ async function doKill(){
     });
 
     // Left Y-axis labels (BTC price)
-    ctx.fillStyle = '#94A3B8';
     ctx.font = '10px Inter, system-ui, sans-serif';
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     for (let i = 0; i <= 4; i++) {
-      const v = priceMin + (i / 4) * (priceMax - priceMin);
+      const v = yMin + (i / 4) * (yMax - yMin);
       const y = pyPrice(v);
-      ctx.fillText('$' + v.toFixed(0), LEFT_PAD - 6, y);
+      ctx.fillStyle = '#98A2B3';
+      ctx.fillText('$' + v.toLocaleString('en-US', {maximumFractionDigits:0}), LEFT_PAD - 6, y);
     }
-
-    // Right Y-axis labels (probability)
-    ctx.textAlign = 'left';
-    for (let i = 0; i <= 4; i++) {
-      const v = i / 4;
-      const y = pyProb(v);
-      ctx.fillText((v * 100).toFixed(0) + '%', W - RIGHT_PAD + 6, y);
+    // P2B label at center (amber)
+    if (p2b > 0) {
+      ctx.fillStyle = '#F79009';
+      ctx.fillText('$' + p2b.toLocaleString('en-US', {maximumFractionDigits:0}), LEFT_PAD - 6, pyPrice(p2b));
     }
 
     // Bottom time labels
