@@ -6,7 +6,7 @@ import path from "path";
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
-const PORT = 5000;
+const PORT = 3333;
 const REPO = process.env.POLYGUEZ_REPO || path.join(process.env.HOME || "/root", "PolyGuez");
 
 if (!process.env.ANTHROPIC_API_KEY) {
