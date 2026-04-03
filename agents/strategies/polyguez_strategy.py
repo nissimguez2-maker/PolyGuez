@@ -113,10 +113,10 @@ def evaluate_entry_signal(
 
     # Stale Chainlink guard near expiry
     chainlink_fresh_ok = True
-    if chainlink_age > 15.0 and elapsed_seconds > 240.0:
+    if chainlink_age > 15.0 and seconds_remaining < 90.0:
         chainlink_fresh_ok = False
         log_event(logger, "signal_stale_cl",
-            f"[SIGNAL] stale_cl={chainlink_age:.0f}s near_expiry={300.0 - elapsed_seconds:.0f}s → blocked")
+            f"[SIGNAL] chainlink_stale age={chainlink_age:.1f}s seconds_remaining={seconds_remaining:.0f}s → blocked")
 
     # CLOB consensus: don't trade against overwhelming market consensus
     our_price = yes_price if direction == "up" else no_price

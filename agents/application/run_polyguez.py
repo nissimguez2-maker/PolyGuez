@@ -463,12 +463,6 @@ class PolyGuezRunner:
             # Poll CLOB prices
             yes_price, no_price, spread = await self._poll_clob(yes_token, no_token)
 
-            # FIX 2: Fetch CLOB depth for the side we'd buy
-            direction = "up" if self._btc_feed.get_velocity() > 0 else "down"
-            target_token = yes_token if direction == "up" else no_token
-            depth = await self._fetch_depth(target_token)
-            self._current_depth = depth
-
             # Null-guard: get_price() returns None when buffer is empty
             btc_price_raw = self._btc_feed.get_price()
             if btc_price_raw is None or btc_price_raw == 0:
@@ -477,7 +471,9 @@ class PolyGuezRunner:
                 await asyncio.sleep(self.config.clob_poll_interval)
                 continue
 
-            # Evaluate signal (three-price-gap model)
+            cl_price, cl_age = self._btc_feed.get_chainlink_price()
+
+            # Evaluate signal first with depth=-1 (skip gate) to get delta direction
             signal = evaluate_entry_signal(
                 btc_velocity=self._btc_feed.get_velocity(),
                 btc_price=btc_price_raw,
@@ -490,13 +486,21 @@ class PolyGuezRunner:
                 rolling_stats=self._rolling_stats,
                 has_position=self._position is not None,
                 open_position_count=1 if self._position else 0,
-                chainlink_price=self._btc_feed.get_chainlink_price()[0],
-                chainlink_age=self._btc_feed.get_chainlink_price()[1],
+                chainlink_price=cl_price,
+                chainlink_age=cl_age,
                 binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
-                clob_depth=depth,  # FIX 2
+                clob_depth=-1.0,  # Sentinel: skip depth gate in first pass
                 price_to_beat=self._price_to_beat,
                 price_feed_ok=self._btc_feed.price_feed_ok,
             )
+
+            # Fetch depth using signal's delta-based direction (not velocity direction)
+            target_token = yes_token if signal.direction == "up" else no_token
+            depth = await self._fetch_depth(target_token)
+            self._current_depth = depth
+
+            # Update depth_ok on the signal using real depth
+            signal.depth_ok = True if depth < 0 else depth >= self.config.min_clob_depth
             self._current_signal = signal
 
             bet_size = calculate_position_size(self._usdc_balance, self.config, edge=signal.edge, depth=depth)
@@ -508,7 +512,8 @@ class PolyGuezRunner:
                 "velocity": round(signal.btc_velocity, 6),
                 "velocity_source": self._btc_feed.velocity_source,
                 "btc_price": round(btc_price_raw, 2),
-                "cl_price": round(self._btc_feed.get_chainlink_price()[0], 2),
+                "cl_price": round(cl_price, 2),
+                "cl_age": round(cl_age, 1),
                 "rtds_age": round(self._btc_feed.rtds_msg_age, 1),
                 "binance_age": round(self._btc_feed.binance_msg_age, 1),
                 "edge": round(signal.edge, 4),
@@ -553,7 +558,7 @@ class PolyGuezRunner:
                 "market_question": self._current_market.get("question", "") if self._current_market else "",
                 "elapsed_seconds": round(elapsed, 1),
                 "btc_price": self._btc_feed.get_price() or 0.0,
-                "chainlink_price": self._btc_feed.get_chainlink_price()[0],
+                "chainlink_price": cl_price,
                 "strike_delta": signal.strike_delta,
                 "terminal_probability": signal.terminal_probability,
                 "terminal_edge": signal.terminal_edge,

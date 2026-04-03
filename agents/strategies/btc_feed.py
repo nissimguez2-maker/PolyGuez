@@ -183,9 +183,9 @@ class PriceFeedManager:
         return (n * sum_xy - sum_x * sum_y) / denom
 
     def get_chainlink_price(self):
-        """Return (price, age_seconds). Age is seconds since last update, or -1 if no data."""
+        """Return (price, age_seconds). Age is 999.0 if no data (stale sentinel)."""
         if not self._chainlink_buffer:
-            return (0.0, -1.0)
+            return (0.0, 999.0)
         ts, price = self._chainlink_buffer[-1]
         age = time.time() - ts
         return (price, age)
