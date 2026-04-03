@@ -87,7 +87,7 @@ def evaluate_entry_signal(
         effective_velocity_threshold *= config.cooldown_tightened_multiplier
         effective_required_edge *= config.cooldown_tightened_multiplier
 
-    pos_size = calculate_position_size(usdc_balance, config)
+    pos_size = calculate_position_size(usdc_balance, config, edge=edge, depth=clob_depth)
 
     cooldown_ok = True
     if rolling_stats.cooldown_until:
@@ -121,7 +121,7 @@ def evaluate_entry_signal(
     _spread_ok = spread < config.max_spread
     _no_position = not has_position
     _daily_loss_ok = check_daily_loss_limit(rolling_stats, config, usdc_balance)
-    _balance_ok = usdc_balance >= pos_size and usdc_balance >= config.min_capital_floor
+    _balance_ok = usdc_balance >= pos_size
     _position_limit_ok = open_position_count < config.max_open_positions
 
     # Log first failing condition for quick bottleneck identification
@@ -179,18 +179,15 @@ def evaluate_entry_signal(
     )
 
 
-def calculate_position_size(usdc_balance, config):
-    max_capital = usdc_balance * config.max_capital_pct
-    if max_capital < config.min_capital_floor:
-        max_capital = config.min_capital_floor
-    return round(max_capital * config.position_size_pct, 2)
+def calculate_position_size(usdc_balance, config, edge=0.0, depth=0.0):
+    is_strong = edge >= config.strong_edge_threshold and depth >= config.strong_depth_threshold
+    if usdc_balance < config.low_balance_threshold:
+        return config.bet_size_low_balance_strong if is_strong else config.bet_size_low_balance_normal
+    return config.bet_size_strong if is_strong else config.bet_size_normal
 
 
 def calculate_max_capital_at_risk(usdc_balance, config):
-    cap = usdc_balance * config.max_capital_pct
-    if cap < config.min_capital_floor:
-        cap = config.min_capital_floor
-    return round(cap, 2)
+    return max(config.bet_size_strong, 7.0)
 
 
 def check_daily_loss_limit(rolling_stats, config, usdc_balance):
@@ -377,11 +374,39 @@ def save_rolling_stats(stats):
     os.makedirs(_DATA_DIR, exist_ok=True)
     with open(_HISTORY_FILE, "w") as f:
         f.write(stats.model_dump_json(indent=2))
+    # Upsert to Supabase as durable backup
+    try:
+        from agents.utils.supabase_logger import _client
+        client = _client()
+        if client:
+            client.table("rolling_stats").upsert({
+                "id": "singleton",
+                "data": stats.model_dump(),
+            }).execute()
+    except Exception as exc:
+        logger.warning(f"[STATS] Supabase save failed: {exc}")
 
 
 def load_rolling_stats():
+    # Try local file first
     try:
         with open(_HISTORY_FILE, "r") as f:
-            return RollingStats.model_validate_json(f.read())
+            data = f.read().strip()
+            if data:
+                logger.info("[STATS] Loaded from file")
+                return RollingStats.model_validate_json(data)
     except (FileNotFoundError, json.JSONDecodeError, Exception):
-        return RollingStats()
+        pass
+    # Fallback to Supabase
+    try:
+        from agents.utils.supabase_logger import _client
+        client = _client()
+        if client:
+            resp = client.table("rolling_stats").select("data").eq("id", "singleton").execute()
+            if resp.data and len(resp.data) > 0:
+                logger.info("[STATS] Loaded from Supabase (file missing)")
+                return RollingStats.model_validate(resp.data[0]["data"])
+    except Exception as exc:
+        logger.warning(f"[STATS] Supabase load failed: {exc}")
+    logger.info("[STATS] Starting fresh — no history found")
+    return RollingStats()

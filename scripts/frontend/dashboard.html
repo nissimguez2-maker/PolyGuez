@@ -31,7 +31,7 @@
   --teal-bg: #1a1740;
   --rose: #ef4444;
   --font: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', 'Menlo', monospace;
+  --font-mono: 'Geist Mono', 'SF Mono', 'Menlo', monospace;
   --font-mono-jb: 'JetBrains Mono', 'Geist Mono', 'SF Mono', monospace;
   --text: var(--text-0);
   --text-muted: var(--text-2);
@@ -469,10 +469,14 @@ canvas { width: 100%; border-radius: var(--radius-sm); }
   <div class="config-body" id="cfgBody">
     <div class="cfg-grid">
       <div>
-        <div class="cfg-section"><h4>Capital & Risk</h4>
-          <div class="cfg-row"><label>Max Capital %</label><input type="number" step="0.01" id="cfg_max_capital_pct"></div>
-          <div class="cfg-row"><label>Min Floor ($)</label><input type="number" step="0.5" id="cfg_min_capital_floor"></div>
-          <div class="cfg-row"><label>Position Size %</label><input type="number" step="0.01" id="cfg_position_size_pct"></div>
+        <div class="cfg-section"><h4>Bet Sizing</h4>
+          <div class="cfg-row"><label>Normal Bet ($)</label><input type="number" step="0.5" id="cfg_bet_size_normal"></div>
+          <div class="cfg-row"><label>Strong Bet ($)</label><input type="number" step="0.5" id="cfg_bet_size_strong"></div>
+          <div class="cfg-row"><label>Low-Bal Normal ($)</label><input type="number" step="0.5" id="cfg_bet_size_low_balance_normal"></div>
+          <div class="cfg-row"><label>Low-Bal Strong ($)</label><input type="number" step="0.5" id="cfg_bet_size_low_balance_strong"></div>
+          <div class="cfg-row"><label>Low Balance Threshold ($)</label><input type="number" step="1" id="cfg_low_balance_threshold"></div>
+          <div class="cfg-row"><label>Strong Edge Threshold</label><input type="number" step="0.01" id="cfg_strong_edge_threshold"></div>
+          <div class="cfg-row"><label>Strong Depth Threshold</label><input type="number" step="1000" id="cfg_strong_depth_threshold"></div>
           <div class="cfg-row"><label>Max Daily Loss ($)</label><input type="number" step="0.5" id="cfg_max_daily_loss"></div>
         </div>
         <div class="cfg-section"><h4>Signal</h4>
@@ -861,8 +865,10 @@ function drawChart(executed){
 
 function populateConfig(cfg){
   const s=(id,v)=>{const el=document.getElementById(id);if(el)el.value=v;};
-  s('cfg_max_capital_pct',cfg.max_capital_pct); s('cfg_min_capital_floor',cfg.min_capital_floor);
-  s('cfg_position_size_pct',cfg.position_size_pct); s('cfg_max_daily_loss',cfg.max_daily_loss||'');
+  s('cfg_bet_size_normal',cfg.bet_size_normal); s('cfg_bet_size_strong',cfg.bet_size_strong);
+  s('cfg_bet_size_low_balance_normal',cfg.bet_size_low_balance_normal); s('cfg_bet_size_low_balance_strong',cfg.bet_size_low_balance_strong);
+  s('cfg_low_balance_threshold',cfg.low_balance_threshold); s('cfg_strong_edge_threshold',cfg.strong_edge_threshold);
+  s('cfg_strong_depth_threshold',cfg.strong_depth_threshold); s('cfg_max_daily_loss',cfg.max_daily_loss||'');
   s('cfg_velocity_threshold',cfg.velocity_threshold); s('cfg_min_edge',cfg.min_edge);
   s('cfg_max_spread',cfg.max_spread); s('cfg_min_oracle_gap',cfg.min_oracle_gap);
   s('cfg_min_clob_depth',cfg.min_clob_depth);
@@ -879,7 +885,7 @@ async function saveConfig(){
   const g=id=>{const v=document.getElementById(id).value;return v===''?null:parseFloat(v);};
   const newMode=document.getElementById('cfg_mode').value;
   if(newMode==='live'&&prompt('Type CONFIRM for live trading:')!=='CONFIRM')return;
-  const body={max_capital_pct:g('cfg_max_capital_pct'),min_capital_floor:g('cfg_min_capital_floor'),position_size_pct:g('cfg_position_size_pct'),max_daily_loss:g('cfg_max_daily_loss'),velocity_threshold:g('cfg_velocity_threshold'),min_edge:g('cfg_min_edge'),max_spread:g('cfg_max_spread'),min_oracle_gap:g('cfg_min_oracle_gap'),min_clob_depth:g('cfg_min_clob_depth'),reversal_velocity_threshold:g('cfg_reversal_velocity_threshold'),reversal_chainlink_threshold:g('cfg_reversal_chainlink_threshold'),early_window_seconds:g('cfg_early_window_seconds'),mid_window_seconds:g('cfg_mid_window_seconds'),early_edge_multiplier:g('cfg_early_edge_multiplier'),mid_edge_multiplier:g('cfg_mid_edge_multiplier'),late_edge_multiplier:g('cfg_late_edge_multiplier'),llm_enabled:document.getElementById('cfg_llm_enabled').checked,llm_provider:document.getElementById('cfg_llm_provider').value,llm_timeout:g('cfg_llm_timeout'),mode:newMode};
+  const body={bet_size_normal:g('cfg_bet_size_normal'),bet_size_strong:g('cfg_bet_size_strong'),bet_size_low_balance_normal:g('cfg_bet_size_low_balance_normal'),bet_size_low_balance_strong:g('cfg_bet_size_low_balance_strong'),low_balance_threshold:g('cfg_low_balance_threshold'),strong_edge_threshold:g('cfg_strong_edge_threshold'),strong_depth_threshold:g('cfg_strong_depth_threshold'),max_daily_loss:g('cfg_max_daily_loss'),velocity_threshold:g('cfg_velocity_threshold'),min_edge:g('cfg_min_edge'),max_spread:g('cfg_max_spread'),min_oracle_gap:g('cfg_min_oracle_gap'),min_clob_depth:g('cfg_min_clob_depth'),reversal_velocity_threshold:g('cfg_reversal_velocity_threshold'),reversal_chainlink_threshold:g('cfg_reversal_chainlink_threshold'),early_window_seconds:g('cfg_early_window_seconds'),mid_window_seconds:g('cfg_mid_window_seconds'),early_edge_multiplier:g('cfg_early_edge_multiplier'),mid_edge_multiplier:g('cfg_mid_edge_multiplier'),late_edge_multiplier:g('cfg_late_edge_multiplier'),llm_enabled:document.getElementById('cfg_llm_enabled').checked,llm_provider:document.getElementById('cfg_llm_provider').value,llm_timeout:g('cfg_llm_timeout'),mode:newMode};
   for(const k in body){if(body[k]===null)delete body[k];}
   const resp=await fetch(`/api/config?secret=${encodeURIComponent(secret)}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
   if(resp.ok){alert('Saved!');cfgDone=false;}else{const d=await resp.json();alert('Error: '+(d.detail||d.error||'unknown'));}

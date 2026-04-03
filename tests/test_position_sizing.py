@@ -1,4 +1,4 @@
-"""Tests for PolyGuez Momentum position sizing logic."""
+"""Tests for PolyGuez Momentum position sizing logic (fixed tiers)."""
 
 import unittest
 
@@ -15,63 +15,80 @@ def _default_config(**overrides):
 
 class TestPositionSizing(unittest.TestCase):
 
-    def test_normal_sizing_100(self):
-        """$100 balance → max capital $10 → position $3.00."""
-        config = _default_config(max_capital_pct=0.10, position_size_pct=0.30)
-        size = calculate_position_size(100.0, config)
-        self.assertAlmostEqual(size, 3.00)
+    def test_normal_signal_normal_balance(self):
+        """$100 balance, normal signal → $5.00."""
+        config = _default_config()
+        size = calculate_position_size(100.0, config, edge=0.10, depth=5000.0)
+        self.assertEqual(size, 5.0)
 
-    def test_normal_sizing_47(self):
-        """$47 balance → max capital $4.70 → position $1.41."""
-        config = _default_config(max_capital_pct=0.10, position_size_pct=0.30)
-        size = calculate_position_size(47.0, config)
-        self.assertAlmostEqual(size, 1.41)
+    def test_strong_signal_normal_balance(self):
+        """$100 balance, strong signal (edge>=0.25, depth>=40000) → $7.00."""
+        config = _default_config()
+        size = calculate_position_size(100.0, config, edge=0.30, depth=50000.0)
+        self.assertEqual(size, 7.0)
 
-    def test_floor_kicks_in(self):
-        """$20 balance → 10% = $2 < $3 floor → max capital = $3 → position = $0.90."""
-        config = _default_config(max_capital_pct=0.10, min_capital_floor=3.0, position_size_pct=0.30)
-        size = calculate_position_size(20.0, config)
-        self.assertAlmostEqual(size, 0.90)
+    def test_normal_signal_low_balance(self):
+        """$30 balance (<$40), normal signal → $3.00."""
+        config = _default_config()
+        size = calculate_position_size(30.0, config, edge=0.10, depth=5000.0)
+        self.assertEqual(size, 3.0)
+
+    def test_strong_signal_low_balance(self):
+        """$30 balance (<$40), strong signal → $5.00."""
+        config = _default_config()
+        size = calculate_position_size(30.0, config, edge=0.30, depth=50000.0)
+        self.assertEqual(size, 5.0)
+
+    def test_edge_below_strong_threshold(self):
+        """Edge just below 0.25 → normal tier even with high depth."""
+        config = _default_config()
+        size = calculate_position_size(100.0, config, edge=0.24, depth=50000.0)
+        self.assertEqual(size, 5.0)
+
+    def test_depth_below_strong_threshold(self):
+        """Depth just below 40000 → normal tier even with high edge."""
+        config = _default_config()
+        size = calculate_position_size(100.0, config, edge=0.30, depth=39999.0)
+        self.assertEqual(size, 5.0)
 
     def test_reduce_size_verdict(self):
-        """REDUCE-SIZE → 50% of normal position size."""
-        config = _default_config(max_capital_pct=0.10, position_size_pct=0.30)
-        full_size = calculate_position_size(100.0, config)
+        """REDUCE-SIZE → 50% of normal bet."""
+        config = _default_config()
+        full_size = calculate_position_size(100.0, config, edge=0.10, depth=5000.0)
         reduced = round(full_size * 0.5, 2)
-        self.assertAlmostEqual(reduced, 1.50)
+        self.assertEqual(reduced, 2.5)
 
-    def test_max_capital_at_risk_normal(self):
-        """$100 balance → max capital = $10."""
-        config = _default_config(max_capital_pct=0.10)
+    def test_max_capital_at_risk(self):
+        """Max capital at risk = max(bet_size_strong, 7.0)."""
+        config = _default_config()
         cap = calculate_max_capital_at_risk(100.0, config)
-        self.assertAlmostEqual(cap, 10.00)
+        self.assertEqual(cap, 7.0)
 
-    def test_max_capital_at_risk_floor(self):
-        """$20 balance → 10% = $2, floor = $3 → max capital = $3."""
-        config = _default_config(max_capital_pct=0.10, min_capital_floor=3.0)
-        cap = calculate_max_capital_at_risk(20.0, config)
-        self.assertAlmostEqual(cap, 3.00)
+    def test_max_capital_at_risk_custom_strong(self):
+        """Custom bet_size_strong > 7 → cap = that value."""
+        config = _default_config(bet_size_strong=10.0)
+        cap = calculate_max_capital_at_risk(100.0, config)
+        self.assertEqual(cap, 10.0)
 
-    def test_different_pcts(self):
-        """Custom percentages."""
-        config = _default_config(max_capital_pct=0.20, position_size_pct=0.50)
-        size = calculate_position_size(100.0, config)
-        self.assertAlmostEqual(size, 10.00)
+    def test_custom_bet_sizes(self):
+        """Custom config overrides."""
+        config = _default_config(bet_size_normal=8.0, bet_size_strong=12.0)
+        size_normal = calculate_position_size(100.0, config, edge=0.10, depth=5000.0)
+        size_strong = calculate_position_size(100.0, config, edge=0.30, depth=50000.0)
+        self.assertEqual(size_normal, 8.0)
+        self.assertEqual(size_strong, 12.0)
 
-    def test_very_small_balance(self):
-        """$1 balance → floor $3 → position $0.90."""
-        config = _default_config(max_capital_pct=0.10, min_capital_floor=3.0, position_size_pct=0.30)
-        size = calculate_position_size(1.0, config)
-        self.assertAlmostEqual(size, 0.90)
+    def test_balance_at_threshold_boundary(self):
+        """Balance exactly at low_balance_threshold → normal tier."""
+        config = _default_config()
+        size = calculate_position_size(40.0, config, edge=0.10, depth=5000.0)
+        self.assertEqual(size, 5.0)
 
-    def test_recalculation_independence(self):
-        """Calling twice with different balances gives different results."""
-        config = _default_config(max_capital_pct=0.10, position_size_pct=0.30)
-        size1 = calculate_position_size(50.0, config)
-        size2 = calculate_position_size(200.0, config)
-        self.assertNotAlmostEqual(size1, size2)
-        self.assertAlmostEqual(size1, 1.50)
-        self.assertAlmostEqual(size2, 6.00)
+    def test_balance_just_below_threshold(self):
+        """Balance just below low_balance_threshold → low tier."""
+        config = _default_config()
+        size = calculate_position_size(39.99, config, edge=0.10, depth=5000.0)
+        self.assertEqual(size, 3.0)
 
 
 if __name__ == "__main__":

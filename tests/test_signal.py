@@ -78,7 +78,7 @@ class TestSignalEvaluation(unittest.TestCase):
         self.assertFalse(signal.no_position)
 
     def test_low_balance_fails(self):
-        config = _default_config(velocity_threshold=0.01, min_edge=0.02, max_spread=0.10, min_capital_floor=3.0, min_clob_depth=0.0)
+        config = _default_config(velocity_threshold=0.01, min_edge=0.02, max_spread=0.10, bet_size_low_balance_normal=3.0, min_clob_depth=0.0)
         stats = _stats_with_trades(["win"] * 6)
         signal = evaluate_entry_signal(
             btc_velocity=0.05, btc_price=65000.0, yes_price=0.50, no_price=0.48, spread=0.02,
