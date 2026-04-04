@@ -53,25 +53,27 @@ def _client():
         return None
 
 
-def log_signal(snapshot: dict) -> None:
+def log_signal(snapshot: dict, session_tag: str = "v1.1") -> None:
     """Fire-and-forget. Pass a flat dict of the signal state."""
     try:
         client = _client()
         if not client:
             return
         snapshot["ts"] = datetime.now(timezone.utc).isoformat()
+        snapshot["session_tag"] = session_tag
         client.table("signal_log").insert(snapshot).execute()
     except Exception as e:
         logger.warning(f"Supabase signal log failed: {e}")
 
 
-def log_trade(record: dict) -> None:
+def log_trade(record: dict, session_tag: str = "v1.1") -> None:
     """Fire-and-forget. Pass a flat dict of the trade record."""
     try:
         client = _client()
         if not client:
             return
         record["ts"] = datetime.now(timezone.utc).isoformat()
+        record["session_tag"] = session_tag
         client.table("trade_log").insert(record).execute()
     except Exception as e:
         logger.warning(f"Supabase trade log failed: {e}")

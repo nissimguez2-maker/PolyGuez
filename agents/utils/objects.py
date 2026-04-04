@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 from typing import Optional, Union, List
 from pydantic import BaseModel, Field
 from datetime import datetime, timezone
@@ -297,6 +298,7 @@ class PolyGuezConfig(BaseModel):
     min_clob_consensus: float = Field(default=0.40, ge=0.10, le=0.90, description="Min CLOB price on our side to confirm market consensus")
 
     dashboard_secret: str = Field(default="")
+    session_tag: str = Field(default_factory=lambda: os.environ.get("SESSION_TAG", "v1.1"), description="Version tag — set SESSION_TAG env var in Railway to start a new session without code changes")
 
 
 class TradeRecord(BaseModel):

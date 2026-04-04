@@ -574,7 +574,7 @@ class PolyGuezRunner:
                 "all_conditions_met": signal.all_conditions_met,
                 "trade_fired": trade_fired,
                 "mode": self.config.mode,
-            })
+            }, session_tag=self.config.session_tag)
 
             if trade_fired:
                 return True
@@ -746,7 +746,7 @@ class PolyGuezRunner:
                     "llm_verdict": self._last_llm_verdict,
                     "outcome": "loss",
                     "mode": self.config.mode,
-                })
+                }, session_tag=self.config.session_tag)
                 if self.config.mode == "dry-run":
                     self._rolling_stats.simulated_balance = round(
                         self._rolling_stats.simulated_balance + pnl, 4
@@ -855,7 +855,7 @@ class PolyGuezRunner:
                 "llm_verdict": self._last_llm_verdict,
                 "outcome": outcome_str,
                 "mode": self.config.mode,
-            })
+            }, session_tag=self.config.session_tag)
 
         if outcome_str == "pending":
             pending_count = len([t for t in self._rolling_stats.trades if t.outcome == "pending"])
