@@ -219,30 +219,41 @@ class MarketDiscovery:
         return (None, None)
 
     @staticmethod
-    def extract_price_to_beat(market_dict, sanity_min=_P2B_SANITY_MIN, sanity_max=_P2B_SANITY_MAX):
+    def extract_price_to_beat(market_dict, sanity_min=_P2B_SANITY_MIN, sanity_max=_P2B_SANITY_MAX, chainlink_price=None):
         """Extract the 'Price to Beat' dollar amount from the description.
 
         Uses a 3-tier regex strategy:
           1. Match "price to beat" followed by a $X,XXX.XX amount
           2. Match "opening" followed by a $X,XXX.XX amount
           3. Broad match: first $X,XXX.XX amount in description
+          4. Fallback: use chainlink_price if provided and within sanity range
+             (markets no longer embed a dollar P2B in their description)
 
         Returns Optional[float]: parsed value, or None on failure.
         All tiers require the value to pass a sanity check (default 10k–500k).
         """
         desc = market_dict.get("description", "") or ""
-        if not desc:
-            return None
 
-        for pattern in (_P2B_PRIMARY, _P2B_SECONDARY, _P2B_TERTIARY):
-            match = pattern.search(desc)
-            if match:
-                try:
-                    value = float(match.group(1).replace(",", ""))
-                    if sanity_min <= value <= sanity_max:
-                        return value
-                except (ValueError, TypeError):
-                    continue
+        if desc:
+            for pattern in (_P2B_PRIMARY, _P2B_SECONDARY, _P2B_TERTIARY):
+                match = pattern.search(desc)
+                if match:
+                    try:
+                        value = float(match.group(1).replace(",", ""))
+                        if sanity_min <= value <= sanity_max:
+                            return value
+                    except (ValueError, TypeError):
+                        continue
+
+        # Tier 4: fallback to Chainlink price at market open
+        if chainlink_price is not None and sanity_min <= chainlink_price <= sanity_max:
+            import logging
+            logging.getLogger("polyguez.market_discovery").info(
+                "P2B not in description — using Chainlink price at market open as P2B: $%.2f",
+                chainlink_price,
+            )
+            return chainlink_price
+
         return None
 
     @staticmethod
