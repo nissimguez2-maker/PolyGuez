@@ -77,3 +77,55 @@ def log_trade(record: dict, session_tag: str = "v1.1") -> None:
         client.table("trade_log").insert(record).execute()
     except Exception as e:
         logger.warning(f"Supabase trade log failed: {e}")
+
+
+def log_shadow_trade(record: dict, session_tag: str = "v2") -> None:
+    """Fire-and-forget. Log what WOULD have traded if blocked conditions had passed."""
+    try:
+        client = _client()
+        if not client:
+            return
+        record["ts"] = datetime.now(timezone.utc).isoformat()
+        record["session_tag"] = session_tag
+        client.table("shadow_trade_log").insert(record).execute()
+    except Exception as e:
+        logger.warning(f"Supabase shadow trade log failed: {e}")
+
+
+def settle_shadow_trades(market_id: str, outcome_prices: list) -> None:
+    """Settle all pending shadow trades for a given market."""
+    try:
+        client = _client()
+        if not client:
+            return
+        resp = client.table("shadow_trade_log").select("*").eq(
+            "market_id", market_id
+        ).eq("settled", False).execute()
+        if not resp.data:
+            return
+        for shadow in resp.data:
+            direction = shadow.get("direction", "")
+            entry_price = shadow.get("entry_price", 0)
+            settled_price = 0.0
+            if len(outcome_prices) >= 2:
+                yes_settled = float(outcome_prices[0])
+                no_settled = float(outcome_prices[1])
+                settled_price = yes_settled if direction == "up" else no_settled
+                if settled_price > 0.5:
+                    pnl = round(5.0 * (1.0 / entry_price - 1.0), 4) if entry_price > 0 else 0
+                    outcome = "win"
+                else:
+                    pnl = -5.0
+                    outcome = "loss"
+            else:
+                pnl = 0.0
+                outcome = "unknown"
+            client.table("shadow_trade_log").update({
+                "exit_price": settled_price,
+                "pnl": pnl,
+                "outcome": outcome,
+                "settled": True,
+            }).eq("id", shadow["id"]).execute()
+        logger.info(f"[SHADOW] Settled {len(resp.data)} shadow trades for market {market_id}")
+    except Exception as e:
+        logger.warning(f"Supabase shadow settle failed: {e}")

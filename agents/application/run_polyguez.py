@@ -34,7 +34,7 @@ from agents.strategies.polyguez_strategy import (
     settle_with_retry,
 )
 from agents.utils.logger import get_logger, log_event
-from agents.utils.supabase_logger import log_signal, log_trade
+from agents.utils.supabase_logger import log_signal, log_trade, log_shadow_trade, settle_shadow_trades
 from agents.utils.objects import (
     DashboardSnapshot,
     PendingSettlement,
@@ -576,6 +576,47 @@ class PolyGuezRunner:
                 "mode": self.config.mode,
             }, session_tag=self.config.session_tag)
 
+            # Shadow trade: log what WOULD have happened when core edge exists
+            # but other conditions block. Gives outcome data without trading.
+            if (
+                not trade_fired
+                and signal.terminal_edge_ok
+                and signal.edge_ok
+                and not signal.all_conditions_met
+            ):
+                blocking = []
+                if not signal.price_feed_ok: blocking.append("price_feed")
+                if hasattr(signal, 'chainlink_fresh_ok') and not signal.chainlink_fresh_ok: blocking.append("chainlink_stale")
+                if not signal.velocity_ok: blocking.append("velocity_ok")
+                if not signal.oracle_gap_ok: blocking.append("oracle_gap_ok")
+                if not signal.delta_magnitude_ok: blocking.append("delta_magnitude_ok")
+                if not signal.spread_ok: blocking.append("spread_ok")
+                if not signal.depth_ok: blocking.append("depth_ok")
+                if not signal.clob_consensus_ok: blocking.append("clob_consensus_ok")
+                if not signal.no_position: blocking.append("has_position")
+                if not signal.cooldown_ok: blocking.append("cooldown")
+                if not signal.daily_loss_ok: blocking.append("daily_loss")
+                if not signal.balance_ok: blocking.append("balance")
+                if not signal.position_limit_ok: blocking.append("position_limit")
+
+                shadow_entry_price = signal.yes_price if signal.direction == "up" else signal.no_price
+                log_shadow_trade({
+                    "market_id": market_id,
+                    "market_question": self._current_market.get("question", "") if self._current_market else "",
+                    "direction": signal.direction,
+                    "entry_price": shadow_entry_price,
+                    "edge": round(signal.edge, 4),
+                    "terminal_edge": round(signal.terminal_edge, 4),
+                    "terminal_probability": round(signal.terminal_probability, 4),
+                    "strike_delta": round(signal.strike_delta, 2),
+                    "chainlink_price": round(cl_price, 2),
+                    "btc_price": round(btc_price_raw, 2),
+                    "elapsed_seconds": round(elapsed, 1),
+                    "conditions_met": sum(_v2_conds),
+                    "conditions_total": len(_v2_conds),
+                    "blocking_conditions": ",".join(blocking),
+                }, session_tag=self.config.session_tag)
+
             if trade_fired:
                 return True
 
@@ -789,6 +830,9 @@ class PolyGuezRunner:
                 else:
                     pnl = -self._position.size_usdc
                     outcome_str = "loss"
+
+                # Settle shadow trades for this market too
+                settle_shadow_trades(market_id, outcome_prices)
             else:
                 outcome_str = "pending"
                 pnl = 0.0
@@ -990,6 +1034,16 @@ class PolyGuezRunner:
         )
         log_event(logger, "dryrun_balance",
             f"[DRY-RUN] Balance: ${self._rolling_stats.simulated_balance:.2f}")
+
+        # Settle shadow trades using Gamma outcomePrices
+        if self._current_market:
+            market_id = str(self._current_market.get("id", ""))
+            prices = self._current_market.get("outcomePrices", "")
+            if isinstance(prices, str):
+                try: prices = json.loads(prices)
+                except (json.JSONDecodeError, TypeError): prices = []
+            if isinstance(prices, list) and len(prices) >= 2:
+                settle_shadow_trades(market_id, prices)
 
         self._open_position = None
 
