@@ -122,5 +122,33 @@ class TestCrossCheckPriceToBeat(unittest.TestCase):
         self.assertFalse(passes)
 
 
+class TestExtractPriceToBeatChainlinkFallback(unittest.TestCase):
+    """Tests for the Tier 4 Chainlink fallback in extract_price_to_beat."""
+
+    def test_chainlink_fallback_when_no_dollar_in_description(self):
+        """When description has no dollar amount, chainlink_price is returned as P2B."""
+        market = {
+            "description": (
+                "This market will resolve to 'Up' if the Bitcoin price at the end of "
+                "the time range is greater than or equal to the price at the beginning "
+                "of that range."
+            )
+        }
+        result = MarketDiscovery.extract_price_to_beat(market, chainlink_price=65000.0)
+        self.assertEqual(result, 65000.0)
+
+    def test_chainlink_fallback_returns_none_when_chainlink_also_none(self):
+        """When description has no dollar amount and chainlink_price is None, returns None."""
+        market = {
+            "description": (
+                "This market will resolve to 'Up' if the Bitcoin price at the end of "
+                "the time range is greater than or equal to the price at the beginning "
+                "of that range."
+            )
+        }
+        result = MarketDiscovery.extract_price_to_beat(market, chainlink_price=None)
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()
