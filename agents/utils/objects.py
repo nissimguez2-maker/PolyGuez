@@ -291,7 +291,7 @@ class PolyGuezConfig(BaseModel):
     p2b_sanity_min: float = Field(default=10000.0, description="Min plausible BTC price for P2B")
     p2b_sanity_max: float = Field(default=500000.0, description="Max plausible BTC price for P2B")
     p2b_consecutive_failure_halt: int = Field(default=50, description="Halt after N consecutive P2B parse failures")
-    min_terminal_edge: float = Field(default=0.05, ge=0.01, le=0.5, description="Min edge at terminal probability for entry")
+    min_terminal_edge: float = Field(default=0.03, ge=0.01, le=0.5, description="Min edge at terminal probability for entry")
     conviction_min_delta: float = Field(default=15.0, ge=1.0, le=200.0, description="Min $ delta between Chainlink and P2B for conviction")
     conviction_min_delta_strict: float = Field(default=40.0, ge=1.0, le=500.0, description="Strict delta threshold for fast-moving markets")
     min_clob_consensus: float = Field(default=0.40, ge=0.10, le=0.90, description="Min CLOB price on our side to confirm market consensus")
