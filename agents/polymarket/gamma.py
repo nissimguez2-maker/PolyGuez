@@ -197,7 +197,8 @@ class GammaMarketClient:
         response = httpx.get(url, headers=self._http_headers, timeout=self._http_timeout)
         if response.status_code != 200:
             raise Exception(f"Gamma market API HTTP {response.status_code}: GET {url}")
-        return response.json()
+        data = response.json()
+        return data[0] if isinstance(data, list) and data else data
 
 
 if __name__ == "__main__":
