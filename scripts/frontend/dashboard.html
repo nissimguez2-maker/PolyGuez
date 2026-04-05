@@ -161,24 +161,12 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
     </div>
 
     <!-- SIGNAL METERS -->
-    <div class="meter-row">
-      <div class="card meter-card">
-        <div class="card-title">Conditions Met</div>
-        <div class="meter-val" id="mConds">--/--</div>
-        <div class="meter-bar-bg"><div class="meter-bar-fill" id="mCondsBar" style="width:0%;background:var(--primary)"></div></div>
-        <div class="meter-sub" id="mCondsSub">waiting for data</div>
-      </div>
-      <div class="card meter-card">
-        <div class="card-title">Realized Vol</div>
-        <div class="meter-val" id="mRVol">--</div>
-        <div class="meter-bar-bg"><div class="meter-bar-fill" id="mRVolBar" style="width:0%;background:var(--amber)"></div></div>
-        <div class="meter-sub">annualized 30m rolling</div>
-      </div>
-      <div class="card meter-card">
-        <div class="card-title">Implied Vol</div>
-        <div class="meter-val" id="mIVol">--</div>
-        <div class="meter-bar-bg"><div class="meter-bar-fill" id="mIVolBar" style="width:0%;background:#8B5CF6"></div></div>
-        <div class="meter-sub">from token price (BS)</div>
+    <!-- VOL & EDGE RADAR -->
+    <div class="card" style="padding:12px 18px">
+      <div class="card-title">Vol & Edge Radar</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
+        <div class="chart-wrap" style="height:180px"><canvas id="volCanvas"></canvas></div>
+        <div id="radarStats" style="font-size:12px; display:flex; flex-direction:column; justify-content:center; gap:6px;"></div>
       </div>
     </div>
 
@@ -320,8 +308,11 @@ function drawPriceChart() {
   const W = rect.width, H = rect.height;
   ctx.clearRect(0, 0, W, H);
 
-  // Combine historical + live
-  const all = [...priceHistory.map(h => ({t:new Date(h.t).getTime(), p:h.p})), ...livePrices];
+  // Merge historical + live into single continuous array
+  const all = [
+    ...priceHistory.map(h => ({t: new Date(h.t).getTime(), p: h.p})),
+    ...livePrices
+  ];
   if (all.length < 2) return;
 
   const minT = all[0].t, maxT = all[all.length-1].t;
@@ -333,17 +324,28 @@ function drawPriceChart() {
   const x = t => ((t - minT) / (maxT - minT)) * (W - 60) + 40;
   const y = p => H - 24 - ((p - minP) / (maxP - minP)) * (H - 36);
 
-  // Grid
+  // Grid + Y-axis labels (with comma formatting)
   ctx.strokeStyle = '#F2F4F7'; ctx.lineWidth = 1;
   for (let i = 0; i < 5; i++) {
     const gy = 12 + i * (H - 36) / 4;
     ctx.beginPath(); ctx.moveTo(40, gy); ctx.lineTo(W, gy); ctx.stroke();
     const pv = maxP - i * (maxP - minP) / 4;
     ctx.fillStyle = '#98A2B3'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText('$' + pv.toFixed(0), 36, gy + 4);
+    ctx.fillText('$' + pv.toLocaleString('en-US', {maximumFractionDigits:0}), 36, gy + 4);
   }
 
-  // Time labels
+  // 5-minute market boundaries (vertical dashed lines)
+  const marketInterval = 300000; // 5 minutes in ms
+  const firstBoundary = Math.ceil(minT / marketInterval) * marketInterval;
+  ctx.strokeStyle = '#E5E7EB'; ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  for (let t = firstBoundary; t <= maxT; t += marketInterval) {
+    const xi = x(t);
+    ctx.beginPath(); ctx.moveTo(xi, 12); ctx.lineTo(xi, H - 24); ctx.stroke();
+  }
+  ctx.setLineDash([]);
+
+  // Time labels (every ~30 min)
   const hours = Math.ceil((maxT - minT) / 3600000);
   const step = Math.max(1, Math.floor(hours / 6));
   ctx.textAlign = 'center';
@@ -354,33 +356,33 @@ function drawPriceChart() {
     ctx.fillText(fmtTime(t), x(t), H - 4);
   }
 
-  // Historical line (blue)
-  if (priceHistory.length > 1) {
-    ctx.beginPath(); ctx.strokeStyle = '#1E3A8A'; ctx.lineWidth = 1.5;
-    priceHistory.forEach((d,i) => {
-      const px = x(new Date(d.t).getTime()), py = y(d.p);
+  // Single continuous price line (no visual jump)
+  if (all.length > 1) {
+    ctx.beginPath(); ctx.strokeStyle = '#3B82F6'; ctx.lineWidth = 1.5;
+    all.forEach((d, i) => {
+      const px = x(d.t), py = y(d.p);
       i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
     });
     ctx.stroke();
   }
 
-  // Live line (bright blue, thicker)
-  if (livePrices.length > 1) {
-    ctx.beginPath(); ctx.strokeStyle = '#3B82F6'; ctx.lineWidth = 2;
-    livePrices.forEach((d,i) => {
-      const px = x(d.t), py = y(d.p);
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
-    });
-    ctx.stroke();
-
-    // Current price dot
-    const last = livePrices[livePrices.length - 1];
+  // Current price dot
+  if (all.length > 0) {
+    const last = all[all.length - 1];
     ctx.beginPath(); ctx.arc(x(last.t), y(last.p), 4, 0, Math.PI*2);
     ctx.fillStyle = '#3B82F6'; ctx.fill();
 
     // Price label
     ctx.fillStyle = '#1E3A8A'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'left';
     ctx.fillText('$' + last.p.toFixed(2), x(last.t) + 8, y(last.p) + 4);
+  }
+
+  // Market timer in top-right (elapsed / 300 seconds)
+  if (latestSignal && latestSignal.elapsed_seconds != null) {
+    const elapsed = latestSignal.elapsed_seconds;
+    const timerText = 'Market: ' + elapsed + 's / 300s';
+    ctx.fillStyle = '#1E3A8A'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
+    ctx.fillText(timerText, W - 10, 20);
   }
 }
 
@@ -422,6 +424,100 @@ function drawSignalChart() {
       ctx.fillText(fmtTime(d.hour), bx + barW/2, H - 4);
     }
   });
+}
+
+// ═══════════════════════ VOL & EDGE RADAR ═══════════════════════
+let latestSignal = null;
+function drawVolRadar() {
+  if (!latestSignal) return;
+  
+  const canvas = $('volCanvas');
+  if (!canvas) return;
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.parentElement.getBoundingClientRect();
+  canvas.width = rect.width * dpr;
+  canvas.height = rect.height * dpr;
+  ctx.scale(dpr, dpr);
+  const W = rect.width, H = rect.height;
+  ctx.clearRect(0, 0, W, H);
+
+  // Extract signal data
+  const realVol = (latestSignal.sigma_realized || 0) * 100;
+  const implVol = (latestSignal.implied_vol || 0) * 100;
+  const termEdge = (latestSignal.terminal_edge || 0) * 100;
+  const condsMet = latestSignal.conditions_met || 0;
+  const condsTotal = 15; // Changed from 12 to 15
+  const strikeDelta = latestSignal.strike_delta || 0;
+
+  // Bar dimensions
+  const barHeight = 30;
+  const barGap = 8;
+  const startY = 10;
+  const labelWidth = 90;
+  const barX = labelWidth + 10;
+  const barWidth = W - barX - 20;
+
+  ctx.font = '11px Inter,sans-serif';
+  ctx.fillStyle = '#64748B';
+  ctx.textAlign = 'right';
+
+  // Helper: draw horizontal bar
+  const drawBar = (y, label, value, max, color, unit = '%') => {
+    // Label
+    ctx.fillText(label, labelWidth - 5, y + 10);
+    
+    // Background
+    ctx.fillStyle = '#E2E8F0';
+    ctx.fillRect(barX, y, barWidth, 12);
+    
+    // Fill
+    const fillW = Math.max(0, Math.min((value / max) * barWidth, barWidth));
+    ctx.fillStyle = color;
+    ctx.fillRect(barX, y, fillW, 12);
+    
+    // Value text (on the right of bar)
+    ctx.fillStyle = '#1E293B';
+    const text = value.toFixed(1) + unit;
+    ctx.textAlign = 'left';
+    ctx.fillText(text, barX + barWidth + 8, y + 10);
+    ctx.textAlign = 'right';
+  };
+
+  // Draw bars
+  let currentY = startY;
+  
+  // Realized Vol (orange, 0-300%)
+  drawBar(currentY, 'Realized Vol', realVol, 300, '#F79009');
+  currentY += barHeight + barGap;
+  
+  // Implied Vol (purple, 0-300%)
+  drawBar(currentY, 'Implied Vol', implVol, 300, '#8B5CF6');
+  currentY += barHeight + barGap;
+  
+  // Terminal Edge (blue background, with green zone > 3%)
+  ctx.fillStyle = '#E2E8F0';
+  ctx.fillRect(barX, currentY, barWidth, 12);
+  // Green "fire zone" (3% to 20%)
+  const fireStart = Math.max(0, (3 / 30) * barWidth);
+  const fireEnd = Math.min(barWidth, (20 / 30) * barWidth);
+  ctx.fillStyle = 'rgba(18, 183, 106, 0.2)';
+  ctx.fillRect(barX + fireStart, currentY, fireEnd - fireStart, 12);
+  // Actual edge bar
+  const edgeMin = -10, edgeMax = 20;
+  const edgeNorm = Math.max(0, Math.min((termEdge - edgeMin) / (edgeMax - edgeMin), 1));
+  ctx.fillStyle = termEdge >= 3 ? '#12B76A' : '#3B82F6';
+  ctx.fillRect(barX, currentY, edgeNorm * barWidth, 12);
+  ctx.fillStyle = '#1E293B';
+  ctx.textAlign = 'right';
+  ctx.fillText('Terminal Edge', labelWidth - 5, currentY + 10);
+  ctx.textAlign = 'left';
+  ctx.fillText(termEdge.toFixed(1) + '%', barX + barWidth + 8, currentY + 10);
+  ctx.textAlign = 'right';
+  currentY += barHeight + barGap;
+  
+  // Conditions Met (0-15, turns green at 15)
+  drawBar(currentY, 'Conditions', condsMet, condsTotal, condsMet === condsTotal ? '#12B76A' : '#3B82F6');
 }
 
 // ═══════════════════════ EQUITY CURVE ═══════════════════════
@@ -479,32 +575,16 @@ async function pollFast() {
   const sig = await sq('signal_log', 'order=ts.desc&limit=1');
   if (sig.length) {
     const s = sig[0];
+    
+    // Store globally for drawVolRadar
+    latestSignal = s;
+    
     // Chainlink price
     const prevCl = clPrice;
     clPrice = s.chainlink_price || 0;
     const clEl = $('clPrice');
     clEl.textContent = '$' + clPrice.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
     flashEl(clEl, clPrice, prevCl);
-
-    // Conditions
-    $('mConds').textContent = (s.conditions_met || 0) + '/12';
-    const pct = ((s.conditions_met || 0) / 12) * 100;
-    $('mCondsBar').style.width = pct + '%';
-    $('mCondsBar').style.background = s.all_conditions_met ? 'var(--green)' : pct > 60 ? 'var(--amber)' : 'var(--primary)';
-    $('mCondsSub').textContent = s.all_conditions_met ? 'ALL MET — trade eligible' : (12 - (s.conditions_met||0)) + ' conditions blocking';
-
-    // Vol
-    if (s.sigma_realized != null) {
-      $('mRVol').textContent = (s.sigma_realized * 100).toFixed(1) + '%';
-      $('mRVolBar').style.width = Math.min(s.sigma_realized * 200, 100) + '%';
-    }
-    if (s.implied_vol != null) {
-      $('mIVol').textContent = (s.implied_vol * 100).toFixed(1) + '%';
-      $('mIVolBar').style.width = Math.min(s.implied_vol * 200, 100) + '%';
-    } else {
-      $('mIVol').textContent = 'N/A';
-      $('mIVolBar').style.width = '0%';
-    }
 
     // Edge + Prob KPIs
     const prevEdge = $('kEdge').textContent;
@@ -523,9 +603,45 @@ async function pollFast() {
     $('botStatus').innerHTML = s.trade_fired
       ? '<span style="color:var(--green)">● TRADE FIRED</span>'
       : '<span style="color:var(--text-3)">● scanning</span>';
+
+    // Update radar stats div with key metrics
+    const radarStats = $('radarStats');
+    if (radarStats) {
+      const realVol = (s.sigma_realized || 0) * 100;
+      const implVol = (s.implied_vol || 0) * 100;
+      const ivRvRatio = realVol > 0 ? implVol / realVol : 0;
+      const termEdge = (s.terminal_edge || 0) * 100;
+      const condsMet = s.conditions_met || 0;
+      const strikeDelta = s.strike_delta || 0;
+      
+      // Status indicator
+      let statusText = '';
+      if (s.all_conditions_met && termEdge >= 3) {
+        statusText = '🟢 READY TO FIRE';
+      } else if (termEdge < 0) {
+        statusText = '🔴 Edge negative';
+      } else if (condsMet < 15) {
+        statusText = '🟡 ' + (15 - condsMet) + ' blocking';
+      } else {
+        statusText = '🟡 Waiting edge';
+      }
+      
+      radarStats.innerHTML = `
+        <div><strong>Realized Vol:</strong> ${realVol.toFixed(1)}%</div>
+        <div><strong>Implied Vol:</strong> ${implVol > 0 ? implVol.toFixed(1) + '%' : 'N/A'}</div>
+        <div><strong>IV/RV Ratio:</strong> <span style="color:${ivRvRatio > 1.2 ? '#12B76A' : '#64748B'}">${ivRvRatio.toFixed(2)}</span></div>
+        <div><strong>Terminal Edge:</strong> ${termEdge.toFixed(1)}%</div>
+        <div><strong>Strike Delta:</strong> $${strikeDelta.toFixed(2)}</div>
+        <div><strong>Conditions:</strong> ${condsMet}/15</div>
+        <div style="margin-top:4px; padding-top:4px; border-top:1px solid #E2E8F0;"><strong>Status:</strong> ${statusText}</div>
+      `;
+    }
   }
 
   $('lastUpdate').textContent = 'Updated ' + fmtTimeFull(Date.now());
+  
+  // Draw the vol radar
+  drawVolRadar();
 }
 
 async function pollSlow() {
@@ -630,7 +746,7 @@ async function pollSlow() {
 
 // ═══════════════════════ HISTORICAL PRICE LOAD ═══════════════════════
 async function loadPriceHistory() {
-  const rows = await sq('signal_log', 'select=ts,btc_price&order=ts.desc&limit=5000');
+  const rows = await sq('signal_log', 'select=ts,btc_price&session_tag=eq.V4&order=ts.desc&limit=5000');
   // Downsample: keep ~500 points
   const step = Math.max(1, Math.floor(rows.length / 500));
   priceHistory = rows.filter((_,i) => i % step === 0).reverse().map(r => ({ t: r.ts, p: r.btc_price }));
