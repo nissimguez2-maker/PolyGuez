@@ -6,7 +6,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PolyGuez</title>
-<!-- v2.2 — cache-bust: kill stale 10k query -->
+<!-- v3.0 — chart overhaul + UI fixes -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -44,8 +44,8 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 .topbar-delta { font-size:12px; padding:3px 10px; border-radius:6px; font-weight:600; }
 .topbar-right { margin-left:auto; display:flex; align-items:center; gap:12px; }
 .badge { padding:3px 10px; border-radius:6px; font-size:11px; font-weight:600; }
-.badge-dry { background:var(--amber-bg); color:var(--amber); border:1px solid #FEDF89; }
-.badge-live { background:var(--red-bg); color:var(--red); border:1px solid #FECDCA; }
+.badge-dry { background:var(--amber); color:#fff; border:1px solid var(--amber); }
+.badge-live { background:var(--red); color:#fff; border:1px solid var(--red); }
 .bot-status { font-size:11px; color:var(--text-3); }
 
 /* ── FLASH ── */
@@ -112,6 +112,27 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
   .kpi-row { grid-template-columns:repeat(3,1fr); }
   .grid-main { grid-template-columns:1fr; }
 }
+
+/* -- CHART TIME RANGE SELECTOR -- */
+.chart-timerange { display:flex; gap:4px; }
+.tr-btn { padding:3px 10px; font-size:11px; font-weight:600; border-radius:99px; border:1px solid var(--border); background:transparent; color:var(--text-3); cursor:pointer; transition:all 150ms ease; font-family:var(--font); }
+.tr-btn:hover { background:#f3f0ec; color:var(--text-1); }
+.tr-btn.active { background:var(--primary); color:#fff; border-color:transparent; }
+
+/* -- LLM VERDICT BADGES -- */
+.llm-go { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; background:var(--green-bg); color:var(--green); }
+.llm-skip { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; background:#F2F4F7; color:var(--text-2); }
+.llm-abort { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; background:var(--red-bg); color:var(--red); }
+
+/* -- BLOCKER ACTIVE PILLS -- */
+.blocker-active { background:var(--red) !important; color:#fff !important; font-weight:700; }
+
+/* -- DRY-RUN MUTED -- */
+.val-muted { color:var(--text-3) !important; }
+.simulated-tag { font-size:10px; color:var(--text-3); font-style:italic; }
+
+/* -- BLOCKING COUNT LABEL -- */
+.blocking-count { color:var(--red); font-weight:700; font-size:11px; margin-left:8px; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -162,14 +183,22 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
   <div class="left-col">
     <!-- BTC PRICE CHART -->
     <div class="card">
-      <div class="card-title">BTC Price — 24h <span id="chartLive" style="color:var(--green);margin-left:6px">●</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div class="card-title" style="margin-bottom:0" id="btcChartTitle">BTC Price — 5 min <span id="chartLive" style="color:var(--green);margin-left:6px">●</span></div>
+        <div class="chart-timerange">
+          <button class="tr-btn" data-range="60">1m</button>
+          <button class="tr-btn active" data-range="300">5m</button>
+          <button class="tr-btn" data-range="21600">6h</button>
+          <button class="tr-btn" data-range="86400">24h</button>
+        </div>
+      </div>
       <div class="chart-wrap"><canvas id="priceCanvas"></canvas></div>
     </div>
 
     <!-- SIGNAL METERS -->
     <!-- VOL & EDGE RADAR -->
     <div class="card" style="padding:12px 18px">
-      <div class="card-title">Vol & Edge Radar</div>
+      <div class="card-title">Vol & Edge</div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
         <div class="chart-wrap" style="height:180px"><canvas id="volCanvas"></canvas></div>
         <div id="radarStats" style="font-size:12px; display:flex; flex-direction:column; justify-content:center; gap:6px;"></div>
@@ -204,7 +233,7 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
     <div class="card">
       <div class="card-title">Blocking Conditions</div>
       <div style="margin-bottom:10px">
-        <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Right Now</div>
+        <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Right Now <span id="blockingCount" class="blocking-count"></span></div>
         <div id="liveBlockers" style="display:flex;flex-wrap:wrap;gap:5px;min-height:24px"></div>
       </div>
       <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;margin-top:4px">24h Frequency</div>
@@ -244,6 +273,8 @@ let priceHistory = [];  // {t, p} for chart — last 24h from signal_log + live
 let livePrices = [];    // recent Binance ticks for chart overlay
 let SESSION_TAG = null; // FIX-1: dynamic session tag
 let elapsedAtPoll = 0, elapsedPollTime = 0; // FIX-2: live market timer
+window._signalArrivalTime = 0;
+window._lastSignalId = null;
 let lastPollTime = 0; // FIX-4: relative last-updated
 
 // ═══════════════════════ HELPERS ═══════════════════════
@@ -290,7 +321,13 @@ async function initSessionTag() {
   tagEl.style.cssText = 'font-size:11px;color:var(--text-3);font-family:monospace';
   tagEl.id = 'sessionTag';
   tagEl.textContent = SESSION_TAG;
-  document.querySelector('.topbar-right').prepend(tagEl);
+  const divEl = document.createElement('span');
+  divEl.style.cssText = 'font-size:11px;color:var(--text-3)';
+  divEl.textContent = ' \u00B7 ';
+  divEl.id = 'tagDivider';
+  const topRight = document.querySelector('.topbar-right');
+  topRight.prepend(divEl);
+  topRight.prepend(tagEl);
 }
 function tagFilter() { return SESSION_TAG ? `session_tag=eq.${SESSION_TAG}&` : ''; }
 
@@ -454,7 +491,7 @@ function drawPriceChart() {
 
   // FIX-7: gap-aware price line — break at >2min gaps
   if (all.length > 1) {
-    const GAP_MS = 120000;
+    const GAP_MS = 15000;
     ctx.beginPath(); ctx.strokeStyle = '#3B82F6'; ctx.lineWidth = 1.5;
     all.forEach((d, i) => {
       const px = x(d.t), py = y(d.p);
@@ -478,12 +515,10 @@ function drawPriceChart() {
     ctx.fillText('$' + last.p.toFixed(2), x(last.t) + 8, y(last.p) + 4);
   }
 
-  // FIX-2: Live market timer — counts up between polls
-  if (latestSignal && latestSignal.elapsed_seconds != null) {
-    const liveElapsed = elapsedPollTime > 0
-      ? Math.min(300, elapsedAtPoll + (Date.now() - elapsedPollTime) / 1000)
-      : latestSignal.elapsed_seconds;
-    const timerText = 'Market: ' + liveElapsed.toFixed(0) + 's / 300s';
+  // BUG-2 fix: smooth market timer based on signal arrival time
+  if (window._signalArrivalTime > 0) {
+    const elapsed = Math.min(300, Math.floor((Date.now() - window._signalArrivalTime) / 1000));
+    const timerText = 'Market: ' + elapsed + 's / 300s';
     ctx.fillStyle = '#1E3A8A'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(timerText, W - 10, 20);
   }
@@ -688,10 +723,11 @@ async function pollFast() {
       b.className = 'badge ' + (s.mode === 'live' ? 'badge-live' : 'badge-dry');
     }
 
-    // FIX-2: track elapsed for live timer
-    if (s.elapsed_seconds != null) {
-      elapsedAtPoll = s.elapsed_seconds;
-      elapsedPollTime = Date.now();
+    // BUG-2 fix: detect new signal arrival for smooth timer
+    const sigId = s.id || s.ts;
+    if (sigId !== window._lastSignalId) {
+      window._lastSignalId = sigId;
+      window._signalArrivalTime = Date.now();
     }
 
     // FIX-3: Chainlink age subscript
@@ -706,7 +742,7 @@ async function pollFast() {
     const sigAgeEl = $('sigAge');
     if (sigAgeEl) sigAgeEl.textContent = `signal ${sigAge}s ago`;
 
-    // FIX-5: Live blocking conditions
+    // FIX-5: Live blocking conditions + AESTHETIC-3 blocking count
     const ALL_CONDITIONS = [
       'terminal_edge','delta_magnitude','edge','spread','depth',
       'clob_consensus','has_position','cooldown','daily_loss','balance',
@@ -715,13 +751,16 @@ async function pollFast() {
     const blocking = s.blocking_conditions
       ? s.blocking_conditions.split(',').map(b => b.trim()).filter(Boolean)
       : [];
+    // AESTHETIC-3: update blocking count
+    const bcEl = document.getElementById('blockingCount');
+    if (bcEl) bcEl.textContent = blocking.length > 0 ? blocking.length + ' blocking' : '';
     const lb = $('liveBlockers');
     if (lb) {
       lb.innerHTML = ALL_CONDITIONS.map(c => {
         const isBlocking = blocking.includes(c);
         return `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;
-          background:${isBlocking ? 'var(--red-bg)' : 'var(--green-bg)'};
-          color:${isBlocking ? 'var(--red)' : 'var(--green)'}
+          background:${isBlocking ? 'var(--red)' : 'var(--green-bg)'};
+          color:${isBlocking ? '#fff' : 'var(--green)'}
         ">${c.replace(/_ok$/, '').replace(/_/g,' ')}</span>`;
       }).join('');
     }
@@ -788,7 +827,8 @@ async function pollSlow() {
     const bal = rs[0].data.simulated_balance;
     if (bal != null) {
       $('kBalance').textContent = '$' + Number(bal).toFixed(2);
-      $('kBalance').className = 'val ' + (bal >= 100 ? 'positive' : 'negative');
+      const isDryBal = $('modeBadge') && $('modeBadge').textContent.includes('DRY');
+      $('kBalance').className = 'val ' + (isDryBal ? '' : (bal >= 100 ? 'positive' : 'negative'));
     }
     // FIX-10: show balance age from rolling_stats updated_at
     const updatedAt = rs[0].data.updated_at;
@@ -811,12 +851,19 @@ async function pollSlow() {
     const totalPnl = parseFloat(t.total_pnl);
     const prevPnl = $('kTotalPnl').textContent;
     $('kTotalPnl').textContent = fmtUsd(totalPnl);
-    $('kTotalPnl').className = 'val ' + (totalPnl >= 0 ? 'positive' : 'negative');
+    // AESTHETIC-1: mute P&L in dry-run
+    const isDryRun = $('modeBadge') && $('modeBadge').textContent.includes('DRY');
+    $('kTotalPnl').className = 'val ' + (isDryRun ? 'val-muted' : (totalPnl >= 0 ? 'positive' : 'negative'));
+    let simTag = document.getElementById('simTag');
+    if (isDryRun) {
+      if (!simTag) { simTag = document.createElement('div'); simTag.id = 'simTag'; simTag.className = 'simulated-tag'; $('kTotalPnl').parentElement.appendChild(simTag); }
+      simTag.textContent = '(simulated)'; simTag.style.display = '';
+    } else if (simTag) { simTag.style.display = 'none'; }
     flashEl($('kTotalPnl'), totalPnl, parseFloat(prevPnl.replace(/[^-\d.]/g,'')));
     $('kTotalTrades').textContent = t.total_trades + ' trades';
     $('kWinRate').textContent = t.win_rate_pct + '%';
     $('kWinRate').className = 'val ' + (t.wins > t.losses ? 'positive' : t.wins < t.losses ? 'negative' : '');
-    $('kWL').textContent = t.wins + 'W / ' + t.losses + 'L';
+    $('kWL').textContent = t.wins + ' wins \u00B7 ' + (t.wins + t.losses) + ' closed';
   }
 
   // ── Trade table ──
@@ -838,7 +885,7 @@ async function pollSlow() {
       <td>${fmt(t.entry_price, 3)}</td>
       <td>$${fmt(t.size_usdc, 0)}</td>
       <td class="${pnlClass}" style="font-weight:600">${fmtUsd(t.pnl)}</td>
-      <td>${t.llm_verdict || '--'}</td>
+      <td>${(function(v){if(!v||v==='--')return '--';const vl=v.toUpperCase();if(vl==='GO')return '<span class="llm-go">GO</span>';if(vl==='SKIP')return '<span class="llm-skip">SKIP</span>';if(vl==='ABORT')return '<span class="llm-abort">ABORT</span>';return v;})(t.llm_verdict)}</td>
       <td>${pill}</td>
     </tr>
     <tr style="display:none">
@@ -859,13 +906,28 @@ async function pollSlow() {
     const sh = shArr[0];
     const shPnl = parseFloat(sh.total_pnl);
     $('shTotal').textContent = fmtK(sh.total);
-    $('shSettled').textContent = fmtK(sh.settled);
-    $('shWins').textContent = sh.wins;
-    $('shLosses').textContent = sh.losses;
-    const prevShPnl = $('shPnl').textContent;
-    $('shPnl').textContent = fmtUsd(shPnl);
-    $('shPnl').className = 'sv ' + (shPnl >= 0 ? 'positive' : 'negative');
-    flashEl($('shPnl'), shPnl, parseFloat(prevShPnl.replace(/[^-\d.]/g,'')));
+    // AESTHETIC-4: zero state for shadow scoreboard
+    const zeroMsg = document.getElementById('shadowZeroMsg');
+    if (sh.settled === 0) {
+      $('shSettled').textContent = '0';
+      $('shWins').textContent = '--'; $('shLosses').textContent = '--';
+      $('shPnl').textContent = '--'; $('shPnl').className = 'sv';
+      if (!zeroMsg) {
+        const msg = document.createElement('div'); msg.id = 'shadowZeroMsg';
+        msg.style.cssText = 'grid-column:span 2;text-align:center;padding:12px;color:var(--text-3);font-size:12px;font-style:italic';
+        msg.textContent = 'No settled trades yet';
+        $('shPnl').closest('.shadow-grid').appendChild(msg);
+      } else { zeroMsg.style.display = ''; }
+    } else {
+      if (zeroMsg) zeroMsg.style.display = 'none';
+      $('shSettled').textContent = fmtK(sh.settled);
+      $('shWins').textContent = sh.wins;
+      $('shLosses').textContent = sh.losses;
+      const prevShPnl = $('shPnl').textContent;
+      $('shPnl').textContent = fmtUsd(shPnl);
+      $('shPnl').className = 'sv ' + (shPnl >= 0 ? 'positive' : 'negative');
+      flashEl($('shPnl'), shPnl, parseFloat(prevShPnl.replace(/[^-\d.]/g,'')));
+    }
 
     $('kShadowPnl').textContent = fmtUsd(shPnl);
     $('kShadowPnl').className = 'val ' + (shPnl >= 0 ? 'positive' : 'negative');
@@ -873,7 +935,7 @@ async function pollSlow() {
     const shWR = sh.settled > 0 ? ((sh.wins / sh.settled) * 100).toFixed(1) : '0.0';
     $('kShadowWR').textContent = shWR + '%';
     $('kShadowWR').className = 'val ' + (sh.wins > sh.losses ? 'positive' : 'negative');
-    $('kShadowWL').textContent = sh.wins + 'W / ' + sh.losses + 'L';
+    $('kShadowWL').textContent = sh.settled > 0 ? sh.wins + ' wins \u00B7 ' + sh.settled + ' closed' : '--';
   }
 
   // ── Blockers (from view — pre-aggregated) ──
@@ -908,13 +970,33 @@ async function pollSlow() {
 }
 
 // ═══════════════════════ HISTORICAL PRICE LOAD ═══════════════════════
-async function loadPriceHistory() {
-  const rows = await sq('signal_log', `select=ts,btc_price&${tagFilter()}order=ts.desc&limit=5000`);
-  // Downsample: keep ~500 points
+let currentRangeSeconds = 300; // default 5m
+const RANGE_LABELS = { 60: '1 min', 300: '5 min', 21600: '6h', 86400: '24h' };
+
+async function loadPriceHistory(rangeSeconds) {
+  if (rangeSeconds != null) currentRangeSeconds = rangeSeconds;
+  const since = new Date(Date.now() - currentRangeSeconds * 1000).toISOString();
+  const rows = await sq('signal_log', `select=ts,btc_price&${tagFilter()}ts=gte.${since}&order=ts.asc&limit=5000`);
   const step = Math.max(1, Math.floor(rows.length / 500));
-  priceHistory = rows.filter((_,i) => i % step === 0).reverse().map(r => ({ t: r.ts, p: r.btc_price }));
+  priceHistory = rows.filter((_,i) => i % step === 0).map(r => ({ t: r.ts, p: r.btc_price }));
+  // Update chart title
+  const titleEl = document.getElementById('btcChartTitle');
+  if (titleEl) {
+    const liveSpan = document.getElementById('chartLive');
+    titleEl.textContent = 'BTC Price \u2014 ' + (RANGE_LABELS[currentRangeSeconds] || currentRangeSeconds + 's');
+    if (liveSpan) { titleEl.appendChild(document.createTextNode(' ')); titleEl.appendChild(liveSpan); }
+  }
   drawPriceChart();
 }
+
+// Time range button handlers
+document.querySelectorAll('.tr-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tr-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    loadPriceHistory(parseInt(btn.dataset.range));
+  });
+});
 
 // ═══════════════════════ INIT ═══════════════════════
 (async function init() {
