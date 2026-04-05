@@ -6,7 +6,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PolyGuez</title>
-<!-- v3.5 — bot WS 100ms YES/NO, price_to_beat -->
+<!-- v3.6 — Chainlink settlement line on chart -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -146,6 +146,12 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 .yn-side-down { background:var(--red-bg); color:var(--red); }
 .yn-flash { animation: ynFlash 0.3s ease; }
 @keyframes ynFlash { 0% { transform: scale(1.05); } 100% { transform: scale(1); } }
+
+/* -- CHART LEGEND -- */
+.chart-legend { display:flex; align-items:center; gap:12px; margin-top:4px; padding:0 4px; }
+.chart-legend-item { display:flex; align-items:center; gap:4px; font-size:10px; color:var(--text-3); }
+.chart-legend-line { width:16px; height:2px; border-radius:1px; }
+.chart-legend-dash { width:16px; height:0; border-top:2px dashed; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -207,6 +213,11 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
         </div>
       </div>
       <div class="chart-wrap"><canvas id="priceCanvas"></canvas></div>
+      <div class="chart-legend">
+        <span class="chart-legend-item"><span class="chart-legend-line" style="background:#3B82F6"></span> Binance</span>
+        <span class="chart-legend-item"><span class="chart-legend-line" style="background:#8B5CF6"></span> Chainlink (settlement)</span>
+        <span class="chart-legend-item"><span class="chart-legend-dash" style="border-color:#F97316"></span> Strike</span>
+      </div>
       <div class="yn-strip">
         <div class="yn-badge yn-yes" id="ynYes"><span class="yn-label">YES</span> <span id="ynYesVal">--</span></div>
         <div class="yn-badge yn-no" id="ynNo"><span class="yn-label">NO</span> <span id="ynNoVal">--</span></div>
@@ -299,6 +310,7 @@ window._lastSignalId = null;
 let _chartDirty = false;
 window._lastTickMs = 0;
 window._botElapsed = 0;
+let clPrices = []; // Chainlink price history from bot WS {t, p}
 window._strikePrice = 0; // price to beat = btc_price - strike_delta
 let _marketMode = false; // fixed 0-5min window mode
 window._yesPrice = 0;
@@ -532,6 +544,29 @@ function connectBotWs() {
       const snap = JSON.parse(e.data);
       if (snap.error) return;
 
+      // ── Chainlink price buffer (100ms) — THE SETTLEMENT LINE ──
+      if (snap.chainlink_price > 0) {
+        const now = Date.now();
+        clPrices.push({ t: now, p: snap.chainlink_price });
+        if (clPrices.length > 3600) clPrices.shift();
+        // Also update topbar instantly
+        clPrice = snap.chainlink_price;
+        const clEl = $('clPrice');
+        if (clEl) clEl.textContent = '$' + clPrice.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+        // Update delta
+        if (btcPrice > 0) {
+          const delta = btcPrice - clPrice;
+          const box = $('deltaBox');
+          if (box) {
+            box.textContent = '\u0394 ' + (delta >= 0 ? '+' : '') + delta.toFixed(2);
+            if (Math.abs(delta) < 20) { box.style.background = 'var(--green-bg)'; box.style.color = 'var(--green)'; }
+            else if (Math.abs(delta) < 100) { box.style.background = 'var(--amber-bg)'; box.style.color = 'var(--amber)'; }
+            else { box.style.background = 'var(--red-bg)'; box.style.color = 'var(--red)'; }
+          }
+        }
+        scheduleChartDraw();
+      }
+
       // ── YES/NO prices at 100ms ──
       if (snap.yes_price > 0 || snap.no_price > 0) {
         const side = snap.signal ? snap.signal.entry_side : window._entrySide;
@@ -624,6 +659,11 @@ function drawPriceChart() {
     minP = Math.min(minP, window._strikePrice);
     maxP = Math.max(maxP, window._strikePrice);
   }
+  // Include Chainlink prices in scale
+  const clInRange = _marketMode
+    ? clPrices.filter(d => d.t >= minT && d.t <= maxT)
+    : clPrices.filter(d => d.t >= minT);
+  clInRange.forEach(d => { if (d.p < minP) minP = d.p; if (d.p > maxP) maxP = d.p; });
   const priceRange = maxP - minP || 50;
   const pad = priceRange * 0.10;
   minP -= pad; maxP += pad;
@@ -708,6 +748,43 @@ function drawPriceChart() {
     ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left';
     ctx.fillStyle = 'rgba(249, 115, 22, 0.85)';
     ctx.fillText('STRIKE $' + window._strikePrice.toLocaleString('en-US', {maximumFractionDigits:2}), LM + 4, sy - 5);
+  }
+
+
+  // ── CHAINLINK PRICE LINE (settlement line) ──
+  const clVisible = _marketMode
+    ? clPrices.filter(d => d.t >= minT && d.t <= maxT)
+    : clPrices.filter(d => d.t >= minT);
+  if (clVisible.length >= 2) {
+    const clPts = clVisible.map(d => ({ px: x(d.t), py: y(d.p) }));
+    // Gradient fill (purple, subtle)
+    ctx.beginPath();
+    ctx.moveTo(clPts[0].px, clPts[0].py);
+    for (let i = 1; i < clPts.length; i++) ctx.lineTo(clPts[i].px, clPts[i].py);
+    const clLast = clPts[clPts.length - 1];
+    ctx.lineTo(clLast.px, TM + plotH);
+    ctx.lineTo(clPts[0].px, TM + plotH);
+    ctx.closePath();
+    const clGrad = ctx.createLinearGradient(0, TM, 0, TM + plotH);
+    clGrad.addColorStop(0, 'rgba(139, 92, 246, 0.06)');
+    clGrad.addColorStop(1, 'rgba(139, 92, 246, 0)');
+    ctx.fillStyle = clGrad;
+    ctx.fill();
+    // Line
+    ctx.beginPath();
+    ctx.moveTo(clPts[0].px, clPts[0].py);
+    for (let i = 1; i < clPts.length; i++) ctx.lineTo(clPts[i].px, clPts[i].py);
+    ctx.strokeStyle = '#8B5CF6';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    // Current Chainlink dot
+    const lastCl = clVisible[clVisible.length - 1];
+    const clx = x(lastCl.t), cly = y(lastCl.p);
+    ctx.beginPath(); ctx.arc(clx, cly, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#8B5CF6'; ctx.fill();
+    // Chainlink price label (left side)
+    ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#8B5CF6';
+    ctx.fillText('CL $' + lastCl.p.toLocaleString('en-US', {maximumFractionDigits:2}), LM + 4, cly + 14);
   }
 
   // ── Price line: use lineTo for speed, bezier only for <500 points ──
