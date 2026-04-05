@@ -237,7 +237,7 @@ class PolyGuezConfig(BaseModel):
     low_balance_threshold: float = Field(default=40.0, ge=1.0, le=500.0, description="Balance below which low-balance sizing applies")
     max_daily_loss: Optional[float] = Field(default=None)
     max_open_positions: int = Field(default=1, ge=1, le=5)
-    velocity_threshold: float = Field(default=0.05, ge=0.001, le=1.0)
+    velocity_threshold: float = Field(default=0.01, ge=0.001, le=1.0)
     min_edge: float = Field(default=0.03, ge=0.01, le=0.5)
     max_spread: float = Field(default=0.10, ge=0.01, le=0.5)
     min_oracle_gap: float = Field(default=0.0, ge=0.0)
