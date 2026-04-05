@@ -6,7 +6,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PolyGuez</title>
-<!-- v3.0 — chart overhaul + UI fixes -->
+<!-- v3.1 — Binance klines + pro chart engine -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -71,7 +71,7 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 .right-col { display:flex; flex-direction:column; gap:12px; }
 
 /* ── CHART ── */
-.chart-wrap { position:relative; width:100%; height:220px; }
+.chart-wrap { position:relative; width:100%; height:260px; }
 .chart-wrap canvas { width:100%!important; height:100%!important; }
 
 /* ── SIGNAL METER ── */
@@ -278,6 +278,17 @@ window._lastSignalId = null;
 let lastPollTime = 0; // FIX-4: relative last-updated
 
 // ═══════════════════════ HELPERS ═══════════════════════
+// roundRect polyfill for older browsers
+if (!CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, r) {
+    if (typeof r === 'number') r = [r, r, r, r];
+    this.moveTo(x + r[0], y);
+    this.arcTo(x + w, y, x + w, y + h, r[1]);
+    this.arcTo(x + w, y + h, x, y + h, r[2]);
+    this.arcTo(x, y + h, x, y, r[3]);
+    this.arcTo(x, y, x + w, y, r[0]);
+  };
+}
 const $ = id => document.getElementById(id);
 const fmt = (n, d=2) => n == null ? '--' : Number(n).toFixed(d);
 const fmtUsd = n => n == null ? '--' : (n < 0 ? '-$' : '+$') + Math.abs(n).toFixed(2);
@@ -414,20 +425,19 @@ function connectBinance() {
 
     // Buffer for chart (throttled)
     const now = Date.now();
-    if (!connectBinance._lastChart || now - connectBinance._lastChart > 2000) {
+    if (!connectBinance._lastChart || now - connectBinance._lastChart > 500) {
       connectBinance._lastChart = now;
       livePrices.push({ t: now, p: btcPrice });
-      if (livePrices.length > 1800) livePrices.shift(); // 1h of 2s ticks
+      if (livePrices.length > 7200) livePrices.shift(); // 1h of 500ms ticks
       drawPriceChart();
     }
   };
 }
 
-// ═══════════════════════ PRICE CHART (Canvas) ═══════════════════════
+// ═══════════════════════ PRICE CHART (Canvas) — Pro v3.1 ═══════════════════════
 function drawPriceChart() {
   const canvas = $('priceCanvas');
   const ctx = canvas.getContext('2d');
-  // FIX-7: only resize canvas when dimensions actually change (prevents jank)
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.parentElement.getBoundingClientRect();
   const needsResize = canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr);
@@ -439,90 +449,162 @@ function drawPriceChart() {
   const W = rect.width, H = rect.height;
   ctx.clearRect(0, 0, W, H);
 
-  // Merge historical + live — downsample live ticks for longer ranges
-  const liveStep = currentRangeSeconds <= 300 ? 1 : currentRangeSeconds <= 21600 ? 15 : 60;
-  const sampledLive = livePrices.filter((_,i) => i % liveStep === 0);
-  const all = [
-    ...priceHistory.map(h => ({t: new Date(h.t).getTime(), p: h.p})),
-    ...sampledLive
-  ];
-  if (all.length < 2) return;
+  // ── Merge data: Binance klines (continuous) + live WS ticks ──
+  const all = [];
+  // Historical (from loadPriceHistory — now Binance klines for 6h/24h)
+  priceHistory.forEach(h => all.push({ t: new Date(h.t).getTime(), p: h.p }));
+  // Live WS ticks — only append if they're newer than the last historical point
+  const lastHistT = all.length ? all[all.length - 1].t : 0;
+  livePrices.forEach(lp => { if (lp.t > lastHistT) all.push(lp); });
 
-  const minT = all[0].t, maxT = all[all.length-1].t;
+  if (all.length < 2) {
+    ctx.fillStyle = '#98A2B3'; ctx.font = '12px Inter,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('Loading chart data...', W / 2, H / 2);
+    return;
+  }
+
+  // ── Scale ──
+  const minT = all[0].t, maxT = all[all.length - 1].t;
   let minP = Infinity, maxP = -Infinity;
-  all.forEach(d => { if(d.p < minP) minP = d.p; if(d.p > maxP) maxP = d.p; });
-  const pad = (maxP - minP) * 0.1 || 50;
+  all.forEach(d => { if (d.p < minP) minP = d.p; if (d.p > maxP) maxP = d.p; });
+  const range = maxP - minP || 50;
+  const pad = range * 0.08;
   minP -= pad; maxP += pad;
 
-  const LM = 64; // left margin for "$XX,XXX" labels
-  const x = t => ((t - minT) / (maxT - minT)) * (W - LM - 10) + LM;
-  const y = p => H - 24 - ((p - minP) / (maxP - minP)) * (H - 36);
+  const LM = 64, RM = 12, TM = 8, BM = 22;
+  const plotW = W - LM - RM;
+  const plotH = H - TM - BM;
+  const x = t => LM + ((t - minT) / (maxT - minT || 1)) * plotW;
+  const y = p => TM + plotH - ((p - minP) / (maxP - minP || 1)) * plotH;
 
-  // Grid + Y-axis labels (with comma formatting)
+  // ── Grid lines (horizontal) ──
   ctx.strokeStyle = '#F2F4F7'; ctx.lineWidth = 1;
-  for (let i = 0; i < 5; i++) {
-    const gy = 12 + i * (H - 36) / 4;
-    ctx.beginPath(); ctx.moveTo(LM, gy); ctx.lineTo(W, gy); ctx.stroke();
-    const pv = maxP - i * (maxP - minP) / 4;
+  const gridCount = 4;
+  for (let i = 0; i <= gridCount; i++) {
+    const gy = TM + (i / gridCount) * plotH;
+    ctx.beginPath(); ctx.moveTo(LM, gy); ctx.lineTo(W - RM, gy); ctx.stroke();
+    const pv = maxP - (i / gridCount) * (maxP - minP);
     ctx.fillStyle = '#98A2B3'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText('$' + pv.toLocaleString('en-US', {maximumFractionDigits:0}), LM - 4, gy + 4);
+    ctx.fillText('$' + pv.toLocaleString('en-US', { maximumFractionDigits: 0 }), LM - 6, gy + 3);
   }
 
-  // 5-minute market boundaries (vertical dashed lines) — only show on <=5min views
-  const marketInterval = currentRangeSeconds <= 300 ? 300000 : currentRangeSeconds <= 21600 ? 3600000 : 14400000;
-  const firstBoundary = Math.ceil(minT / marketInterval) * marketInterval;
-  ctx.strokeStyle = '#C0C8D4'; ctx.lineWidth = 1; // FIX-7: better contrast
-  ctx.setLineDash([4, 4]);
-  for (let t = firstBoundary; t <= maxT; t += marketInterval) {
+  // ── Vertical grid: time-appropriate intervals ──
+  let vInterval, vLabelFmt;
+  const spanMs = maxT - minT;
+  if (spanMs <= 120000) { vInterval = 15000; vLabelFmt = t => new Date(t).toLocaleTimeString('en-US',{minute:'2-digit',second:'2-digit',hour12:false}); }
+  else if (spanMs <= 600000) { vInterval = 60000; vLabelFmt = t => fmtTime(t); }
+  else if (spanMs <= 3600000) { vInterval = 300000; vLabelFmt = t => fmtTime(t); }
+  else if (spanMs <= 28800000) { vInterval = 3600000; vLabelFmt = t => fmtTime(t); }
+  else { vInterval = 14400000; vLabelFmt = t => fmtTime(t); }
+
+  // Show 5-min market boundaries only on 1m/5m
+  if (currentRangeSeconds <= 300) {
+    ctx.strokeStyle = 'rgba(192,200,212,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    const mStart = Math.ceil(minT / 300000) * 300000;
+    for (let t = mStart; t <= maxT; t += 300000) {
+      const xi = x(t);
+      if (xi < LM + 2) continue;
+      ctx.beginPath(); ctx.moveTo(xi, TM); ctx.lineTo(xi, TM + plotH); ctx.stroke();
+    }
+    ctx.setLineDash([]);
+  }
+
+  // Time axis labels
+  ctx.fillStyle = '#98A2B3'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'center';
+  const vStart = Math.ceil(minT / vInterval) * vInterval;
+  let lastLabelX = -100;
+  for (let t = vStart; t <= maxT; t += vInterval) {
     const xi = x(t);
-    if (xi < LM) continue;
-    ctx.beginPath(); ctx.moveTo(xi, 12); ctx.lineTo(xi, H - 24); ctx.stroke();
-  }
-  ctx.setLineDash([]);
-
-  // Time labels (every ~30 min)
-  const hours = Math.ceil((maxT - minT) / 3600000);
-  const step = Math.max(1, Math.floor(hours / 6));
-  ctx.textAlign = 'center';
-  for (let h = 0; h <= hours; h += step) {
-    const t = minT + h * 3600000;
-    if (t > maxT) break;
-    ctx.fillStyle = '#98A2B3'; ctx.font = '10px Inter,sans-serif';
-    ctx.fillText(fmtTime(t), x(t), H - 4);
+    if (xi < LM + 20 || xi > W - RM - 20) continue;
+    if (xi - lastLabelX < 50) continue; // prevent overlap
+    lastLabelX = xi;
+    // Subtle tick
+    ctx.strokeStyle = '#E4E7EC'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(xi, TM + plotH); ctx.lineTo(xi, TM + plotH + 4); ctx.stroke();
+    ctx.fillText(vLabelFmt(t), xi, H - 4);
   }
 
-  // FIX-7: gap-aware price line — break at >2min gaps
-  if (all.length > 1) {
-    const GAP_MS = currentRangeSeconds <= 300 ? 15000 : currentRangeSeconds <= 21600 ? 120000 : 600000;
-    ctx.beginPath(); ctx.strokeStyle = '#3B82F6'; ctx.lineWidth = 1.5;
-    all.forEach((d, i) => {
-      const px = x(d.t), py = y(d.p);
-      if (i === 0 || (d.t - all[i-1].t) > GAP_MS) {
-        ctx.moveTo(px, py);
-      } else {
-        ctx.lineTo(px, py);
-      }
-    });
-    ctx.stroke();
-  }
+  // ── Price line: smooth continuous line (no gap breaks for Binance data) ──
+  // Build path points
+  const pts = all.map(d => ({ px: x(d.t), py: y(d.p) }));
 
-  // Current price dot
+  // Draw gradient fill first
+  ctx.beginPath();
+  ctx.moveTo(pts[0].px, pts[0].py);
+  for (let i = 1; i < pts.length; i++) {
+    // Quadratic bezier for smoothing
+    const prev = pts[i - 1], curr = pts[i];
+    const cpx = (prev.px + curr.px) / 2;
+    ctx.quadraticCurveTo(prev.px, prev.py, cpx, (prev.py + curr.py) / 2);
+  }
+  // Final segment
+  const lastPt = pts[pts.length - 1];
+  ctx.lineTo(lastPt.px, lastPt.py);
+
+  // Close path for gradient fill
+  ctx.lineTo(lastPt.px, TM + plotH);
+  ctx.lineTo(pts[0].px, TM + plotH);
+  ctx.closePath();
+
+  // Gradient: blue to transparent
+  const isUp = all[all.length - 1].p >= all[0].p;
+  const gradColor = isUp ? '59, 130, 246' : '240, 68, 56'; // blue or red
+  const grad = ctx.createLinearGradient(0, TM, 0, TM + plotH);
+  grad.addColorStop(0, `rgba(${gradColor}, 0.12)`);
+  grad.addColorStop(0.6, `rgba(${gradColor}, 0.03)`);
+  grad.addColorStop(1, `rgba(${gradColor}, 0)`);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Draw the line itself
+  ctx.beginPath();
+  ctx.moveTo(pts[0].px, pts[0].py);
+  for (let i = 1; i < pts.length; i++) {
+    const prev = pts[i - 1], curr = pts[i];
+    const cpx = (prev.px + curr.px) / 2;
+    ctx.quadraticCurveTo(prev.px, prev.py, cpx, (prev.py + curr.py) / 2);
+  }
+  ctx.lineTo(lastPt.px, lastPt.py);
+  ctx.strokeStyle = isUp ? '#3B82F6' : '#F04438';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  // ── Current price: dot + horizontal dashed line + label ──
   if (all.length > 0) {
     const last = all[all.length - 1];
-    ctx.beginPath(); ctx.arc(x(last.t), y(last.p), 4, 0, Math.PI*2);
-    ctx.fillStyle = '#3B82F6'; ctx.fill();
+    const lx = x(last.t), ly = y(last.p);
 
-    // Price label
-    ctx.fillStyle = '#1E3A8A'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'left';
-    ctx.fillText('$' + last.p.toFixed(2), x(last.t) + 8, y(last.p) + 4);
+    // Dashed horizontal line at current price
+    ctx.strokeStyle = isUp ? 'rgba(59,130,246,0.3)' : 'rgba(240,68,56,0.3)';
+    ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(LM, ly); ctx.lineTo(W - RM, ly); ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Glow dot
+    ctx.beginPath(); ctx.arc(lx, ly, 6, 0, Math.PI * 2);
+    ctx.fillStyle = isUp ? 'rgba(59,130,246,0.15)' : 'rgba(240,68,56,0.15)'; ctx.fill();
+    ctx.beginPath(); ctx.arc(lx, ly, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = isUp ? '#3B82F6' : '#F04438'; ctx.fill();
+
+    // Price label badge on right edge
+    const priceStr = '$' + last.p.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
+    ctx.font = 'bold 10px Inter,sans-serif';
+    const tw = ctx.measureText(priceStr).width;
+    const bx = W - RM - tw - 10, by = ly - 9;
+    ctx.fillStyle = isUp ? '#3B82F6' : '#F04438';
+    ctx.beginPath();
+    ctx.roundRect(bx, by, tw + 10, 18, 4);
+    ctx.fill();
+    ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
+    ctx.fillText(priceStr, bx + 5, ly + 4);
   }
 
-  // BUG-2 fix: smooth market timer based on signal arrival time
+  // ── Market timer ──
   if (window._signalArrivalTime > 0) {
     const elapsed = Math.min(300, Math.floor((Date.now() - window._signalArrivalTime) / 1000));
     const timerText = 'Market: ' + elapsed + 's / 300s';
     ctx.fillStyle = '#1E3A8A'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText(timerText, W - 10, 20);
+    ctx.fillText(timerText, W - RM, TM + 14);
   }
 }
 
@@ -971,16 +1053,54 @@ async function pollSlow() {
   drawSignalChart();
 }
 
-// ═══════════════════════ HISTORICAL PRICE LOAD ═══════════════════════
-let currentRangeSeconds = 300; // default 5m
+// ═══════════════════════ HISTORICAL PRICE LOAD — Binance Klines ═══════════════════════
+let currentRangeSeconds = 300;
 const RANGE_LABELS = { 60: '1 min', 300: '5 min', 21600: '6h', 86400: '24h' };
+
+// Map range → Binance kline interval + limit
+function binanceKlineParams(rangeSec) {
+  if (rangeSec <= 60)    return { interval: '1s', limit: 60 };     // 60 x 1s candles
+  if (rangeSec <= 300)   return { interval: '1s', limit: 300 };    // 300 x 1s candles
+  if (rangeSec <= 21600) return { interval: '1m', limit: 360 };    // 360 x 1m candles = 6h
+  return                          { interval: '5m', limit: 288 };   // 288 x 5m candles = 24h
+}
+
+async function fetchBinanceKlines(rangeSec) {
+  const { interval, limit } = binanceKlineParams(rangeSec);
+  const startTime = Date.now() - rangeSec * 1000;
+  try {
+    const url = `https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval=${interval}&startTime=${startTime}&limit=${limit}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error('Binance API ' + resp.status);
+    const data = await resp.json();
+    // Kline format: [openTime, open, high, low, close, volume, closeTime, ...]
+    return data.map(k => ({
+      t: k[0],              // open time ms
+      p: parseFloat(k[4]),  // close price
+      h: parseFloat(k[2]),  // high
+      l: parseFloat(k[3]),  // low
+    }));
+  } catch (e) {
+    console.warn('[Chart] Binance klines failed, falling back to signal_log:', e);
+    return null;
+  }
+}
 
 async function loadPriceHistory(rangeSeconds) {
   if (rangeSeconds != null) currentRangeSeconds = rangeSeconds;
-  const since = new Date(Date.now() - currentRangeSeconds * 1000).toISOString();
-  const rows = await sq('signal_log', `select=ts,btc_price&${tagFilter()}ts=gte.${since}&order=ts.asc&limit=5000`);
-  const step = Math.max(1, Math.floor(rows.length / 500));
-  priceHistory = rows.filter((_,i) => i % step === 0).map(r => ({ t: r.ts, p: r.btc_price }));
+
+  // Try Binance klines first (continuous data, no gaps)
+  const klines = await fetchBinanceKlines(currentRangeSeconds);
+  if (klines && klines.length > 0) {
+    priceHistory = klines.map(k => ({ t: k.t, p: k.p }));
+  } else {
+    // Fallback: signal_log (sparse, has gaps)
+    const since = new Date(Date.now() - currentRangeSeconds * 1000).toISOString();
+    const rows = await sq('signal_log', `select=ts,btc_price&${tagFilter()}ts=gte.${since}&order=ts.asc&limit=5000`);
+    const step = Math.max(1, Math.floor(rows.length / 500));
+    priceHistory = rows.filter((_, i) => i % step === 0).map(r => ({ t: r.ts, p: r.btc_price }));
+  }
+
   // Update chart title
   const titleEl = document.getElementById('btcChartTitle');
   if (titleEl) {
