@@ -584,7 +584,9 @@ class PolyGuezRunner:
             ]
             # ── Vol & CLOB indicators for signal_log ──
             _sigma = self._vol_tracker.sigma()
-            _token_price = signal.yes_price if signal.direction == "up" else signal.no_price
+            # Always use YES price for BS digital-call inversion
+            # (formula prices P(S>K); NO side = 1 - P(S>K))
+            _token_price = signal.yes_price
             _iv = compute_implied_vol(
                 token_price=_token_price,
                 spot=cl_price,
