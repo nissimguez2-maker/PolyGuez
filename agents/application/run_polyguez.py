@@ -58,7 +58,7 @@ class PolyGuezRunner:
 
     def __init__(self, config=None):
         self.config = config or PolyGuezConfig()
-        self._config_lock = threading.Lock()
+        self._config_lock = asyncio.Lock()
 
         # Existing repo components
         self._polymarket = None  # Lazy init — needs wallet key
@@ -88,7 +88,6 @@ class PolyGuezRunner:
         self._p2b_consecutive_failures = 0
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
-        self._open_position = None  # Dry-run position tracking
 
         # CLOB WebSocket state
         self._clob_ws = None
@@ -108,7 +107,7 @@ class PolyGuezRunner:
 
     async def update_config(self, partial):
         """Update config from dashboard. Takes effect next cycle."""
-        with self._config_lock:
+        async with self._config_lock:
             current = self.config.model_dump()
             current.update(partial)
             self.config = PolyGuezConfig(**current)
@@ -234,6 +233,8 @@ class PolyGuezRunner:
     async def run(self):
         """Main event loop — runs until killed."""
         log_event(logger, "runner_start", f"PolyGuez starting in {self.config.mode} mode")
+        if self.config.dashboard_secret:
+            log_event(logger, "dashboard_secret", f"Dashboard secret: {self.config.dashboard_secret[:8]}... (use ?secret=<full_token> to access)")
 
         # Init Polymarket client in ALL modes for read operations (balance, CLOB prices).
         # Trade execution guards in execute_entry/execute_emergency_exit remain mode-gated.
@@ -277,7 +278,11 @@ class PolyGuezRunner:
 
         while not self._killed:
             try:
-                await self._cycle()
+                await asyncio.wait_for(self._cycle(), timeout=360.0)
+            except asyncio.TimeoutError:
+                log_event(logger, "cycle_hung", "Cycle timed out after 360s — forcing recovery", level=40)
+                self._current_market = None
+                self._position = None
             except asyncio.CancelledError:
                 break
             except Exception as exc:
@@ -412,8 +417,8 @@ class PolyGuezRunner:
         if expiry_dt:
             wait = (expiry_dt - datetime.now(timezone.utc)).total_seconds()
             if wait > 0:
-                log_event(logger, "settlement_wait", f"Waiting {min(wait + 2, 15):.0f}s for market to settle")
-                await asyncio.sleep(min(wait + 2, 15))
+                log_event(logger, "settlement_wait", f"Waiting {min(wait + 5, 30):.0f}s for market to settle")
+                await asyncio.sleep(min(wait + 5, 30))
             else:
                 # Market already expired, brief wait for settlement data
                 await asyncio.sleep(3)
@@ -438,10 +443,6 @@ class PolyGuezRunner:
                             f"[SHADOW] Settled shadow trades for market {market_id} (no real position)")
             except Exception as exc:
                 log_event(logger, "shadow_settle_error", f"Shadow settlement failed: {exc}")
-
-        # Settle dry-run tracked position at cycle end
-        if self._open_position:
-            await self._settle_open_position()
 
         # Persist stats and reset for next cycle
         save_rolling_stats(self._rolling_stats)
@@ -499,9 +500,15 @@ class PolyGuezRunner:
 
             cl_price, cl_age = self._btc_feed.get_chainlink_price()
 
+            # Null-guard: get_velocity() returns None when buffer is empty
+            btc_velocity = self._btc_feed.get_velocity()
+            if btc_velocity is None:
+                await asyncio.sleep(self.config.clob_poll_interval)
+                continue
+
             # Evaluate signal first with depth=-1 (skip gate) to get delta direction
             signal = evaluate_entry_signal(
-                btc_velocity=self._btc_feed.get_velocity(),
+                btc_velocity=btc_velocity,
                 btc_price=btc_price_raw,
                 yes_price=yes_price,
                 no_price=no_price,
@@ -597,28 +604,31 @@ class PolyGuezRunner:
             _clob_spread = getattr(signal, "clob_spread_raw", None)
             _depth_at_ask = getattr(signal, "depth_at_ask_raw", None)
 
-            log_signal({
-                "market_id": market_id,
-                "market_question": self._current_market.get("question", "") if self._current_market else "",
-                "elapsed_seconds": round(elapsed, 1),
-                "btc_price": self._btc_feed.get_price() or 0.0,
-                "chainlink_price": cl_price,
-                "strike_delta": signal.strike_delta,
-                "terminal_probability": signal.terminal_probability,
-                "terminal_edge": signal.terminal_edge,
-                "entry_side": signal.direction,
-                "yes_price": signal.yes_price,
-                "no_price": signal.no_price,
-                "spread": signal.spread,
-                "conditions_met": sum(_v2_conds),
-                "all_conditions_met": signal.all_conditions_met,
-                "trade_fired": trade_fired,
-                "sigma_realized": round(_sigma, 4) if _sigma is not None else None,
-                "implied_vol": round(_iv, 4) if _iv is not None else None,
-                "clob_spread": round(_clob_spread, 4) if _clob_spread is not None else None,
-                "depth_at_ask": round(_depth_at_ask, 2) if _depth_at_ask is not None else None,
-                "mode": self.config.mode,
-            }, session_tag=self.config.session_tag)
+            # Throttle signal logging to ~1 per 10s to avoid Supabase row explosion
+            _log_this_signal = (int(elapsed) % 10 == 0) or signal.all_conditions_met or trade_fired
+            if _log_this_signal:
+                log_signal({
+                    "market_id": market_id,
+                    "market_question": self._current_market.get("question", "") if self._current_market else "",
+                    "elapsed_seconds": round(elapsed, 1),
+                    "btc_price": self._btc_feed.get_price() or 0.0,
+                    "chainlink_price": cl_price,
+                    "strike_delta": signal.strike_delta,
+                    "terminal_probability": signal.terminal_probability,
+                    "terminal_edge": signal.terminal_edge,
+                    "entry_side": signal.direction,
+                    "yes_price": signal.yes_price,
+                    "no_price": signal.no_price,
+                    "spread": signal.spread,
+                    "conditions_met": sum(_v2_conds),
+                    "all_conditions_met": signal.all_conditions_met,
+                    "trade_fired": trade_fired,
+                    "sigma_realized": round(_sigma, 4) if _sigma is not None else None,
+                    "implied_vol": round(_iv, 4) if _iv is not None else None,
+                    "clob_spread": round(_clob_spread, 4) if _clob_spread is not None else None,
+                    "depth_at_ask": round(_depth_at_ask, 2) if _depth_at_ask is not None else None,
+                    "mode": self.config.mode,
+                }, session_tag=self.config.session_tag)
 
             # Shadow trade: log what WOULD have happened when core edge exists
             # but other conditions block. Gives outcome data without trading.
@@ -692,16 +702,6 @@ class PolyGuezRunner:
         self._last_llm_time = llm_time
 
         if verdict == "NO-GO":
-            record = TradeRecord(
-                market_id=market_id,
-                side=signal.direction.upper(),
-                llm_verdict=verdict,
-                llm_reason=reason,
-                llm_provider=provider,
-                outcome="skipped",
-                reason=f"LLM NO-GO: {reason}",
-            )
-            self._rolling_stats.trades.append(record)
             log_event(logger, "trade_skipped", f"Skipped: LLM NO-GO — {reason}")
             return False
 
@@ -723,16 +723,6 @@ class PolyGuezRunner:
         result = await execute_entry(self._polymarket, token_id, size, self.config.mode, config=self.config)
 
         if result["status"] == "error":
-            record = TradeRecord(
-                market_id=market_id,
-                side=side,
-                llm_verdict=verdict,
-                llm_reason=reason,
-                llm_provider=provider,
-                outcome="skipped",
-                reason=f"Execution error: {result.get('error', '')}",
-            )
-            self._rolling_stats.trades.append(record)
             log_event(logger, "entry_failed", f"Entry failed: {result.get('error', '')}")
             return False
 
@@ -745,16 +735,6 @@ class PolyGuezRunner:
             size_usdc=size,
             price_to_beat=self._price_to_beat,
         )
-
-        # Track dry-run position for settlement at cycle end
-        self._open_position = {
-            "token_id": token_id,
-            "side": side.lower(),
-            "entry_price": entry_price,
-            "size_usdc": size,
-            "market_name": self._current_market.get("question", "") if self._current_market else "",
-            "entry_time": time.monotonic(),
-        }
 
         log_event(logger, "position_entered", f"Entered {side} @ {entry_price:.4f}, size=${size:.2f}", {
             "market_id": market_id,
@@ -793,7 +773,9 @@ class PolyGuezRunner:
                 # Record as emergency exit
                 # Fetch CLOB mid price for accurate emergency exit PnL
                 try:
-                    book = await self._polymarket.get_order_book(self._position.market_id)
+                    loop = asyncio.get_event_loop()
+                    book = await loop.run_in_executor(None, self._polymarket.client.get_order_book, self._position.token_id)
+                    log_event(logger, "emergency_exit_token_id_used", f"Used token_id={self._position.token_id} for exit order book")
                     best_bid = float(book.get("bids", [{}])[0].get("price", 0))
                     best_ask = float(book.get("asks", [{}])[0].get("price", 0))
                     mid_price = (best_bid + best_ask) / 2.0 if best_bid and best_ask else 0.0
@@ -840,7 +822,6 @@ class PolyGuezRunner:
                         self._rolling_stats.simulated_balance + pnl, 4
                     )
                 self._position = None
-                self._open_position = None  # Prevent double PnL in _settle_open_position
                 self._apply_cooldown()
                 return
 
@@ -976,7 +957,6 @@ class PolyGuezRunner:
             market_id=last_pending.market_id,
             size_usdc=last_pending.size_usdc,
         )
-        self._open_position = self._position
         # Remove the pending trade record — _settle() will create a fresh one
         self._rolling_stats.trades.remove(last_pending)
         # Attempt settlement
@@ -989,6 +969,23 @@ class PolyGuezRunner:
         pending_trades = [t for t in self._rolling_stats.trades if t.outcome == "pending"]
         if not pending_trades:
             return
+        
+        # Evict stale pending settlements (older than 2 hours)
+        now = datetime.now(timezone.utc)
+        stale = []
+        for trade in self._rolling_stats.trades:
+            if trade.outcome == "pending":
+                try:
+                    ts = datetime.fromisoformat(trade.timestamp)
+                    if (now - ts).total_seconds() > 7200:
+                        stale.append(trade)
+                except (ValueError, TypeError):
+                    pass
+        for trade in stale:
+            trade.outcome = "expired"
+            trade.reason = "pending > 2h — evicted"
+            log_event(logger, "pending_evicted", f"Evicted stale pending: {trade.market_id}")
+        
         resolved_count = 0
         for trade in pending_trades:
             try:
@@ -1032,67 +1029,6 @@ class PolyGuezRunner:
             save_rolling_stats(self._rolling_stats)
             log_event(logger, "pending_resolved_batch",
                 f"Resolved {resolved_count} pending settlements, {remaining} remaining")
-
-    async def _settle_open_position(self):
-        """Settle a dry-run tracked position by fetching the final CLOB mid price."""
-        pos = self._open_position
-        if not pos:
-            return
-        token_id = pos["token_id"]
-        side = pos["side"]
-        entry_price = pos["entry_price"]
-        size_usdc = pos["size_usdc"]
-        market_name = pos["market_name"]
-
-        # Fetch final CLOB mid price
-        exit_price = 0.0
-        try:
-            loop = asyncio.get_event_loop()
-            if self._polymarket:
-                exit_price = await loop.run_in_executor(
-                    None, self._get_clob_price_with_log, token_id,
-                    side.upper(),
-                )
-            else:
-                # Fallback: use Gamma outcomePrices if no wallet
-                if self._current_market:
-                    prices = self._current_market.get("outcomePrices", "")
-                    if isinstance(prices, str):
-                        try: prices = json.loads(prices)
-                        except (json.JSONDecodeError, TypeError): prices = []
-                    if isinstance(prices, list) and len(prices) >= 2:
-                        exit_price = float(prices[0]) if side == "yes" else float(prices[1])
-        except Exception as exc:
-            log_event(logger, "dryrun_settle_error", f"Failed to fetch exit price: {exc}", level=30)
-
-        if exit_price <= 0:
-            exit_price = entry_price  # Flat if we can't get a price
-            log_event(logger, "dryrun_settle_flat", "Exit price unavailable, assuming flat")
-
-        pnl = (exit_price - entry_price) * (size_usdc / entry_price) if entry_price > 0 else 0.0
-        pnl = round(pnl, 4)
-
-        log_event(logger, "dryrun_settled",
-            f"[DRY-RUN] SETTLED: {side} entered @ {entry_price:.4f}, "
-            f"exit @ {exit_price:.4f}, PnL: ${pnl:+.2f}")
-
-        self._rolling_stats.simulated_balance = round(
-            self._rolling_stats.simulated_balance + pnl, 4
-        )
-        log_event(logger, "dryrun_balance",
-            f"[DRY-RUN] Balance: ${self._rolling_stats.simulated_balance:.2f}")
-
-        # Settle shadow trades using Gamma outcomePrices
-        if self._current_market:
-            market_id = str(self._current_market.get("id", ""))
-            prices = self._current_market.get("outcomePrices", "")
-            if isinstance(prices, str):
-                try: prices = json.loads(prices)
-                except (json.JSONDecodeError, TypeError): prices = []
-            if isinstance(prices, list) and len(prices) >= 2:
-                settle_shadow_trades(market_id, prices)
-
-        self._open_position = None
 
     # -- CLOB WebSocket ----------------------------------------------------
 
@@ -1257,11 +1193,11 @@ class PolyGuezRunner:
 
     async def _poll_clob(self, yes_token, no_token):
         """Get CLOB prices: prefer WS cache, fall back to REST, then Gamma."""
-        # Try WS cache first (fresh if message within 60s)
+        # Try WS cache first (fresh if message within 30s)
         ws_fresh = (
             self._clob_ws_connected
             and self._clob_ws_last_msg > 0
-            and time.time() - self._clob_ws_last_msg < 60.0
+            and time.time() - self._clob_ws_last_msg < 30.0
             and self._clob_ws_yes > 0
             and self._clob_ws_no > 0
         )
@@ -1273,6 +1209,11 @@ class PolyGuezRunner:
             return (yes_price, no_price, spread)
 
         # WS stale or not connected — fall back to REST
+        if self._clob_ws_connected and self._clob_ws_last_msg > 0:
+            age = time.time() - self._clob_ws_last_msg
+            if age > 30.0:
+                log_event(logger, "clob_ws_stale", f"CLOB WS data is {age:.0f}s old — falling back to REST")
+
         return await self._poll_clob_rest(yes_token, no_token)
 
     async def _poll_clob_rest(self, yes_token, no_token):
@@ -1501,7 +1442,7 @@ def start_runner(mode="dry-run", live=False):
         "rtds_ws_url": os.getenv("POLYMARKET_RTDS_URL", config.rtds_ws_url),
         "binance_ws_url": os.getenv("BINANCE_WS_URL", config.binance_ws_url),
         "coinbase_ws_url": os.getenv("COINBASE_WS_URL", config.coinbase_ws_url),
-        "dashboard_secret": os.getenv("DASHBOARD_SECRET", ""),
+        "dashboard_secret": os.getenv("DASHBOARD_SECRET", "") or config.dashboard_secret,
     }
     config = config.model_copy(update=env_overrides)
 

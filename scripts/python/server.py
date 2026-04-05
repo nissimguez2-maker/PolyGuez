@@ -16,7 +16,6 @@ app = FastAPI(title="PolyGuez Dashboard")
 
 # Shared runner reference — set by the CLI entrypoint
 _runner = None
-_DASHBOARD_SECRET = os.getenv("DASHBOARD_SECRET", "")
 _FRONTEND_PATH = Path(__file__).parent.parent / "frontend" / "dashboard.html"
 
 
@@ -26,8 +25,16 @@ def set_runner(runner):
     _runner = runner
 
 
+def _get_dashboard_secret():
+    """Get dashboard secret from runner (auto-generated or env-set), or from env as fallback."""
+    if _runner and hasattr(_runner, 'config') and _runner.config.dashboard_secret:
+        return _runner.config.dashboard_secret
+    return os.getenv("DASHBOARD_SECRET", "")
+
+
 def _check_auth(secret: str = ""):
-    if _DASHBOARD_SECRET and secret != _DASHBOARD_SECRET:
+    dashboard_secret = _get_dashboard_secret()
+    if dashboard_secret and secret != dashboard_secret:
         raise HTTPException(status_code=403, detail="Invalid dashboard secret")
 
 
@@ -126,7 +133,8 @@ async def set_mode(request: Request, secret: str = Query(default="")):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket, secret: str = Query(default="")):
-    if _DASHBOARD_SECRET and secret != _DASHBOARD_SECRET:
+    dashboard_secret = _get_dashboard_secret()
+    if dashboard_secret and secret != dashboard_secret:
         await websocket.close(code=4003)
         return
 

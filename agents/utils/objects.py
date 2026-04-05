@@ -235,12 +235,13 @@ class PolyGuezConfig(BaseModel):
     strong_edge_threshold: float = Field(default=0.25, ge=0.01, le=0.5, description="Edge threshold for strong signal")
     strong_depth_threshold: float = Field(default=40000.0, ge=0.0, description="Depth threshold for strong signal")
     low_balance_threshold: float = Field(default=40.0, ge=1.0, le=500.0, description="Balance below which low-balance sizing applies")
+    max_capital_fraction: float = Field(default=0.20, ge=0.05, le=1.0, description="Fraction of balance for max capital at risk")
     max_daily_loss: Optional[float] = Field(default=None)
     max_open_positions: int = Field(default=1, ge=1, le=5)
     velocity_threshold: float = Field(default=0.005, ge=0.001, le=1.0)
     min_edge: float = Field(default=0.03, ge=0.01, le=0.5)
     max_spread: float = Field(default=0.10, ge=0.01, le=0.5)
-    min_oracle_gap: float = Field(default=0.0, ge=0.0)
+    min_oracle_gap: float = Field(default=0.0, ge=0.0, description="Binance-Chainlink gap threshold. 0.0 = disabled (strategy uses terminal probability edge instead)")
 
     # FIX 1: Split reversal_threshold into two fields
     reversal_velocity_threshold: float = Field(default=0.08, description="$/sec for velocity-based emergency exit fallback")
@@ -250,7 +251,7 @@ class PolyGuezConfig(BaseModel):
     min_clob_depth: float = Field(default=50.0, description="Min ask-side depth in token units within $0.05 of best price")
 
     # FIX 3: Settlement retry
-    settlement_max_retries: int = Field(default=4)
+    settlement_max_retries: int = Field(default=6)
     settlement_retry_delay: float = Field(default=3.0)
 
     early_window_seconds: int = Field(default=60)
@@ -264,7 +265,8 @@ class PolyGuezConfig(BaseModel):
     cooldown_cycles_long: int = Field(default=2)
     cooldown_tightened_multiplier: float = Field(default=1.5)
     cooldown_startup_trades: int = Field(default=5)
-    llm_timeout: float = Field(default=2.0)
+    llm_timeout: float = Field(default=5.0)
+    llm_timeout_fallback: str = Field(default="no-go", description="Action on LLM timeout: 'go' or 'no-go'")
     llm_enabled: bool = Field(default=True)
     llm_provider: str = Field(default="groq")
     llm_model_openai: str = Field(default="gpt-4o-mini")
@@ -305,7 +307,7 @@ class PolyGuezConfig(BaseModel):
     max_entry_token_price: float = Field(default=0.45, ge=0.10, le=0.95, description="Max token price for entry (sweet spot filter)")
     direction_mode: str = Field(default="both", description="Trade direction: 'both', 'down', or 'up'")
 
-    dashboard_secret: str = Field(default="")
+    dashboard_secret: str = Field(default_factory=lambda: __import__('secrets').token_urlsafe(32), description="Dashboard auth secret — auto-generated if not set via env")
     session_tag: str = Field(default_factory=lambda: os.environ.get("SESSION_TAG", "v1.1"), description="Version tag — set SESSION_TAG env var in Railway to start a new session without code changes")
 
 
@@ -381,6 +383,7 @@ class SignalState(BaseModel):
             # V2 core gates
             self.velocity_ok,            # BTC must be moving fast enough
             self.oracle_gap_ok,          # Binance-Chainlink gap must confirm direction
+            self.clob_mispricing_ok,     # CLOB token price below estimated fair value
             self.terminal_edge_ok,       # Terminal probability edge above minimum
             self.delta_magnitude_ok,     # Strike delta large enough for conviction
             self.time_of_day_ok,         # Not in blocked UTC hours
@@ -431,7 +434,7 @@ class RollingStats(BaseModel):
 
     @property
     def last_n_trades(self) -> List[TradeRecord]:
-        return self.trades[-10:] if self.trades else []
+        return self.trades[-30:] if self.trades else []
 
     @property
     def win_rate(self) -> float:

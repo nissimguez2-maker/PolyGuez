@@ -162,6 +162,7 @@ def evaluate_entry_signal(
         (_spread_ok, f"spread={spread:.4f}>={config.max_spread}"),
         (depth_ok, f"depth={clob_depth:.0f}<{config.min_clob_depth}"),
         (clob_consensus_ok, f"consensus={our_price:.3f}<{config.min_clob_consensus}"),
+        (clob_mispricing_ok, f"mispricing={token_price:.3f}>={estimated_fv:.3f}"),
         (_no_position, "already_in_position"),
         (cooldown_ok, "in_cooldown"),
         (_daily_loss_ok, "daily_loss_limit"),
@@ -223,7 +224,11 @@ def calculate_position_size(usdc_balance, config, edge=0.0, depth=0.0):
 
 
 def calculate_max_capital_at_risk(usdc_balance, config):
-    return max(config.bet_size_strong, 7.0)
+    fraction = getattr(config, 'max_capital_fraction', 0.20)
+    computed = min(usdc_balance * fraction, config.bet_size_strong * 3)
+    result = max(computed, config.bet_size_strong)
+    log_event(logger, "max_capital_computed", f"max_capital_at_risk=${result:.2f} (balance=${usdc_balance:.2f}, fraction={fraction})")
+    return result
 
 
 def check_daily_loss_limit(rolling_stats, config, usdc_balance):
@@ -330,6 +335,10 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
             timeout=config.llm_timeout,
         )
     except asyncio.TimeoutError:
+        fallback = getattr(config, 'llm_timeout_fallback', 'no-go')
+        if fallback == "go":
+            log_event(logger, "llm_timeout_fallback", f"LLM timed out after {config.llm_timeout}s — fallback=GO", level=30)
+            return ("GO", "timeout-fallback", adapter.name, config.llm_timeout)
         log_event(logger, "llm_timeout", f"LLM confirmation timed out after {config.llm_timeout}s — skipping trade", level=30)
         return ("NO-GO", "timeout-skipped", adapter.name, config.llm_timeout)
 
@@ -362,6 +371,30 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                     signed = await loop.run_in_executor(None, polymarket_client.client.create_order, order_args)
                     resp = await loop.run_in_executor(None, lambda: polymarket_client.client.post_order(signed, orderType=OrderType.GTC))
                     log_event(logger, "maker_order_posted", f"[MAKER] Limit order at {limit_price:.4f}")
+                    # Poll for fill confirmation
+                    order_id = None
+                    if isinstance(resp, dict):
+                        order_id = resp.get("orderID") or resp.get("id")
+                    elif hasattr(resp, 'orderID'):
+                        order_id = resp.orderID
+                    if order_id:
+                        for _poll in range(15):
+                            await asyncio.sleep(2)
+                            try:
+                                status = await loop.run_in_executor(None, polymarket_client.client.get_order, order_id)
+                                if isinstance(status, dict) and status.get("status") == "MATCHED":
+                                    filled_price = float(status.get("price", limit_price))
+                                    log_event(logger, "maker_order_confirmed_filled", f"[MAKER] Order {order_id} filled at {filled_price:.4f}")
+                                    return {"status": "filled", "price": filled_price, "response": status}
+                            except Exception as poll_exc:
+                                log_event(logger, "maker_poll_error", f"[MAKER] Poll error: {poll_exc}", level=30)
+                        # Order didn't fill — cancel it
+                        try:
+                            await loop.run_in_executor(None, polymarket_client.client.cancel, order_id)
+                            log_event(logger, "maker_order_cancelled", f"[MAKER] Order {order_id} cancelled after 30s unfilled")
+                        except Exception as cancel_exc:
+                            log_event(logger, "maker_cancel_error", f"[MAKER] Cancel failed: {cancel_exc}", level=30)
+                        return {"status": "unfilled", "reason": "maker_timeout"}
                     return {"status": "maker_posted", "price": limit_price, "response": resp}
             except Exception as exc:
                 log_event(logger, "maker_order_fallback", f"Maker order failed, falling back to FOK: {exc}", level=30)
@@ -449,7 +482,7 @@ def save_rolling_stats(stats):
     os.makedirs(_DATA_DIR, exist_ok=True)
     with open(_HISTORY_FILE, "w") as f:
         f.write(stats.model_dump_json(indent=2))
-    # Upsert to Supabase as durable backup
+    # Upsert to Supabase as durable backup + verify
     try:
         from agents.utils.supabase_logger import _client
         client = _client()
@@ -458,8 +491,12 @@ def save_rolling_stats(stats):
                 "id": "singleton",
                 "data": stats.model_dump(),
             }).execute()
+            # Verify write-back
+            verify = client.table("rolling_stats").select("id").eq("id", "singleton").execute()
+            if not verify.data:
+                logger.error("[STATS] Supabase write-back verification FAILED — row not found after upsert")
     except Exception as exc:
-        logger.warning(f"[STATS] Supabase save failed: {exc}")
+        logger.error(f"[STATS] Supabase save failed — stats may be lost on redeploy: {exc}")
 
 
 def load_rolling_stats():

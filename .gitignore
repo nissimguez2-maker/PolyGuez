@@ -29,3 +29,4 @@ archive.zip
 local_db*
 logs/
 data/trade_history.json
+local/
