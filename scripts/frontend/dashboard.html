@@ -6,41 +6,45 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PolyGuez</title>
-<!-- v3.6 — Chainlink settlement line on chart -->
+<!-- v4.0 — Visual overhaul: classy trading terminal -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 :root {
-  --bg: #F5F6F8;
+  --bg: #F8FAFC;
   --card: #FFFFFF;
-  --border: #E4E7EC;
-  --shadow: 0 1px 3px rgba(16,24,40,0.06);
-  --primary: #1E3A8A;
-  --text-1: #101828;
-  --text-2: #475467;
-  --text-3: #98A2B3;
-  --green: #12B76A;
-  --green-bg: #ECFDF3;
-  --red: #F04438;
-  --red-bg: #FEF3F2;
-  --amber: #F79009;
-  --amber-bg: #FFFAEB;
+  --border: #E2E8F0;
+  --shadow: 0 1px 2px rgba(15,23,42,0.04), 0 1px 5px rgba(15,23,42,0.06);
+  --primary: #1E40AF;
+  --accent: #0EA5E9;
+  --text-1: #0F172A;
+  --text-2: #475569;
+  --text-3: #94A3B8;
+  --green: #10B981;
+  --green-bg: #ECFDF5;
+  --red: #EF4444;
+  --red-bg: #FEF2F2;
+  --amber: #F59E0B;
+  --amber-bg: #FFFBEB;
   --font: 'Inter', system-ui, sans-serif;
-  --radius: 10px;
+  --radius: 12px;
+  --chart-line: #2563EB;
+  --chart-cl: #0891B2;
+  --chart-strike: #94A3B8;
 }
 *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
 html { font-size: 13px; }
-body { background: var(--bg); color: var(--text-1); font-family: var(--font); min-height: 100vh; font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
+body { background: var(--bg); color: var(--text-1); font-family: var(--font); min-height: 100vh; font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
 
 /* ── TOPBAR ── */
-.topbar { display:flex; align-items:center; gap:24px; padding:10px 20px; background:var(--card); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:100; }
-.logo { font-weight:800; font-size:16px; color:var(--primary); letter-spacing:-0.5px; }
+.topbar { display:flex; align-items:center; gap:20px; padding:12px 28px; background:var(--card); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:100; box-shadow: 0 1px 3px rgba(15,23,42,0.04); }
+.logo { font-weight:800; font-size:17px; color:var(--primary); letter-spacing:-0.5px; margin-right:4px; }
 .conn-dot { width:7px; height:7px; border-radius:50%; display:inline-block; }
 .conn-dot.on { background:var(--green); box-shadow:0 0 6px var(--green); }
 .conn-dot.off { background:var(--red); }
 .topbar-price { display:flex; flex-direction:column; gap:1px; }
 .topbar-price .label { font-size:10px; color:var(--text-3); text-transform:uppercase; letter-spacing:0.5px; }
-.topbar-price .val { font-size:18px; font-weight:700; }
+.topbar-price .val { font-size:17px; font-weight:700; letter-spacing:-0.3px; }
 .topbar-delta { font-size:12px; padding:3px 10px; border-radius:6px; font-weight:600; }
 .topbar-right { margin-left:auto; display:flex; align-items:center; gap:12px; }
 .badge { padding:3px 10px; border-radius:6px; font-size:11px; font-weight:600; }
@@ -55,38 +59,38 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 @keyframes flashR { 0%{color:var(--red)} 100%{color:var(--text-1)} }
 
 /* ── LAYOUT ── */
-.shell { max-width:1480px; margin:0 auto; padding:12px 16px; display:flex; flex-direction:column; gap:12px; }
-.kpi-row { display:grid; grid-template-columns:repeat(6,1fr); gap:10px; }
-.kpi { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:14px 16px; box-shadow:var(--shadow); }
+.shell { max-width:1480px; margin:0 auto; padding:20px 28px; display:flex; flex-direction:column; gap:16px; }
+.kpi-row { display:grid; grid-template-columns:repeat(6,1fr); gap:14px; }
+.kpi { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px 20px; box-shadow:var(--shadow); transition: box-shadow 0.2s; }
 .kpi .label { font-size:10px; color:var(--text-3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:4px; }
-.kpi .val { font-size:22px; font-weight:700; }
+.kpi .val { font-size:22px; font-weight:700; letter-spacing:-0.4px; }
 .kpi .sub { font-size:11px; color:var(--text-3); margin-top:2px; }
 .positive { color:var(--green) !important; }
 .negative { color:var(--red) !important; }
 
-.grid-main { display:grid; grid-template-columns:1fr 380px; gap:12px; }
-.card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px 18px; box-shadow:var(--shadow); }
-.card-title { font-size:11px; font-weight:600; color:var(--text-3); text-transform:uppercase; letter-spacing:0.5px; margin-bottom:10px; }
-.left-col { display:flex; flex-direction:column; gap:12px; }
-.right-col { display:flex; flex-direction:column; gap:12px; }
+.grid-main { display:grid; grid-template-columns:1fr 380px; gap:16px; }
+.card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px; box-shadow:var(--shadow); }
+.card-title { font-size:11px; font-weight:600; color:var(--text-3); text-transform:uppercase; letter-spacing:0.6px; margin-bottom:12px; }
+.left-col { display:flex; flex-direction:column; gap:16px; }
+.right-col { display:flex; flex-direction:column; gap:16px; }
 
 /* ── CHART ── */
-.chart-wrap { position:relative; width:100%; height:260px; }
+.chart-wrap { position:relative; width:100%; height:300px; }
 .chart-wrap canvas { width:100%!important; height:100%!important; }
 
 /* ── SIGNAL METER ── */
-.meter-row { display:flex; gap:12px; align-items:stretch; }
+.meter-row { display:flex; gap:16px; align-items:stretch; }
 .meter-card { flex:1; }
-.meter-bar-bg { width:100%; height:8px; background:#F2F4F7; border-radius:4px; overflow:hidden; margin:6px 0; }
+.meter-bar-bg { width:100%; height:6px; background:#F1F5F9; border-radius:3px; overflow:hidden; margin:8px 0; }
 .meter-bar-fill { height:100%; border-radius:4px; transition:width 0.3s; }
 .meter-val { font-size:20px; font-weight:700; }
 .meter-sub { font-size:11px; color:var(--text-3); }
 
 /* ── TABLE ── */
 .tbl { width:100%; border-collapse:collapse; font-size:12px; }
-.tbl thead th { text-align:left; padding:6px 8px; font-size:10px; color:var(--text-3); font-weight:500; border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:0.4px; }
-.tbl tbody td { padding:7px 8px; border-bottom:1px solid #F5F6F8; }
-.tbl tbody tr:hover { background:#FAFBFC; }
+.tbl thead th { text-align:left; padding:8px 10px; font-size:10px; color:var(--text-3); font-weight:500; border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:0.4px; }
+.tbl tbody td { padding:8px 10px; border-bottom:1px solid #F1F5F9; }
+.tbl tbody tr:hover { background:#F8FAFC; }
 .pill { display:inline-block; padding:2px 8px; border-radius:4px; font-size:11px; font-weight:600; }
 .pill-win { background:var(--green-bg); color:var(--green); }
 .pill-loss { background:var(--red-bg); color:var(--red); }
@@ -94,19 +98,19 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 /* ── BLOCKERS ── */
 .blocker-row { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
 .blocker-name { font-size:11px; color:var(--text-2); width:140px; text-align:right; flex-shrink:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.blocker-bar-bg { flex:1; height:6px; background:#F2F4F7; border-radius:3px; overflow:hidden; }
+.blocker-bar-bg { flex:1; height:5px; background:#F1F5F9; border-radius:3px; overflow:hidden; }
 .blocker-bar-fill { height:100%; border-radius:3px; }
 .blocker-cnt { font-size:11px; color:var(--text-3); width:40px; }
 .blocker-pnl { font-size:11px; width:60px; text-align:right; font-weight:600; }
 
 /* ── SHADOW SCORE ── */
 .shadow-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.shadow-stat { text-align:center; padding:10px; background:#FAFBFC; border-radius:8px; }
+.shadow-stat { text-align:center; padding:12px; background:#F8FAFC; border-radius:8px; border:1px solid #F1F5F9; }
 .shadow-stat .sv { font-size:18px; font-weight:700; }
 .shadow-stat .sl { font-size:10px; color:var(--text-3); text-transform:uppercase; letter-spacing:0.3px; margin-top:2px; }
 
 /* ── FOOTER ── */
-.footer { text-align:center; font-size:11px; color:var(--text-3); padding:8px 0 16px; }
+.footer { text-align:center; font-size:11px; color:var(--text-3); padding:16px 0 24px; }
 
 @media (max-width:900px) {
   .kpi-row { grid-template-columns:repeat(3,1fr); }
@@ -116,7 +120,7 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 /* -- CHART TIME RANGE SELECTOR -- */
 .chart-timerange { display:flex; gap:4px; }
 .tr-btn { padding:3px 10px; font-size:11px; font-weight:600; border-radius:99px; border:1px solid var(--border); background:transparent; color:var(--text-3); cursor:pointer; transition:all 150ms ease; font-family:var(--font); }
-.tr-btn:hover { background:#f3f0ec; color:var(--text-1); }
+.tr-btn:hover { background:#F1F5F9; color:var(--text-1); }
 .tr-btn.active { background:var(--primary); color:#fff; border-color:transparent; }
 
 /* -- LLM VERDICT BADGES -- */
@@ -135,7 +139,7 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 .blocking-count { color:var(--red); font-weight:700; font-size:11px; margin-left:8px; }
 
 /* -- YES/NO PRICE BADGES -- */
-.yn-strip { display:flex; align-items:center; gap:8px; margin-top:6px; }
+.yn-strip { display:flex; align-items:center; gap:10px; margin-top:10px; padding-top:10px; border-top:1px solid #F1F5F9; }
 .yn-badge { display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:13px; font-weight:700; font-family:var(--font); font-variant-numeric:tabular-nums; transition: background 0.15s; }
 .yn-badge .yn-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; opacity:0.7; }
 .yn-yes { background:var(--green-bg); color:var(--green); border:1px solid rgba(18,183,106,0.2); }
@@ -148,10 +152,20 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 @keyframes ynFlash { 0% { transform: scale(1.05); } 100% { transform: scale(1); } }
 
 /* -- CHART LEGEND -- */
-.chart-legend { display:flex; align-items:center; gap:12px; margin-top:4px; padding:0 4px; }
+.chart-legend { display:flex; align-items:center; gap:16px; margin-top:8px; padding:0 4px; }
 .chart-legend-item { display:flex; align-items:center; gap:4px; font-size:10px; color:var(--text-3); }
 .chart-legend-line { width:16px; height:2px; border-radius:1px; }
 .chart-legend-dash { width:16px; height:0; border-top:2px dashed; }
+
+/* -- v4.0 VISUAL POLISH -- */
+html { scroll-behavior: smooth; }
+.kpi:hover { box-shadow: 0 2px 8px rgba(15,23,42,0.08); }
+.card { transition: box-shadow 0.2s ease; }
+.card:hover { box-shadow: 0 2px 8px rgba(15,23,42,0.08); }
+.topbar { backdrop-filter: blur(8px); background: rgba(255,255,255,0.95); }
+.conn-dot.on { background: var(--green); box-shadow: 0 0 0 3px rgba(16,185,129,0.15); animation: pulse-dot 2s infinite; }
+@keyframes pulse-dot { 0%,100%{ box-shadow:0 0 0 3px rgba(16,185,129,0.15) } 50%{ box-shadow:0 0 0 5px rgba(16,185,129,0.08) } }
+.badge { border-radius: 8px; letter-spacing: 0.3px; }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -214,9 +228,9 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
       </div>
       <div class="chart-wrap"><canvas id="priceCanvas"></canvas></div>
       <div class="chart-legend">
-        <span class="chart-legend-item"><span class="chart-legend-line" style="background:#3B82F6"></span> Binance</span>
-        <span class="chart-legend-item"><span class="chart-legend-line" style="background:#8B5CF6"></span> Chainlink (settlement)</span>
-        <span class="chart-legend-item"><span class="chart-legend-dash" style="border-color:#F97316"></span> Strike</span>
+        <span class="chart-legend-item"><span class="chart-legend-line" style="background:#2563EB"></span> Binance</span>
+        <span class="chart-legend-item"><span class="chart-legend-line" style="background:#0891B2"></span> Chainlink</span>
+        <span class="chart-legend-item"><span class="chart-legend-dash" style="border-color:#94A3B8"></span> Strike</span>
       </div>
       <div class="yn-strip">
         <div class="yn-badge yn-yes" id="ynYes"><span class="yn-label">YES</span> <span id="ynYesVal">--</span></div>
@@ -228,7 +242,7 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 
     <!-- SIGNAL METERS -->
     <!-- VOL & EDGE RADAR -->
-    <div class="card" style="padding:12px 18px">
+    <div class="card" style="padding:16px 24px">
       <div class="card-title">Vol & Edge</div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
         <div class="chart-wrap" style="height:180px"><canvas id="volCanvas"></canvas></div>
@@ -285,7 +299,7 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
   </div>
 </div>
 
-<div class="footer">PolyGuez v2 · Binance WS · Supabase Analytics · <span id="lastUpdate">--</span></div>
+<div class="footer">PolyGuez v4.0 · Binance · Supabase · Chainlink · <span id="lastUpdate">--</span></div>
 </div>
 
 <script>
@@ -625,7 +639,7 @@ function drawPriceChart() {
   livePrices.forEach(lp => { if (lp.t > lastHistT) all.push(lp); });
 
   if (all.length < 2) {
-    ctx.fillStyle = '#98A2B3'; ctx.font = '12px Inter,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#94A3B8'; ctx.font = '12px Inter,sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('Loading chart data...', W / 2, H / 2);
     return;
   }
@@ -647,7 +661,7 @@ function drawPriceChart() {
   // Filter data to visible range for price scale
   const visible = _marketMode ? all.filter(d => d.t >= minT && d.t <= maxT) : all;
   if (visible.length < 1) {
-    ctx.fillStyle = '#98A2B3'; ctx.font = '12px Inter,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#94A3B8'; ctx.font = '12px Inter,sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('Waiting for market data...', W / 2, H / 2);
     return;
   }
@@ -675,12 +689,12 @@ function drawPriceChart() {
   const y = p => TM + plotH - ((p - minP) / (maxP - minP || 1)) * plotH;
 
   // ── Grid lines (horizontal) ──
-  ctx.strokeStyle = '#F2F4F7'; ctx.lineWidth = 1;
+  ctx.strokeStyle = '#F1F5F9'; ctx.lineWidth = 0.5;
   for (let i = 0; i <= 4; i++) {
     const gy = TM + (i / 4) * plotH;
     ctx.beginPath(); ctx.moveTo(LM, gy); ctx.lineTo(W - RM, gy); ctx.stroke();
     const pv = maxP - (i / 4) * (maxP - minP);
-    ctx.fillStyle = '#98A2B3'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'right';
+    ctx.fillStyle = '#94A3B8'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'right';
     ctx.fillText('$' + pv.toLocaleString('en-US', { maximumFractionDigits: 0 }), LM - 6, gy + 3);
   }
 
@@ -706,7 +720,7 @@ function drawPriceChart() {
     }
     ctx.setLineDash([]);
     // Minute labels: 0:00 through 5:00
-    ctx.fillStyle = '#98A2B3'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#94A3B8'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'center';
     for (let s = 0; s <= 300000; s += 60000) {
       const xi = x(minT + s);
       if (xi >= LM && xi <= W - RM) ctx.fillText(Math.floor(s/60000) + ':00', xi, H - 4);
@@ -723,7 +737,7 @@ function drawPriceChart() {
       ctx.setLineDash([]);
     }
     // Time axis labels
-    ctx.fillStyle = '#98A2B3'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#94A3B8'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'center';
     const vStart = Math.ceil(minT / vInterval) * vInterval;
     let lastLabelX = -100;
     for (let t = vStart; t <= maxT; t += vInterval) {
@@ -740,13 +754,13 @@ function drawPriceChart() {
   if (window._strikePrice > 0 && window._strikePrice >= minP && window._strikePrice <= maxP) {
     const sy = y(window._strikePrice);
     // Dashed line
-    ctx.strokeStyle = 'rgba(249, 115, 22, 0.5)'; // orange
+    ctx.strokeStyle = 'rgba(148, 163, 184, 0.6)'; // subtle gray
     ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
     ctx.beginPath(); ctx.moveTo(LM, sy); ctx.lineTo(W - RM, sy); ctx.stroke();
     ctx.setLineDash([]);
     // Label
     ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(249, 115, 22, 0.85)';
+    ctx.fillStyle = 'rgba(148, 163, 184, 0.85)';
     ctx.fillText('STRIKE $' + window._strikePrice.toLocaleString('en-US', {maximumFractionDigits:2}), LM + 4, sy - 5);
   }
 
@@ -766,24 +780,24 @@ function drawPriceChart() {
     ctx.lineTo(clPts[0].px, TM + plotH);
     ctx.closePath();
     const clGrad = ctx.createLinearGradient(0, TM, 0, TM + plotH);
-    clGrad.addColorStop(0, 'rgba(139, 92, 246, 0.06)');
-    clGrad.addColorStop(1, 'rgba(139, 92, 246, 0)');
+    clGrad.addColorStop(0, 'rgba(8, 145, 178, 0.06)');
+    clGrad.addColorStop(1, 'rgba(8, 145, 178, 0)');
     ctx.fillStyle = clGrad;
     ctx.fill();
     // Line
     ctx.beginPath();
     ctx.moveTo(clPts[0].px, clPts[0].py);
     for (let i = 1; i < clPts.length; i++) ctx.lineTo(clPts[i].px, clPts[i].py);
-    ctx.strokeStyle = '#8B5CF6';
+    ctx.strokeStyle = '#0891B2';
     ctx.lineWidth = 2;
     ctx.stroke();
     // Current Chainlink dot
     const lastCl = clVisible[clVisible.length - 1];
     const clx = x(lastCl.t), cly = y(lastCl.p);
     ctx.beginPath(); ctx.arc(clx, cly, 3, 0, Math.PI * 2);
-    ctx.fillStyle = '#8B5CF6'; ctx.fill();
+    ctx.fillStyle = '#0891B2'; ctx.fill();
     // Chainlink price label (left side)
-    ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#8B5CF6';
+    ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#0891B2';
     ctx.fillText('CL $' + lastCl.p.toLocaleString('en-US', {maximumFractionDigits:2}), LM + 4, cly + 14);
   }
 
@@ -791,9 +805,9 @@ function drawPriceChart() {
   const pts = visible.map(d => ({ px: x(d.t), py: y(d.p) }));
   if (pts.length < 2) return;
 
-  const useBezier = pts.length < 500;
+  const useBezier = pts.length < 1200; // smooth bezier for all practical ranges
   const lastPt = pts[pts.length - 1];
-  const isUp = visible[visible.length - 1].p >= visible[0].p;
+  // Always use consistent blue (no red/blue color flip)
 
   // Gradient fill
   ctx.beginPath();
@@ -811,7 +825,7 @@ function drawPriceChart() {
   ctx.lineTo(lastPt.px, TM + plotH);
   ctx.lineTo(pts[0].px, TM + plotH);
   ctx.closePath();
-  const gradColor = isUp ? '59, 130, 246' : '240, 68, 56';
+  const gradColor = '37, 99, 235'; // consistent blue
   const grad = ctx.createLinearGradient(0, TM, 0, TM + plotH);
   grad.addColorStop(0, `rgba(${gradColor}, 0.12)`);
   grad.addColorStop(0.6, `rgba(${gradColor}, 0.03)`);
@@ -832,7 +846,7 @@ function drawPriceChart() {
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].px, pts[i].py);
   }
   ctx.lineTo(lastPt.px, lastPt.py);
-  ctx.strokeStyle = isUp ? '#3B82F6' : '#F04438';
+  ctx.strokeStyle = '#2563EB';
   ctx.lineWidth = 2;
   ctx.stroke();
 
@@ -841,23 +855,23 @@ function drawPriceChart() {
   const lx = x(last.t), ly = y(last.p);
 
   // Dashed horizontal at current price
-  ctx.strokeStyle = isUp ? 'rgba(59,130,246,0.25)' : 'rgba(240,68,56,0.25)';
+  ctx.strokeStyle = 'rgba(37,99,235,0.2)';
   ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
   ctx.beginPath(); ctx.moveTo(LM, ly); ctx.lineTo(W - RM, ly); ctx.stroke();
   ctx.setLineDash([]);
 
   // Glow dot
   ctx.beginPath(); ctx.arc(lx, ly, 5, 0, Math.PI * 2);
-  ctx.fillStyle = isUp ? 'rgba(59,130,246,0.12)' : 'rgba(240,68,56,0.12)'; ctx.fill();
+  ctx.fillStyle = 'rgba(37,99,235,0.15)'; ctx.fill();
   ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2);
-  ctx.fillStyle = isUp ? '#3B82F6' : '#F04438'; ctx.fill();
+  ctx.fillStyle = '#2563EB'; ctx.fill();
 
   // Price badge
   const priceStr = '$' + last.p.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
   ctx.font = 'bold 10px Inter,sans-serif';
   const tw = ctx.measureText(priceStr).width;
   const bx = W - RM - tw - 10, by = ly - 9;
-  ctx.fillStyle = isUp ? '#3B82F6' : '#F04438';
+  ctx.fillStyle = '#2563EB';
   ctx.beginPath(); ctx.roundRect(bx, by, tw + 10, 18, 4); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
   ctx.fillText(priceStr, bx + 5, ly + 4);
@@ -869,7 +883,7 @@ function drawPriceChart() {
   if (useElapsed > 0) {
     const elapsed = Math.min(300, Math.floor(useElapsed));
     const timerText = 'Market: ' + elapsed + 's / 300s';
-    ctx.fillStyle = '#1E3A8A'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
+    ctx.fillStyle = '#475569'; ctx.font = '600 11px Inter,sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(timerText, W - RM, TM + 14);
   }
 
@@ -888,7 +902,7 @@ function drawPriceChart() {
     const barY = TM + plotH + 2;
     ctx.fillStyle = '#E4E7EC';
     ctx.fillRect(LM, barY, plotW, 3);
-    ctx.fillStyle = progress < 0.8 ? '#3B82F6' : '#F79009';
+    ctx.fillStyle = progress < 0.8 ? '#2563EB' : '#F59E0B';
     ctx.fillRect(LM, barY, plotW * progress, 3);
   }
 }
@@ -914,20 +928,20 @@ function drawSignalChart() {
     const bx = 40 + i * ((W - 40) / signalData.length);
     const bh = (d.signals / maxSig) * (H - 28);
 
-    // Signal bar (gray)
-    ctx.fillStyle = '#E4E7EC';
+    // Signal bar (light)
+    ctx.fillStyle = '#E2E8F0';
     ctx.fillRect(bx, H - 20 - bh, barW, bh);
 
     // Fired overlay (blue)
     if (d.fired > 0) {
       const fh = (d.fired / maxSig) * (H - 28);
-      ctx.fillStyle = '#1E3A8A';
+      ctx.fillStyle = '#2563EB';
       ctx.fillRect(bx, H - 20 - fh, barW, fh);
     }
 
     // Time label (every 4th)
     if (i % 4 === 0) {
-      ctx.fillStyle = '#98A2B3'; ctx.font = '9px Inter,sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#94A3B8'; ctx.font = '9px Inter,sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(fmtTime(d.hour), bx + barW/2, H - 4);
     }
   });
@@ -973,7 +987,7 @@ function drawVolRadar() {
   const drawBar = (y, label, value, max, color) => {
     ctx.fillStyle = '#64748B'; ctx.textAlign = 'right';
     ctx.fillText(label, labelWidth - 5, y + 10);
-    ctx.fillStyle = '#E2E8F0';
+    ctx.fillStyle = '#F1F5F9';
     ctx.fillRect(barX, y, barWidth, 12);
     const fillW = Math.max(0, Math.min((value / max) * barWidth, barWidth));
     ctx.fillStyle = color;
@@ -988,16 +1002,16 @@ function drawVolRadar() {
   currentY += barHeight + barGap;
   
   // Implied Vol (purple, 0-300%)
-  drawBar(currentY, 'Implied Vol', implVol, 300, '#8B5CF6');
+  drawBar(currentY, 'Implied Vol', implVol, 300, '#0891B2');
   currentY += barHeight + barGap;
   
   // Terminal Edge (blue background, with green zone > 3%)
-  ctx.fillStyle = '#E2E8F0';
+  ctx.fillStyle = '#F1F5F9';
   ctx.fillRect(barX, currentY, barWidth, 12);
   // Green "fire zone" (3% to 20%)
   const fireStart = Math.max(0, (3 / 30) * barWidth);
   const fireEnd = Math.min(barWidth, (20 / 30) * barWidth);
-  ctx.fillStyle = 'rgba(18, 183, 106, 0.2)';
+  ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
   ctx.fillRect(barX + fireStart, currentY, fireEnd - fireStart, 12);
   // Actual edge bar
   const edgeMin = -10, edgeMax = 20;
