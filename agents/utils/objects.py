@@ -274,18 +274,18 @@ class PolyGuezConfig(BaseModel):
     data_provider_timeout: float = Field(default=3.0)
     market_slug_pattern: str = Field(default="btc-updown-5m")
     market_question_pattern: str = Field(default="Bitcoin Up or Down")
-    clob_poll_interval: float = Field(default=0.35)
+    clob_poll_interval: float = Field(default=0.1)
     mode: str = Field(default="dry-run")
     rtds_ws_url: str = Field(default="wss://ws-live-data.polymarket.com")
     binance_ws_url: str = Field(default="wss://stream.binance.com:9443/ws/btcusdt@trade")
     coinbase_ws_url: str = Field(default="wss://ws-feed.exchange.coinbase.com")
     btc_feed_connect_timeout: float = Field(default=5.0)
     btc_buffer_min_seconds: float = Field(default=10.0)
-    clob_ws_enabled: bool = Field(default=False, description="Enable CLOB WebSocket (experimental, may get rejected)")
+    clob_ws_enabled: bool = Field(default=True, description="Enable CLOB WebSocket for real-time YES/NO prices")
 
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)
-    chainlink_onchain_poll_interval: float = Field(default=2.0)
+    chainlink_onchain_poll_interval: float = Field(default=0.5)
     chainlink_onchain_rpc_url: str = Field(default="https://polygon.drpc.org")
 
     # P2B parsing hardening
