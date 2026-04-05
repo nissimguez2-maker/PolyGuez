@@ -6,7 +6,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PolyGuez</title>
-<!-- v3.3 — strike line, market window, perf -->
+<!-- v3.4 — YES/NO prices, fast poll -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -133,6 +133,19 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 
 /* -- BLOCKING COUNT LABEL -- */
 .blocking-count { color:var(--red); font-weight:700; font-size:11px; margin-left:8px; }
+
+/* -- YES/NO PRICE BADGES -- */
+.yn-strip { display:flex; align-items:center; gap:8px; margin-top:6px; }
+.yn-badge { display:flex; align-items:center; gap:6px; padding:6px 12px; border-radius:8px; font-size:13px; font-weight:700; font-family:var(--font); font-variant-numeric:tabular-nums; transition: background 0.15s; }
+.yn-badge .yn-label { font-size:10px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; opacity:0.7; }
+.yn-yes { background:var(--green-bg); color:var(--green); border:1px solid rgba(18,183,106,0.2); }
+.yn-no { background:var(--red-bg); color:var(--red); border:1px solid rgba(240,68,56,0.2); }
+.yn-spread { font-size:11px; color:var(--text-3); font-weight:600; }
+.yn-side { padding:3px 8px; border-radius:4px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; }
+.yn-side-up { background:var(--green-bg); color:var(--green); }
+.yn-side-down { background:var(--red-bg); color:var(--red); }
+.yn-flash { animation: ynFlash 0.3s ease; }
+@keyframes ynFlash { 0% { transform: scale(1.05); } 100% { transform: scale(1); } }
 </style>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
@@ -194,6 +207,12 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
         </div>
       </div>
       <div class="chart-wrap"><canvas id="priceCanvas"></canvas></div>
+      <div class="yn-strip">
+        <div class="yn-badge yn-yes" id="ynYes"><span class="yn-label">YES</span> <span id="ynYesVal">--</span></div>
+        <div class="yn-badge yn-no" id="ynNo"><span class="yn-label">NO</span> <span id="ynNoVal">--</span></div>
+        <span class="yn-spread" id="ynSpread"></span>
+        <span class="yn-side" id="ynSide"></span>
+      </div>
     </div>
 
     <!-- SIGNAL METERS -->
@@ -281,6 +300,45 @@ let _chartDirty = false;
 window._lastTickMs = 0;
 window._strikePrice = 0; // price to beat = btc_price - strike_delta
 let _marketMode = false; // fixed 0-5min window mode
+window._yesPrice = 0;
+window._noPrice = 0;
+window._entrySide = '';
+window._prevYes = 0;
+window._prevNo = 0;
+function updateYesNo(yes, no, side, spread) {
+  if (yes != null && yes > 0) {
+    window._prevYes = window._yesPrice;
+    window._yesPrice = yes;
+    const el = $('ynYesVal');
+    el.textContent = (yes * 100).toFixed(1) + '¢';
+    if (window._prevYes && Math.abs(yes - window._prevYes) > 0.001) {
+      el.parentElement.classList.remove('yn-flash');
+      void el.parentElement.offsetWidth;
+      el.parentElement.classList.add('yn-flash');
+    }
+  }
+  if (no != null && no > 0) {
+    window._prevNo = window._noPrice;
+    window._noPrice = no;
+    const el = $('ynNoVal');
+    el.textContent = (no * 100).toFixed(1) + '¢';
+    if (window._prevNo && Math.abs(no - window._prevNo) > 0.001) {
+      el.parentElement.classList.remove('yn-flash');
+      void el.parentElement.offsetWidth;
+      el.parentElement.classList.add('yn-flash');
+    }
+  }
+  if (spread != null) {
+    $('ynSpread').textContent = 'spread ' + (spread * 100).toFixed(1) + '¢';
+  }
+  if (side) {
+    const el = $('ynSide');
+    window._entrySide = side;
+    el.textContent = side === 'up' ? '▲ UP' : '▼ DOWN';
+    el.className = 'yn-side ' + (side === 'up' ? 'yn-side-up' : 'yn-side-down');
+  }
+}
+
 function scheduleChartDraw() {
   if (!_chartDirty) {
     _chartDirty = true;
@@ -376,6 +434,10 @@ function initRealtime() {
           if (ksc && ksc.textContent !== '--') {
             const prev = parseInt(ksc.textContent.replace(/[^0-9]/g,''), 10) || 0;
             ksc.textContent = fmtK(prev + 1);
+          }
+          // Update YES/NO prices instantly from realtime
+          if (row.yes_price || row.no_price) {
+            updateYesNo(row.yes_price, row.no_price, row.entry_side, row.spread);
           }
           // Update blocking conditions in real time
           if (row.blocking_conditions != null) {
@@ -891,6 +953,9 @@ async function pollFast() {
       b.className = 'badge ' + (s.mode === 'live' ? 'badge-live' : 'badge-dry');
     }
 
+    // Update YES/NO prices from signal
+    updateYesNo(s.yes_price, s.no_price, s.entry_side, s.spread);
+
     // Update strike price (price to beat)
     if (s.btc_price != null && s.strike_delta != null) {
       window._strikePrice = s.btc_price - s.strike_delta;
@@ -1207,6 +1272,16 @@ async function loadPriceHistory(rangeSeconds) {
   drawPriceChart();
 }
 
+
+// ═══════════════════════ FAST YES/NO POLL (2s) ═══════════════════════
+async function pollYesNo() {
+  try {
+    const sig = await sq('signal_log', `${tagFilter()}select=yes_price,no_price,spread,entry_side&order=ts.desc&limit=1`);
+    if (sig.length) {
+      updateYesNo(sig[0].yes_price, sig[0].no_price, sig[0].entry_side, sig[0].spread);
+    }
+  } catch(e) {}
+}
 // Time range button handlers
 document.querySelectorAll('.tr-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1224,6 +1299,7 @@ document.querySelectorAll('.tr-btn').forEach(btn => {
   initRealtime(); // FIX-3: Supabase Realtime for live signal updates
   await Promise.all([loadPriceHistory(), pollFast(), pollSlow()]);
   setInterval(pollFast, POLL_FAST);
+  setInterval(pollYesNo, 2000); // fast YES/NO updates
   setInterval(pollSlow, POLL_SLOW);
   // FIX-2 + FIX-4: 1s interval for live market timer + relative "last updated"
   setInterval(() => {
