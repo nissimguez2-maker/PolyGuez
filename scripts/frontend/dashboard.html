@@ -6,7 +6,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PolyGuez</title>
-<!-- v3.4 — YES/NO prices, fast poll -->
+<!-- v3.5 — bot WS 100ms YES/NO, price_to_beat -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -298,6 +298,7 @@ window._lastSignalId = null;
 // rAF chart scheduler — coalesces multiple updates into one paint
 let _chartDirty = false;
 window._lastTickMs = 0;
+window._botElapsed = 0;
 window._strikePrice = 0; // price to beat = btc_price - strike_delta
 let _marketMode = false; // fixed 0-5min window mode
 window._yesPrice = 0;
@@ -509,6 +510,64 @@ function connectBinance() {
   };
 }
 
+
+// ═══════════════════════ BOT WS — sub-100ms prices ═══════════════════════
+let botWs, botWsRetry = 0;
+function connectBotWs() {
+  const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const params = new URLSearchParams(location.search);
+  const secret = params.get('secret') || '';
+  const url = `${proto}//${location.host}/ws?secret=${secret}`;
+  try {
+    botWs = new WebSocket(url);
+  } catch(e) { return; }
+
+  botWs.onopen = () => { botWsRetry = 0; };
+  botWs.onclose = () => {
+    setTimeout(connectBotWs, Math.min(1000 * 2 ** botWsRetry++, 15000));
+  };
+  botWs.onerror = () => { try { botWs.close(); } catch(e) {} };
+  botWs.onmessage = (e) => {
+    try {
+      const snap = JSON.parse(e.data);
+      if (snap.error) return;
+
+      // ── YES/NO prices at 100ms ──
+      if (snap.yes_price > 0 || snap.no_price > 0) {
+        const side = snap.signal ? snap.signal.entry_side : window._entrySide;
+        const spread = snap.clob_spread != null ? snap.clob_spread : null;
+        updateYesNo(snap.yes_price, snap.no_price, side, spread);
+      }
+
+      // ── Price to beat (strike) — from bot's _price_to_beat ──
+      if (snap.price_to_beat > 0) {
+        window._strikePrice = snap.price_to_beat;
+      }
+
+      // ── Market timer from entry_window_elapsed (authoritative) ──
+      if (snap.entry_window_elapsed != null && snap.entry_window_elapsed > 0) {
+        // Override the signal-arrival-based timer with the bot's real elapsed
+        window._botElapsed = snap.entry_window_elapsed;
+      }
+
+      // ── Mode badge ──
+      if (snap.mode) {
+        const b = $('modeBadge');
+        if (b) {
+          b.textContent = snap.mode.toUpperCase();
+          b.className = 'badge ' + (snap.mode === 'live' ? 'badge-live' : 'badge-dry');
+        }
+      }
+
+      // ── Kill state ──
+      if (snap.killed) {
+        const b = $('botStatus');
+        if (b) { b.textContent = '🔴 KILLED'; b.style.background = 'var(--red-bg)'; b.style.color = 'var(--red)'; }
+      }
+
+    } catch(err) {}
+  };
+}
 // ═══════════════════════ PRICE CHART (Canvas) — v3.3 ═══════════════════════
 function drawPriceChart() {
   const canvas = $('priceCanvas');
@@ -726,9 +785,12 @@ function drawPriceChart() {
   ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
   ctx.fillText(priceStr, bx + 5, ly + 4);
 
-  // ── Market timer ──
-  if (window._signalArrivalTime > 0) {
-    const elapsed = Math.min(300, Math.floor((Date.now() - window._signalArrivalTime) / 1000));
+  // ── Market timer (bot WS authoritative, signal arrival fallback) ──
+  const botElapsed = window._botElapsed || 0;
+  const sigElapsed = window._signalArrivalTime > 0 ? Math.floor((Date.now() - window._signalArrivalTime) / 1000) : 0;
+  const useElapsed = botElapsed > 0 ? botElapsed : sigElapsed;
+  if (useElapsed > 0) {
+    const elapsed = Math.min(300, Math.floor(useElapsed));
     const timerText = 'Market: ' + elapsed + 's / 300s';
     ctx.fillStyle = '#1E3A8A'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(timerText, W - RM, TM + 14);
@@ -1273,15 +1335,6 @@ async function loadPriceHistory(rangeSeconds) {
 }
 
 
-// ═══════════════════════ FAST YES/NO POLL (2s) ═══════════════════════
-async function pollYesNo() {
-  try {
-    const sig = await sq('signal_log', `${tagFilter()}select=yes_price,no_price,spread,entry_side&order=ts.desc&limit=1`);
-    if (sig.length) {
-      updateYesNo(sig[0].yes_price, sig[0].no_price, sig[0].entry_side, sig[0].spread);
-    }
-  } catch(e) {}
-}
 // Time range button handlers
 document.querySelectorAll('.tr-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1295,11 +1348,12 @@ document.querySelectorAll('.tr-btn').forEach(btn => {
 // ═══════════════════════ INIT ═══════════════════════
 (async function init() {
   connectBinance();
+  connectBotWs(); // sub-100ms YES/NO + price_to_beat
   await initSessionTag(); // FIX-1: resolve session tag before any queries
   initRealtime(); // FIX-3: Supabase Realtime for live signal updates
   await Promise.all([loadPriceHistory(), pollFast(), pollSlow()]);
   setInterval(pollFast, POLL_FAST);
-  setInterval(pollYesNo, 2000); // fast YES/NO updates
+  // YES/NO now via bot WS (100ms) — no polling needed
   setInterval(pollSlow, POLL_SLOW);
   // FIX-2 + FIX-4: 1s interval for live market timer + relative "last updated"
   setInterval(() => {
