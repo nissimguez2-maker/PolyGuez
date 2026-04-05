@@ -463,6 +463,14 @@ def save_rolling_stats(stats):
 
 
 def load_rolling_stats():
+    # FORCE_RESET: delete local file so bot loads fresh from Supabase
+    if os.environ.get("FORCE_RESET", "").strip() == "1":
+        try:
+            os.remove(_HISTORY_FILE)
+            logger.info("[STATS] FORCE_RESET=1 — deleted local file, will load from Supabase")
+        except FileNotFoundError:
+            pass
+
     # Try local file first
     try:
         with open(_HISTORY_FILE, "r") as f:
