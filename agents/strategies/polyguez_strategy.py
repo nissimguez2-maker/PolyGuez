@@ -184,6 +184,8 @@ def evaluate_entry_signal(
         balance_ok=_balance_ok,
         position_limit_ok=_position_limit_ok,
         depth_ok=depth_ok,
+        clob_spread_raw=spread,
+        depth_at_ask_raw=clob_depth,
         chainlink_fresh_ok=chainlink_fresh_ok,
         clob_consensus_ok=clob_consensus_ok,
         p2b_value=price_to_beat, p2b_source="description",
