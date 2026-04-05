@@ -137,6 +137,7 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 
 <!-- KPI ROW -->
 <div class="kpi-row">
+  <div class="kpi"><div class="label">Balance</div><div class="val" id="kBalance">--</div><div class="sub">simulated USDC</div></div>
   <div class="kpi"><div class="label">Total P&L</div><div class="val" id="kTotalPnl">--</div><div class="sub" id="kTotalTrades">-- trades</div></div>
   <div class="kpi"><div class="label">Shadow P&L</div><div class="val" id="kShadowPnl">--</div><div class="sub" id="kShadowCount">-- settled</div></div>
   <div class="kpi"><div class="label">Win Rate</div><div class="val" id="kWinRate">--</div><div class="sub" id="kWL">--W / --L</div></div>
@@ -525,8 +526,18 @@ async function pollFast() {
 }
 
 async function pollSlow() {
+  // ── Balance (from rolling_stats) ──
+  const rs = await sq('rolling_stats', 'id=eq.singleton&select=data');
+  if (rs.length && rs[0].data) {
+    const bal = rs[0].data.simulated_balance;
+    if (bal != null) {
+      $('kBalance').textContent = '$' + Number(bal).toFixed(2);
+      $('kBalance').className = 'val ' + (bal >= 100 ? 'positive' : 'negative');
+    }
+  }
+
   // ── Trades (direct, small table) ──
-  const trades = await sq('trade_log', 'order=ts.desc&limit=20');
+  const trades = await sq('trade_log', 'session_tag=eq.V4&order=ts.desc&limit=20');
   tradeData = [...trades].reverse();
 
   // ── Trade KPIs (from view — accurate) ──
