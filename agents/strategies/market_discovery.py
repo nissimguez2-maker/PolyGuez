@@ -100,6 +100,12 @@ class MarketDiscovery:
             m["_event_slug"] = event.get("slug", slug)
             m["_event_id"] = event.get("id", "")
 
+            # Integrity check: market question should match expected template
+            q = (m.get("question", "") or "").lower()
+            if "bitcoin" not in q or ("up" not in q and "down" not in q):
+                log_event(logger, "market_template_mismatch",
+                    f"Market question does not match BTC Up/Down template: {m.get('question', '')}", level=40)
+
             log_event(logger, "market_discovered", f"Found market: {m.get('question', '')}", {
                 "market_id": m.get("id"),
                 "slug": m.get("slug", ""),
@@ -248,7 +254,7 @@ class MarketDiscovery:
         # Tier 4: fallback to Chainlink price at market open
         if chainlink_price is not None and sanity_min <= chainlink_price <= sanity_max:
             import logging
-            logging.getLogger("polyguez.market_discovery").info(
+            logging.getLogger("polyguez.market_discovery").warning(
                 "P2B not in description — using Chainlink price at market open as P2B: $%.2f",
                 chainlink_price,
             )
@@ -267,7 +273,7 @@ class MarketDiscovery:
             return (False, float('inf'))
 
         ref_price = btc_price if btc_price > 0 else chainlink_price
-        tolerance = max(30.0, ref_price * 0.0005) + (discovery_lag_seconds * 3.0)
+        tolerance = max(30.0, ref_price * 0.0005) + (min(discovery_lag_seconds, 10.0) * 3.0)
         divergence = abs(description_p2b - chainlink_price)
         return (divergence <= tolerance, divergence)
 

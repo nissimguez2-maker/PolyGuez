@@ -124,16 +124,17 @@ class PriceFeedManager:
 
     @property
     def price_feed_ok(self):
-        """True if any price source has updated within the last 10 seconds."""
+        """True if any price source has updated within the stale threshold."""
         now = time.time()
-        if self._last_binance_msg_time > 0 and now - self._last_binance_msg_time <= 10.0:
+        threshold = self._config.price_feed_stale_threshold
+        if self._last_binance_msg_time > 0 and now - self._last_binance_msg_time <= threshold:
             return True
-        if self._last_chainlink_msg_time > 0 and now - self._last_chainlink_msg_time <= 10.0:
+        if self._last_chainlink_msg_time > 0 and now - self._last_chainlink_msg_time <= threshold:
             return True
-        # Rate-limit stale log to once per 10s
-        if now - self._last_stale_log >= 10.0:
+        # Rate-limit stale log to once per threshold interval
+        if now - self._last_stale_log >= threshold:
             self._last_stale_log = now
-            log_event(logger, "price_feed_stale", "No price update from any source in 10s", level=40)
+            log_event(logger, "price_feed_stale", f"No price update from any source in {threshold}s", level=40)
         return False
 
     def is_ready(self):
@@ -156,12 +157,13 @@ class PriceFeedManager:
     def _compute_velocity_with_source(self):
         """Compute velocity from Binance buffer, falling back to Chainlink if stale."""
         now = time.time()
+        threshold = self._config.price_feed_stale_threshold
         # Try Binance first (primary, higher frequency)
         points = [(t, p) for t, p in self._binance_buffer if t >= now - 30.0]
         if len(points) >= 2:
             return self._linreg_velocity(points), "binance"
-        # Fallback to Chainlink buffer if Binance is stale (>10s)
-        if self._last_binance_msg_time > 0 and now - self._last_binance_msg_time > 10.0:
+        # Fallback to Chainlink buffer if Binance is stale
+        if self._last_binance_msg_time > 0 and now - self._last_binance_msg_time > threshold:
             cl_points = [(t, p) for t, p in self._chainlink_buffer if t >= now - 30.0]
             if len(cl_points) >= 2:
                 return self._linreg_velocity(cl_points), "chainlink-fallback"
@@ -550,7 +552,7 @@ class PriceFeedManager:
                     log_event(logger, "onchain_poll_error", f"Poll failed: {exc}")
                     await asyncio.sleep(self._config.chainlink_onchain_poll_interval)
                     continue
-                if price is not None and price > 0:
+                if price is not None and price > 0 and 10000.0 <= price <= 500000.0:
                     now = time.time()
                     ts = float(updated_at) if updated_at else now
                     self._chainlink_buffer.append((ts, price))
@@ -558,6 +560,8 @@ class PriceFeedManager:
                     self._chainlink_msg_count_window += 1
                     self._last_chainlink_msg_time = now
                     self._update_gap()
+                elif price is not None and price > 0:
+                    log_event(logger, "onchain_price_rejected", f"On-chain price ${price:.2f} outside sanity range 10k-500k", level=30)
                 if self._rtds_connected:
                     self._onchain_active = False
                     self._chainlink_source = "rtds"

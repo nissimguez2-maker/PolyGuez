@@ -59,6 +59,9 @@ def evaluate_entry_signal(
     # Use delta_direction as the primary direction for entry decisions
     direction = delta_direction
 
+    # Velocity-delta agreement: warn when momentum opposes delta direction
+    velocity_agrees = (btc_velocity > 0 and delta_direction == "up") or (btc_velocity < 0 and delta_direction == "down")
+
     if delta_direction == "up":
         selected_side_probability = terminal_probability_yes
         token_price = yes_price
@@ -93,6 +96,8 @@ def evaluate_entry_signal(
     if rolling_stats.cooldown_until:
         try:
             until = datetime.fromisoformat(rolling_stats.cooldown_until)
+            if until.tzinfo is None:
+                until = until.replace(tzinfo=timezone.utc)
             if datetime.now(timezone.utc) < until:
                 cooldown_ok = False
         except (ValueError, TypeError):
@@ -162,7 +167,6 @@ def evaluate_entry_signal(
         (_spread_ok, f"spread={spread:.4f}>={config.max_spread}"),
         (depth_ok, f"depth={clob_depth:.0f}<{config.min_clob_depth}"),
         (clob_consensus_ok, f"consensus={our_price:.3f}<{config.min_clob_consensus}"),
-        (clob_mispricing_ok, f"mispricing={token_price:.3f}>={estimated_fv:.3f}"),
         (_no_position, "already_in_position"),
         (cooldown_ok, "in_cooldown"),
         (_daily_loss_ok, "daily_loss_limit"),
@@ -191,7 +195,7 @@ def evaluate_entry_signal(
         estimated_fair_value=estimated_fv, edge=edge,
         required_edge=effective_required_edge, gap_favors_position=gap_favors,
         velocity_ok=_velocity_ok,
-        oracle_gap_ok=oracle_gap_ok, clob_mispricing_ok=clob_mispricing_ok,
+        oracle_gap_ok=oracle_gap_ok,
         edge_ok=_edge_ok,
         spread_ok=_spread_ok,
         no_position=_no_position, cooldown_ok=cooldown_ok,
@@ -213,14 +217,19 @@ def evaluate_entry_signal(
         entry_price_ok=entry_price_ok,
         direction_ok=direction_ok,
         price_feed_ok=price_feed_ok,
+        velocity_agrees_direction=velocity_agrees,
     )
 
 
 def calculate_position_size(usdc_balance, config, edge=0.0, depth=0.0):
     is_strong = edge >= config.strong_edge_threshold and depth >= config.strong_depth_threshold
     if usdc_balance < config.low_balance_threshold:
-        return config.bet_size_low_balance_strong if is_strong else config.bet_size_low_balance_normal
-    return config.bet_size_strong if is_strong else config.bet_size_normal
+        raw = config.bet_size_low_balance_strong if is_strong else config.bet_size_low_balance_normal
+    else:
+        raw = config.bet_size_strong if is_strong else config.bet_size_normal
+    # Cap individual bet by max_capital_fraction
+    max_bet = usdc_balance * getattr(config, 'max_capital_fraction', 0.20)
+    return min(raw, max_bet) if max_bet > 0 else raw
 
 
 def calculate_max_capital_at_risk(usdc_balance, config):
@@ -267,7 +276,7 @@ def check_emergency_exit(btc_velocity, entry_direction, config, chainlink_price=
             return True
         if entry_direction == "down" and chainlink_move > config.reversal_chainlink_threshold:
             return True
-        return False
+        # Fall through to velocity check as secondary exit trigger
     if entry_direction == "up" and btc_velocity < -config.reversal_velocity_threshold:
         return True
     if entry_direction == "down" and btc_velocity > config.reversal_velocity_threshold:
@@ -510,15 +519,33 @@ def load_rolling_stats():
         return RollingStats(simulated_balance=100.0)
 
     # Try local file first
+    file_stats = None
     try:
         with open(_HISTORY_FILE, "r") as f:
             data = f.read().strip()
             if data:
-                logger.info("[STATS] Loaded from file")
-                return RollingStats.model_validate_json(data)
+                file_stats = RollingStats.model_validate_json(data)
     except (FileNotFoundError, json.JSONDecodeError, Exception):
         pass
-    # Fallback to Supabase
+    
+    # Cross-check: prefer Supabase if it has more trades (file may be stale)
+    if file_stats is not None:
+        try:
+            from agents.utils.supabase_logger import _client
+            client = _client()
+            if client:
+                resp = client.table("rolling_stats").select("data").eq("id", "singleton").execute()
+                if resp.data and len(resp.data) > 0:
+                    supa_stats = RollingStats.model_validate(resp.data[0]["data"])
+                    if supa_stats.total_trades > file_stats.total_trades:
+                        logger.info(f"[STATS] Supabase has more trades ({supa_stats.total_trades} > {file_stats.total_trades}) — using Supabase")
+                        return supa_stats
+        except Exception as exc:
+            logger.warning(f"[STATS] Supabase cross-check failed: {exc}")
+        logger.info("[STATS] Loaded from file")
+        return file_stats
+    
+    # Fallback to Supabase if file not found
     try:
         from agents.utils.supabase_logger import _client
         client = _client()

@@ -31,8 +31,10 @@ def _client():
                 "signal_log and trade_log will be skipped"
             )
             return None
-        # supabase 2.x may pass proxy= to httpx internally depending on versions.
-        # Patch httpx.Client/AsyncClient to ignore proxy kwarg if it causes TypeError.
+        # HACK: supabase 2.x may pass proxy= to httpx internally.
+        # We temporarily patch httpx to ignore proxy/proxies kwargs.
+        # This is a global side-effect that lasts ~1ms during init.
+        # See: https://github.com/supabase/supabase-py/issues/
         import httpx
         _orig_client_init = httpx.Client.__init__
         _orig_async_init = httpx.AsyncClient.__init__

@@ -237,6 +237,7 @@ class PolyGuezConfig(BaseModel):
     low_balance_threshold: float = Field(default=40.0, ge=1.0, le=500.0, description="Balance below which low-balance sizing applies")
     max_capital_fraction: float = Field(default=0.20, ge=0.05, le=1.0, description="Fraction of balance for max capital at risk")
     max_daily_loss: Optional[float] = Field(default=None)
+    max_daily_notional: Optional[float] = Field(default=None, description="Max cumulative entry notional per UTC day. None=unlimited")
     max_open_positions: int = Field(default=1, ge=1, le=5)
     velocity_threshold: float = Field(default=0.005, ge=0.001, le=1.0)
     min_edge: float = Field(default=0.03, ge=0.01, le=0.5)
@@ -283,6 +284,7 @@ class PolyGuezConfig(BaseModel):
     coinbase_ws_url: str = Field(default="wss://ws-feed.exchange.coinbase.com")
     btc_feed_connect_timeout: float = Field(default=5.0)
     btc_buffer_min_seconds: float = Field(default=10.0)
+    price_feed_stale_threshold: float = Field(default=10.0, ge=2.0, le=60.0, description="Seconds before price feed is considered stale")
     clob_ws_enabled: bool = Field(default=True, description="Enable CLOB WebSocket for real-time YES/NO prices")
 
     # FIX 4: Chainlink on-chain fallback
@@ -330,6 +332,7 @@ class TradeRecord(BaseModel):
 
 
 class SignalState(BaseModel):
+    signal_id: str = Field(default_factory=lambda: __import__('uuid').uuid4().hex[:12])
     btc_velocity: float = 0.0
     btc_price: float = 0.0
     chainlink_price: float = 0.0
@@ -358,6 +361,7 @@ class SignalState(BaseModel):
     clob_consensus_ok: bool = True  # Block entry against overwhelming market consensus
     chainlink_fresh_ok: bool = True  # Block entry when Chainlink is stale near expiry
     price_feed_ok: bool = True  # FIX 4: stale feed hard blocker
+    velocity_agrees_direction: bool = True  # Informational: velocity momentum matches delta direction
 
     # P2B enrichment fields
     p2b_source: str = ""
@@ -383,7 +387,6 @@ class SignalState(BaseModel):
             # V2 core gates
             self.velocity_ok,            # BTC must be moving fast enough
             self.oracle_gap_ok,          # Binance-Chainlink gap must confirm direction
-            self.clob_mispricing_ok,     # CLOB token price below estimated fair value
             self.terminal_edge_ok,       # Terminal probability edge above minimum
             self.delta_magnitude_ok,     # Strike delta large enough for conviction
             self.time_of_day_ok,         # Not in blocked UTC hours
@@ -426,6 +429,7 @@ class RollingStats(BaseModel):
     trades: List[TradeRecord] = Field(default_factory=list)
     daily_pnl: float = 0.0
     daily_pnl_reset_utc: str = Field(default_factory=lambda: datetime.now(timezone.utc).strftime("%Y-%m-%d"))
+    daily_notional: float = 0.0
     cooldown_until: Optional[str] = None
     max_capital_at_risk: float = 0.0
     simulated_balance: float = 100.0  # Persistent dry-run balance, starts at $100

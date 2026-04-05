@@ -142,6 +142,8 @@ class PolyGuezRunner:
         if self._rolling_stats.cooldown_until:
             try:
                 until = datetime.fromisoformat(self._rolling_stats.cooldown_until)
+                if until.tzinfo is None:
+                    until = until.replace(tzinfo=timezone.utc)
                 remaining = (until - datetime.now(timezone.utc)).total_seconds()
                 if remaining > 0:
                     cooldown_active = True
@@ -236,6 +238,32 @@ class PolyGuezRunner:
         if self.config.dashboard_secret:
             log_event(logger, "dashboard_secret", f"Dashboard secret: {self.config.dashboard_secret[:8]}... (use ?secret=<full_token> to access)")
 
+        # Validate mode
+        valid_modes = {"dry-run", "paper", "live"}
+        if self.config.mode not in valid_modes:
+            log_event(logger, "invalid_mode", f"CRITICAL: mode='{self.config.mode}' not in {valid_modes} — aborting", level=50)
+            return
+
+        # Startup capability check
+        _caps = {
+            "Supabase": "ok" if os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_SERVICE_KEY") else "disabled",
+            "LLM": "ok" if any(os.environ.get(k) for k in ("GROQ_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY")) else "disabled",
+        }
+        log_event(logger, "startup_capabilities", f"Capabilities: {_caps}")
+
+        if self.config.mode == "live":
+            if _caps["LLM"] == "disabled" and self.config.llm_enabled:
+                log_event(logger, "live_no_llm", "CRITICAL: Live mode with llm_enabled=True but no LLM API key — aborting", level=50)
+                return
+            if self.config.llm_timeout_fallback == "go":
+                log_event(logger, "live_timeout_fallback_go", "WARNING: llm_timeout_fallback='go' in live mode — LLM timeouts will approve trades", level=40)
+
+        # Install signal handlers for graceful shutdown
+        import signal as _signal
+        loop = asyncio.get_event_loop()
+        for sig in (_signal.SIGTERM, _signal.SIGINT):
+            loop.add_signal_handler(sig, lambda: asyncio.ensure_future(self.kill()))
+
         # Init Polymarket client in ALL modes for read operations (balance, CLOB prices).
         # Trade execution guards in execute_entry/execute_emergency_exit remain mode-gated.
         try:
@@ -256,6 +284,17 @@ class PolyGuezRunner:
                 log_event(logger, "wallet_fallback",
                     "Continuing without wallet — CLOB prices will use Gamma outcomePrices, "
                     "balance will be simulated $100")
+
+        # Live mode: verify wallet has funds
+        if self.config.mode == "live" and self._polymarket:
+            try:
+                loop = asyncio.get_event_loop()
+                balance = await loop.run_in_executor(None, self._polymarket.get_usdc_balance)
+                log_event(logger, "startup_balance", f"Wallet USDC balance: ${balance:.2f}")
+                if balance < self.config.bet_size_low_balance_normal:
+                    log_event(logger, "startup_low_balance", f"WARNING: Balance ${balance:.2f} below minimum bet size", level=40)
+            except Exception as exc:
+                log_event(logger, "startup_balance_error", f"Could not check balance: {exc}", level=40)
 
         # Start BTC price feed
         await self._btc_feed.start()
@@ -301,6 +340,7 @@ class PolyGuezRunner:
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         if self._rolling_stats.daily_pnl_reset_utc != today:
             self._rolling_stats.daily_pnl = 0.0
+            self._rolling_stats.daily_notional = 0.0
             self._rolling_stats.daily_pnl_reset_utc = today
             log_event(logger, "daily_reset", "Daily P&L reset")
 
@@ -608,6 +648,7 @@ class PolyGuezRunner:
             _log_this_signal = (int(elapsed) % 10 == 0) or signal.all_conditions_met or trade_fired
             if _log_this_signal:
                 log_signal({
+                    "signal_id": signal.signal_id,
                     "market_id": market_id,
                     "market_question": self._current_market.get("question", "") if self._current_market else "",
                     "elapsed_seconds": round(elapsed, 1),
@@ -701,6 +742,9 @@ class PolyGuezRunner:
         self._last_llm_reason = reason
         self._last_llm_time = llm_time
 
+        if verdict == "REDUCE-SIZE":
+            log_event(logger, "llm_reduce_size", f"LLM REDUCE-SIZE — halving bet: {reason}")
+
         if verdict == "NO-GO":
             log_event(logger, "trade_skipped", f"Skipped: LLM NO-GO — {reason}")
             return False
@@ -719,6 +763,12 @@ class PolyGuezRunner:
         side = "YES" if signal.direction == "up" else "NO"
         entry_price = signal.yes_price if side == "YES" else signal.no_price
 
+        # Check daily notional limit
+        if self.config.max_daily_notional is not None:
+            if self._rolling_stats.daily_notional + size > self.config.max_daily_notional:
+                log_event(logger, "daily_notional_limit", f"Daily notional ${self._rolling_stats.daily_notional:.2f} + ${size:.2f} would exceed limit ${self.config.max_daily_notional:.2f}")
+                return False
+
         # Execute
         result = await execute_entry(self._polymarket, token_id, size, self.config.mode, config=self.config)
 
@@ -735,6 +785,8 @@ class PolyGuezRunner:
             size_usdc=size,
             price_to_beat=self._price_to_beat,
         )
+
+        self._rolling_stats.daily_notional += size
 
         log_event(logger, "position_entered", f"Entered {side} @ {entry_price:.4f}, size=${size:.2f}", {
             "market_id": market_id,
@@ -806,6 +858,7 @@ class PolyGuezRunner:
                     except (ValueError, TypeError):
                         pass
                 log_trade({
+                    "signal_id": getattr(self._current_signal, 'signal_id', '') if self._current_signal else '',
                     "market_id": self._position.market_id,
                     "market_question": self._current_market.get("question", "") if self._current_market else "",
                     "side": "up" if self._position.side == "YES" else "down",
@@ -850,17 +903,24 @@ class PolyGuezRunner:
             if isinstance(outcome_prices, list) and len(outcome_prices) >= 2:
                 yes_settled = float(outcome_prices[0])
                 no_settled = float(outcome_prices[1])
-                settled_price = yes_settled if self._position.side == "YES" else no_settled
-
-                if settled_price > 0.5:
-                    pnl = round(self._position.size_usdc * (1.0 / self._position.entry_price - 1.0), 4)
-                    outcome_str = "win"
+                # Verify prices are actually resolved (near 0 or 1), not pre-resolution
+                if not any(abs(float(p) - 0.5) > 0.40 for p in outcome_prices):
+                    log_event(logger, "settlement_pre_resolution",
+                        f"Market {market_id} closed but prices not resolved: {outcome_prices}")
+                    outcome_str = "pending"
+                    pnl = 0.0
                 else:
-                    pnl = -self._position.size_usdc
-                    outcome_str = "loss"
+                    settled_price = yes_settled if self._position.side == "YES" else no_settled
 
-                # Settle shadow trades for this market too
-                settle_shadow_trades(market_id, outcome_prices)
+                    if settled_price > 0.5:
+                        pnl = round(self._position.size_usdc * (1.0 / self._position.entry_price - 1.0), 4)
+                        outcome_str = "win"
+                    else:
+                        pnl = -self._position.size_usdc
+                        outcome_str = "loss"
+
+                    # Settle shadow trades for this market too
+                    settle_shadow_trades(market_id, outcome_prices)
             else:
                 outcome_str = "pending"
                 pnl = 0.0
@@ -917,6 +977,7 @@ class PolyGuezRunner:
         # Supabase trade log (fire-and-forget)
         if outcome_str in ("win", "loss"):
             log_trade({
+                "signal_id": getattr(self._current_signal, 'signal_id', '') if self._current_signal else '',
                 "market_id": market_id,
                 "market_question": self._current_market.get("question", "") if self._current_market else "",
                 "side": "up" if self._position.side == "YES" else "down",
