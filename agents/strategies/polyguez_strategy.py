@@ -519,9 +519,11 @@ def save_rolling_stats(stats):
         from agents.utils.supabase_logger import _client
         client = _client()
         if client:
+            stats_data = stats.model_dump()
+            stats_data["updated_at"] = datetime.now(timezone.utc).isoformat()
             client.table("rolling_stats").upsert({
                 "id": "singleton",
-                "data": stats.model_dump(),
+                "data": stats_data,
             }).execute()
             # Verify write-back
             verify = client.table("rolling_stats").select("id").eq("id", "singleton").execute()

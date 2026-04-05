@@ -651,9 +651,29 @@ class PolyGuezRunner:
             _clob_spread = getattr(signal, "clob_spread_raw", None)
             _depth_at_ask = getattr(signal, "depth_at_ask_raw", None)
 
-            # Throttle signal logging to ~1 per 10s to avoid Supabase row explosion
-            _log_this_signal = (int(elapsed) % 10 == 0) or signal.all_conditions_met or trade_fired
+            # Throttle signal logging — configurable interval (default 2.5s)
+            _log_interval = getattr(self.config, 'signal_log_interval', 2.5)
+            _log_this_signal = (int(elapsed * 10) % int(_log_interval * 10) == 0) or signal.all_conditions_met or trade_fired
             if _log_this_signal:
+                # Build blocking conditions string for this signal
+                _blocking = []
+                if not signal.price_feed_ok: _blocking.append("price_feed")
+                if not getattr(signal, 'chainlink_fresh_ok', True): _blocking.append("chainlink_stale")
+                if not signal.terminal_edge_ok: _blocking.append("terminal_edge")
+                if not signal.delta_magnitude_ok: _blocking.append("delta_magnitude")
+                if not signal.edge_ok: _blocking.append("edge")
+                if not signal.spread_ok: _blocking.append("spread")
+                if not signal.depth_ok: _blocking.append("depth")
+                if not signal.clob_consensus_ok: _blocking.append("clob_consensus")
+                if not signal.no_position: _blocking.append("has_position")
+                if not signal.cooldown_ok: _blocking.append("cooldown")
+                if not signal.daily_loss_ok: _blocking.append("daily_loss")
+                if not signal.balance_ok: _blocking.append("balance")
+                if not signal.position_limit_ok: _blocking.append("position_limit")
+                if not getattr(signal, 'time_of_day_ok', True): _blocking.append("time_of_day")
+                if not getattr(signal, 'entry_price_ok', True): _blocking.append("entry_price")
+                if not getattr(signal, 'direction_ok', True): _blocking.append("direction")
+
                 log_signal({
                     "signal_id": signal.signal_id,
                     "market_id": market_id,
@@ -661,6 +681,9 @@ class PolyGuezRunner:
                     "elapsed_seconds": round(elapsed, 1),
                     "btc_price": self._btc_feed.get_price() or 0.0,
                     "chainlink_price": cl_price,
+                    "chainlink_age_seconds": round(cl_age, 1),
+                    "blocking_conditions": ",".join(_blocking) if _blocking else "",
+                    "in_trade": self._position is not None,
                     "strike_delta": signal.strike_delta,
                     "terminal_probability": signal.terminal_probability,
                     "terminal_edge": signal.terminal_edge,

@@ -122,13 +122,14 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
     <span class="val" id="btcPrice">--</span>
   </div>
   <div class="topbar-price">
-    <span class="label">Chainlink</span>
+    <span class="label">Chainlink <span id="clAge" style="font-size:10px;color:var(--text-3)"></span></span>
     <span class="val" id="clPrice">--</span>
   </div>
   <div id="deltaBox" class="topbar-delta" style="background:var(--amber-bg);color:var(--amber)">Δ --</div>
   <div class="topbar-right">
+    <span id="sigAge" style="font-size:10px;color:var(--text-3)"></span>
     <span class="badge badge-dry" id="modeBadge">DRY-RUN</span>
-    <span class="bot-status" id="botStatus">● scanning</span>
+    <span class="badge" id="botStatus" style="padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid transparent">● scanning</span>
   </div>
 </div>
 
@@ -136,15 +137,16 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 <div class="shell">
 
 <!-- KPI ROW -->
-<div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
+<div class="kpi-row" style="grid-template-columns:repeat(4,1fr);">
   <div class="kpi"><div class="label">Balance</div><div class="val" id="kBalance">--</div><div class="sub">simulated USDC</div></div>
   <div class="kpi"><div class="label">Total P&L</div><div class="val" id="kTotalPnl">--</div><div class="sub" id="kTotalTrades">-- trades</div></div>
   <div class="kpi"><div class="label">Win Rate</div><div class="val" id="kWinRate">--</div><div class="sub" id="kWL">--W / --L</div></div>
-  <div class="kpi"><div class="label">Shadow P&L</div><div class="val" id="kShadowPnl">--</div><div class="sub" id="kShadowCount">-- settled</div></div>
+  <div class="kpi"><div class="label">Markets Scanned</div><div class="val" id="kScanned">--</div><div class="sub" id="kScannedSub">this session</div></div>
 </div>
 <!-- Hidden elements for JS compatibility -->
 <div style="display:none">
   <span id="kShadowWR"></span><span id="kShadowWL"></span>
+  <span id="kShadowPnl"></span><span id="kShadowCount"></span>
   <span id="kSignals"></span><span id="kFired"></span>
   <span id="kEdge"></span><span id="kProb"></span>
 </div>
@@ -197,6 +199,11 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
     <!-- BLOCKER BREAKDOWN -->
     <div class="card">
       <div class="card-title">Blocking Conditions</div>
+      <div style="margin-bottom:10px">
+        <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Right Now</div>
+        <div id="liveBlockers" style="display:flex;flex-wrap:wrap;gap:5px;min-height:24px"></div>
+      </div>
+      <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;margin-top:4px">24h Frequency</div>
       <div id="blockerList"></div>
     </div>
 
@@ -231,6 +238,9 @@ let btcPrice = 0, prevBtcPrice = 0;
 let clPrice = 0;
 let priceHistory = [];  // {t, p} for chart — last 24h from signal_log + live
 let livePrices = [];    // recent Binance ticks for chart overlay
+let SESSION_TAG = null; // FIX-1: dynamic session tag
+let elapsedAtPoll = 0, elapsedPollTime = 0; // FIX-2: live market timer
+let lastPollTime = 0; // FIX-4: relative last-updated
 
 // ═══════════════════════ HELPERS ═══════════════════════
 const $ = id => document.getElementById(id);
@@ -256,6 +266,18 @@ async function sq(table, params='') {
     return r.ok ? r.json() : [];
   } catch(e) { return []; }
 }
+
+// ═══════════════════════ SESSION TAG (FIX-1) ═══════════════════════
+async function initSessionTag() {
+  const latest = await sq('signal_log', 'select=session_tag&order=ts.desc&limit=1');
+  SESSION_TAG = latest.length ? latest[0].session_tag : 'V4';
+  const tagEl = document.createElement('span');
+  tagEl.style.cssText = 'font-size:11px;color:var(--text-3);font-family:monospace';
+  tagEl.id = 'sessionTag';
+  tagEl.textContent = SESSION_TAG;
+  document.querySelector('.topbar-right').prepend(tagEl);
+}
+function tagFilter() { return SESSION_TAG ? `session_tag=eq.${SESSION_TAG}&` : ''; }
 
 // ═══════════════════════ BINANCE WEBSOCKET ═══════════════════════
 let ws, wsRetry = 0;
@@ -300,11 +322,15 @@ function connectBinance() {
 function drawPriceChart() {
   const canvas = $('priceCanvas');
   const ctx = canvas.getContext('2d');
+  // FIX-7: only resize canvas when dimensions actually change (prevents jank)
   const dpr = window.devicePixelRatio || 1;
   const rect = canvas.parentElement.getBoundingClientRect();
-  canvas.width = rect.width * dpr;
-  canvas.height = rect.height * dpr;
-  ctx.scale(dpr, dpr);
+  const needsResize = canvas.width !== Math.round(rect.width * dpr) || canvas.height !== Math.round(rect.height * dpr);
+  if (needsResize) {
+    canvas.width = Math.round(rect.width * dpr);
+    canvas.height = Math.round(rect.height * dpr);
+    ctx.scale(dpr, dpr);
+  }
   const W = rect.width, H = rect.height;
   ctx.clearRect(0, 0, W, H);
 
@@ -338,7 +364,7 @@ function drawPriceChart() {
   // 5-minute market boundaries (vertical dashed lines)
   const marketInterval = 300000; // 5 minutes in ms
   const firstBoundary = Math.ceil(minT / marketInterval) * marketInterval;
-  ctx.strokeStyle = '#E5E7EB'; ctx.lineWidth = 1;
+  ctx.strokeStyle = '#C0C8D4'; ctx.lineWidth = 1; // FIX-7: better contrast
   ctx.setLineDash([4, 4]);
   for (let t = firstBoundary; t <= maxT; t += marketInterval) {
     const xi = x(t);
@@ -358,12 +384,17 @@ function drawPriceChart() {
     ctx.fillText(fmtTime(t), x(t), H - 4);
   }
 
-  // Single continuous price line (no visual jump)
+  // FIX-7: gap-aware price line — break at >2min gaps
   if (all.length > 1) {
+    const GAP_MS = 120000;
     ctx.beginPath(); ctx.strokeStyle = '#3B82F6'; ctx.lineWidth = 1.5;
     all.forEach((d, i) => {
       const px = x(d.t), py = y(d.p);
-      i === 0 ? ctx.moveTo(px, py) : ctx.lineTo(px, py);
+      if (i === 0 || (d.t - all[i-1].t) > GAP_MS) {
+        ctx.moveTo(px, py);
+      } else {
+        ctx.lineTo(px, py);
+      }
     });
     ctx.stroke();
   }
@@ -379,10 +410,12 @@ function drawPriceChart() {
     ctx.fillText('$' + last.p.toFixed(2), x(last.t) + 8, y(last.p) + 4);
   }
 
-  // Market timer in top-right (elapsed / 300 seconds)
+  // FIX-2: Live market timer — counts up between polls
   if (latestSignal && latestSignal.elapsed_seconds != null) {
-    const elapsed = latestSignal.elapsed_seconds;
-    const timerText = 'Market: ' + elapsed + 's / 300s';
+    const liveElapsed = elapsedPollTime > 0
+      ? Math.min(300, elapsedAtPoll + (Date.now() - elapsedPollTime) / 1000)
+      : latestSignal.elapsed_seconds;
+    const timerText = 'Market: ' + liveElapsed.toFixed(0) + 's / 300s';
     ctx.fillStyle = '#1E3A8A'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(timerText, W - 10, 20);
   }
@@ -560,7 +593,7 @@ function drawEquityCurve() {
 // ═══════════════════════ SUPABASE POLLING ═══════════════════════
 async function pollFast() {
   // Latest signal
-  const sig = await sq('signal_log', 'order=ts.desc&limit=1');
+  const sig = await sq('signal_log', `${tagFilter()}order=ts.desc&limit=1`);
   if (sig.length) {
     const s = sig[0];
     
@@ -587,10 +620,56 @@ async function pollFast() {
       b.className = 'badge ' + (s.mode === 'live' ? 'badge-live' : 'badge-dry');
     }
 
-    // Bot status
-    $('botStatus').innerHTML = s.trade_fired
-      ? '<span style="color:var(--green)">● TRADE FIRED</span>'
-      : '<span style="color:var(--text-3)">● scanning</span>';
+    // FIX-2: track elapsed for live timer
+    if (s.elapsed_seconds != null) {
+      elapsedAtPoll = s.elapsed_seconds;
+      elapsedPollTime = Date.now();
+    }
+
+    // FIX-3: Chainlink age subscript
+    const clAgeSeconds = s.chainlink_age_seconds;
+    const clAgeEl = $('clAge');
+    if (clAgeEl && clAgeSeconds != null) {
+      clAgeEl.textContent = clAgeSeconds < 10 ? `·${clAgeSeconds.toFixed(0)}s` : `·${clAgeSeconds.toFixed(0)}s ⚠️`;
+      clAgeEl.style.color = clAgeSeconds > 30 ? 'var(--red)' : 'var(--text-3)';
+    }
+    // FIX-3: Signal data age
+    const sigAge = s.ts ? ((Date.now() - new Date(s.ts).getTime()) / 1000).toFixed(0) : '?';
+    const sigAgeEl = $('sigAge');
+    if (sigAgeEl) sigAgeEl.textContent = `signal ${sigAge}s ago`;
+
+    // FIX-5: Live blocking conditions
+    const ALL_CONDITIONS = [
+      'terminal_edge','delta_magnitude','edge','spread','depth',
+      'clob_consensus','has_position','cooldown','daily_loss','balance',
+      'position_limit','price_feed','chainlink_stale','time_of_day','entry_price','direction'
+    ];
+    const blocking = s.blocking_conditions
+      ? s.blocking_conditions.split(',').map(b => b.trim()).filter(Boolean)
+      : [];
+    const lb = $('liveBlockers');
+    if (lb) {
+      lb.innerHTML = ALL_CONDITIONS.map(c => {
+        const isBlocking = blocking.includes(c);
+        return `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;
+          background:${isBlocking ? 'var(--red-bg)' : 'var(--green-bg)'};
+          color:${isBlocking ? 'var(--red)' : 'var(--green)'}
+        ">${c.replace(/_ok$/, '').replace(/_/g,' ')}</span>`;
+      }).join('');
+    }
+
+    // FIX-6: Bot state badge
+    const stateMap = {
+      scanning:      {label:'● scanning',      bg:'var(--green-bg)',  color:'var(--green)',  border:'#A9EFC5'},
+      entry_pending: {label:'⏳ entry pending', bg:'var(--amber-bg)', color:'var(--amber)',  border:'#FEDF89'},
+      in_trade:      {label:'🔵 in trade',      bg:'#EFF6FF',         color:'#3B82F6',        border:'#BFDBFE'},
+      trade_fired:   {label:'🟢 TRADE FIRED',   bg:'var(--green-bg)', color:'var(--green)',  border:'#A9EFC5'},
+    };
+    const botState = s.trade_fired ? 'trade_fired' : (s.in_trade ? 'in_trade' : 'scanning');
+    const bs = stateMap[botState] || stateMap.scanning;
+    const botEl = $('botStatus');
+    botEl.textContent = bs.label;
+    Object.assign(botEl.style, {background:bs.bg, color:bs.color, borderColor:bs.border});
 
     // Update radar stats div with key metrics
     const radarStats = $('radarStats');
@@ -626,7 +705,9 @@ async function pollFast() {
     }
   }
 
-  $('lastUpdate').textContent = 'Updated ' + fmtTimeFull(Date.now());
+  // FIX-4: track poll time for relative counter
+  lastPollTime = Date.now();
+  $('lastUpdate').textContent = 'just now';
   
   // Draw the vol radar
   drawVolRadar();
@@ -641,10 +722,18 @@ async function pollSlow() {
       $('kBalance').textContent = '$' + Number(bal).toFixed(2);
       $('kBalance').className = 'val ' + (bal >= 100 ? 'positive' : 'negative');
     }
+    // FIX-10: show balance age from rolling_stats updated_at
+    const updatedAt = rs[0].data.updated_at;
+    if (updatedAt) {
+      const ageSeconds = Math.floor((Date.now() - new Date(updatedAt).getTime()) / 1000);
+      const ageTxt = ageSeconds < 60 ? `${ageSeconds}s ago` : `${Math.floor(ageSeconds/60)}m ago`;
+      const balSub = $('kBalance').parentElement.querySelector('.sub');
+      if (balSub) balSub.textContent = `simulated USDC · ${ageTxt}`;
+    }
   }
 
   // ── Trades (direct, small table) ──
-  const trades = await sq('trade_log', 'session_tag=eq.V4&order=ts.desc&limit=20');
+  const trades = await sq('trade_log', `${tagFilter()}order=ts.desc&limit=20`);
   tradeData = [...trades].reverse();
 
   // ── Trade KPIs (from view — accurate) ──
@@ -664,14 +753,17 @@ async function pollSlow() {
 
   // ── Trade table ──
   const tbody = $('tradeBody');
+  // FIX-8: expandable trade rows with LLM reason on click
   tbody.innerHTML = trades.slice(0, 8).map(t => {
     const side = t.side === 'up' ? '▲ UP' : '▼ DOWN';
     const sideColor = t.side === 'up' ? 'var(--green)' : 'var(--red)';
     const pnlClass = t.pnl >= 0 ? 'positive' : 'negative';
-    const pill = t.outcome === 'win' ? '<span class="pill pill-win">WIN</span>' : '<span class="pill pill-loss">LOSS</span>';
+    const pill = t.outcome === 'win' ? '<span class="pill pill-win">WIN</span>'
+      : t.outcome === 'loss' ? '<span class="pill pill-loss">LOSS</span>'
+      : '<span class="pill" style="background:#F2F4F7;color:var(--text-2)">OPEN</span>';
     const q = t.market_question || '';
     const short = q.length > 30 ? q.slice(0,30)+'…' : q;
-    return `<tr>
+    return `<tr style="cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'table-row':'none'">
       <td>${fmtTimeFull(t.ts)}</td>
       <td title="${q}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</td>
       <td style="color:${sideColor};font-weight:600">${side}</td>
@@ -680,6 +772,14 @@ async function pollSlow() {
       <td class="${pnlClass}" style="font-weight:600">${fmtUsd(t.pnl)}</td>
       <td>${t.llm_verdict || '--'}</td>
       <td>${pill}</td>
+    </tr>
+    <tr style="display:none">
+      <td colspan="8" style="padding:8px 12px;background:#FAFBFC;font-size:11px;color:var(--text-2);border-bottom:1px solid var(--border)">
+        <strong>Provider:</strong> ${t.llm_provider||'--'} &nbsp;·&nbsp;
+        <strong>Edge:</strong> ${t.terminal_edge != null ? (t.terminal_edge*100).toFixed(1)+'%' : '--'} &nbsp;·&nbsp;
+        <strong>Duration:</strong> ${t.duration_seconds != null ? t.duration_seconds.toFixed(0)+'s' : '--'}<br>
+        <em style="color:var(--text-1);margin-top:4px;display:block">${t.llm_reason||'No reason recorded'}</em>
+      </td>
     </tr>`;
   }).join('');
 
@@ -723,6 +823,13 @@ async function pollSlow() {
     </div>`;
   }).join('');
 
+  // FIX-9: Markets Scanned KPI
+  const sigCount = await sq('signal_log', `${tagFilter()}select=id&order=ts.desc&limit=10000`);
+  if ($('kScanned')) {
+    $('kScanned').textContent = fmtK(sigCount.length);
+    $('kScannedSub').textContent = SESSION_TAG ? `session ${SESSION_TAG}` : 'this session';
+  }
+
   // ── Hourly signals (from view — pre-aggregated) ──
   signalData = await sq('dashboard_signals_hourly', 'order=hour.asc');
   const totalSigs = signalData.reduce((a,d) => a + d.signals, 0);
@@ -734,7 +841,7 @@ async function pollSlow() {
 
 // ═══════════════════════ HISTORICAL PRICE LOAD ═══════════════════════
 async function loadPriceHistory() {
-  const rows = await sq('signal_log', 'select=ts,btc_price&session_tag=eq.V4&order=ts.desc&limit=5000');
+  const rows = await sq('signal_log', `select=ts,btc_price&${tagFilter()}order=ts.desc&limit=5000`);
   // Downsample: keep ~500 points
   const step = Math.max(1, Math.floor(rows.length / 500));
   priceHistory = rows.filter((_,i) => i % step === 0).reverse().map(r => ({ t: r.ts, p: r.btc_price }));
@@ -744,9 +851,18 @@ async function loadPriceHistory() {
 // ═══════════════════════ INIT ═══════════════════════
 (async function init() {
   connectBinance();
+  await initSessionTag(); // FIX-1: resolve session tag before any queries
   await Promise.all([loadPriceHistory(), pollFast(), pollSlow()]);
   setInterval(pollFast, POLL_FAST);
   setInterval(pollSlow, POLL_SLOW);
+  // FIX-2 + FIX-4: 1s interval for live market timer + relative "last updated"
+  setInterval(() => {
+    if (lastPollTime > 0) {
+      const secs = Math.floor((Date.now() - lastPollTime) / 1000);
+      $('lastUpdate').textContent = secs < 5 ? 'just now' : `updated ${secs}s ago`;
+    }
+    if (elapsedPollTime > 0) drawPriceChart();
+  }, 1000);
   window.addEventListener('resize', () => { drawPriceChart(); drawSignalChart(); drawEquityCurve(); });
 })();
 </script>
