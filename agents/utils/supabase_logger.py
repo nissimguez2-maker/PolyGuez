@@ -1,9 +1,14 @@
 from __future__ import annotations
 import os
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# Shared thread pool for non-blocking Supabase writes
+_log_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="supa_log")
 
 _supabase_client = None
 _supabase_init_attempted = False
@@ -54,42 +59,48 @@ def _client():
 
 
 def log_signal(snapshot: dict, session_tag: str = "v1.1") -> None:
-    """Fire-and-forget. Pass a flat dict of the signal state."""
-    try:
-        client = _client()
-        if not client:
-            return
-        snapshot["ts"] = datetime.now(timezone.utc).isoformat()
-        snapshot["session_tag"] = session_tag
-        client.table("signal_log").insert(snapshot).execute()
-    except Exception as e:
-        logger.warning(f"Supabase signal log failed: {e}")
+    """Fire-and-forget in background thread — never blocks the main loop."""
+    snapshot["ts"] = datetime.now(timezone.utc).isoformat()
+    snapshot["session_tag"] = session_tag
+    def _insert():
+        try:
+            client = _client()
+            if not client:
+                return
+            client.table("signal_log").insert(snapshot).execute()
+        except Exception as e:
+            logger.warning(f"Supabase signal log failed: {e}")
+    _log_executor.submit(_insert)
 
 
 def log_trade(record: dict, session_tag: str = "v1.1") -> None:
-    """Fire-and-forget. Pass a flat dict of the trade record."""
-    try:
-        client = _client()
-        if not client:
-            return
-        record["ts"] = datetime.now(timezone.utc).isoformat()
-        record["session_tag"] = session_tag
-        client.table("trade_log").insert(record).execute()
-    except Exception as e:
-        logger.warning(f"Supabase trade log failed: {e}")
+    """Fire-and-forget in background thread — never blocks the main loop."""
+    record["ts"] = datetime.now(timezone.utc).isoformat()
+    record["session_tag"] = session_tag
+    def _insert():
+        try:
+            client = _client()
+            if not client:
+                return
+            client.table("trade_log").insert(record).execute()
+        except Exception as e:
+            logger.warning(f"Supabase trade log failed: {e}")
+    _log_executor.submit(_insert)
 
 
 def log_shadow_trade(record: dict, session_tag: str = "v2") -> None:
-    """Fire-and-forget. Log what WOULD have traded if blocked conditions had passed."""
-    try:
-        client = _client()
-        if not client:
-            return
-        record["ts"] = datetime.now(timezone.utc).isoformat()
-        record["session_tag"] = session_tag
-        client.table("shadow_trade_log").insert(record).execute()
-    except Exception as e:
-        logger.warning(f"Supabase shadow trade log failed: {e}")
+    """Fire-and-forget in background thread — never blocks the main loop."""
+    record["ts"] = datetime.now(timezone.utc).isoformat()
+    record["session_tag"] = session_tag
+    def _insert():
+        try:
+            client = _client()
+            if not client:
+                return
+            client.table("shadow_trade_log").insert(record).execute()
+        except Exception as e:
+            logger.warning(f"Supabase shadow trade log failed: {e}")
+    _log_executor.submit(_insert)
 
 
 def settle_shadow_trades(market_id: str, outcome_prices: list) -> None:
