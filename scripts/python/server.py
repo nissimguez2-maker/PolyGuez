@@ -51,7 +51,10 @@ async def health():
 async def dashboard(secret: str = Query(default="")):
     _check_auth(secret)
     if _FRONTEND_PATH.exists():
-        return HTMLResponse(_FRONTEND_PATH.read_text())
+        return HTMLResponse(
+            _FRONTEND_PATH.read_text(),
+            headers={"Cache-Control": "no-store, no-cache, must-revalidate, max-age=0"},
+        )
     return HTMLResponse("<h1>Dashboard HTML not found</h1>")
 
 
