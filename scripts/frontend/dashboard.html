@@ -6,7 +6,7 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PolyGuez</title>
-<!-- v3.1 — Binance klines + pro chart engine -->
+<!-- v3.2 — 100ms ticks, rAF rendering, LIVE indicator -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
@@ -275,6 +275,15 @@ let SESSION_TAG = null; // FIX-1: dynamic session tag
 let elapsedAtPoll = 0, elapsedPollTime = 0; // FIX-2: live market timer
 window._signalArrivalTime = 0;
 window._lastSignalId = null;
+// rAF chart scheduler — coalesces multiple updates into one paint
+let _chartDirty = false;
+window._lastTickMs = 0;
+function scheduleChartDraw() {
+  if (!_chartDirty) {
+    _chartDirty = true;
+    requestAnimationFrame(() => { _chartDirty = false; drawPriceChart(); });
+  }
+}
 let lastPollTime = 0; // FIX-4: relative last-updated
 
 // ═══════════════════════ HELPERS ═══════════════════════
@@ -425,11 +434,12 @@ function connectBinance() {
 
     // Buffer for chart (throttled)
     const now = Date.now();
-    if (!connectBinance._lastChart || now - connectBinance._lastChart > 500) {
+    if (!connectBinance._lastChart || now - connectBinance._lastChart > 100) {
       connectBinance._lastChart = now;
+      window._lastTickMs = now;
       livePrices.push({ t: now, p: btcPrice });
-      if (livePrices.length > 7200) livePrices.shift(); // 1h of 500ms ticks
-      drawPriceChart();
+      if (livePrices.length > 7200) livePrices.shift();
+      scheduleChartDraw();
     }
   };
 }
@@ -605,6 +615,14 @@ function drawPriceChart() {
     const timerText = 'Market: ' + elapsed + 's / 300s';
     ctx.fillStyle = '#1E3A8A'; ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(timerText, W - RM, TM + 14);
+  }
+
+  // ── Tick latency indicator ──
+  if (window._lastTickMs > 0) {
+    const tickAge = Date.now() - window._lastTickMs;
+    const tickColor = tickAge < 500 ? '#12B76A' : tickAge < 2000 ? '#F79009' : '#F04438';
+    ctx.fillStyle = tickColor; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'left';
+    ctx.fillText(tickAge < 1000 ? 'LIVE' : tickAge < 5000 ? (tickAge/1000).toFixed(1) + 's ago' : 'STALE', LM + 4, TM + 12);
   }
 }
 
@@ -1134,9 +1152,11 @@ document.querySelectorAll('.tr-btn').forEach(btn => {
       const secs = Math.floor((Date.now() - lastPollTime) / 1000);
       $('lastUpdate').textContent = secs < 5 ? 'just now' : `updated ${secs}s ago`;
     }
-    if (elapsedPollTime > 0) drawPriceChart();
+    if (window._signalArrivalTime > 0) scheduleChartDraw();
   }, 1000);
-  window.addEventListener('resize', () => { drawPriceChart(); drawSignalChart(); drawEquityCurve(); });
+  // Background kline refresh every 60s (stale data prevention)
+  setInterval(() => loadPriceHistory(), 60000);
+  window.addEventListener('resize', () => { scheduleChartDraw(); drawSignalChart(); drawEquityCurve(); });
 })();
 </script>
 </body>
