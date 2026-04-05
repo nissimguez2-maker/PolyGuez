@@ -240,7 +240,7 @@ class PolyGuezConfig(BaseModel):
     velocity_threshold: float = Field(default=0.05, ge=0.001, le=1.0)
     min_edge: float = Field(default=0.03, ge=0.01, le=0.5)
     max_spread: float = Field(default=0.10, ge=0.01, le=0.5)
-    min_oracle_gap: float = Field(default=5.0, ge=0.0)
+    min_oracle_gap: float = Field(default=2.5, ge=0.0)
 
     # FIX 1: Split reversal_threshold into two fields
     reversal_velocity_threshold: float = Field(default=0.08, description="$/sec for velocity-based emergency exit fallback")
@@ -293,9 +293,9 @@ class PolyGuezConfig(BaseModel):
     p2b_sanity_max: float = Field(default=500000.0, description="Max plausible BTC price for P2B")
     p2b_consecutive_failure_halt: int = Field(default=50, description="Halt after N consecutive P2B parse failures")
     min_terminal_edge: float = Field(default=0.03, ge=0.01, le=0.5, description="Min edge at terminal probability for entry")
-    conviction_min_delta: float = Field(default=15.0, ge=1.0, le=200.0, description="Min $ delta between Chainlink and P2B for conviction")
-    conviction_min_delta_strict: float = Field(default=40.0, ge=1.0, le=500.0, description="Strict delta threshold for fast-moving markets")
-    min_clob_consensus: float = Field(default=0.40, ge=0.10, le=0.90, description="Min CLOB price on our side to confirm market consensus")
+    conviction_min_delta: float = Field(default=5.0, ge=1.0, le=200.0, description="Min $ delta between Chainlink and P2B for conviction")
+    conviction_min_delta_strict: float = Field(default=15.0, ge=1.0, le=500.0, description="Strict delta threshold for fast-moving markets")
+    min_clob_consensus: float = Field(default=0.25, ge=0.10, le=0.90, description="Min CLOB price on our side to confirm market consensus")
 
     dashboard_secret: str = Field(default="")
     session_tag: str = Field(default_factory=lambda: os.environ.get("SESSION_TAG", "v1.1"), description="Version tag — set SESSION_TAG env var in Railway to start a new session without code changes")

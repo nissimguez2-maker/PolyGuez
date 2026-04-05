@@ -419,6 +419,23 @@ class PolyGuezRunner:
         # Check settlement
         if self._position:
             await self._settle(market_id)
+        else:
+            # No real position — still settle any shadow trades logged for this market
+            try:
+                settled_mkt = await settle_with_retry(self._discovery, market_id, self.config)
+                if settled_mkt and settled_mkt.get("closed"):
+                    outcome_prices_raw = settled_mkt.get("outcomePrices", "")
+                    if isinstance(outcome_prices_raw, str):
+                        try:
+                            outcome_prices_raw = json.loads(outcome_prices_raw)
+                        except (json.JSONDecodeError, TypeError):
+                            outcome_prices_raw = []
+                    if isinstance(outcome_prices_raw, list) and len(outcome_prices_raw) >= 2:
+                        settle_shadow_trades(market_id, outcome_prices_raw)
+                        log_event(logger, "shadow_settled_no_position",
+                            f"[SHADOW] Settled shadow trades for market {market_id} (no real position)")
+            except Exception as exc:
+                log_event(logger, "shadow_settle_error", f"Shadow settlement failed: {exc}")
 
         # Settle dry-run tracked position at cycle end
         if self._open_position:
