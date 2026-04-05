@@ -243,7 +243,7 @@ let livePrices = [];    // recent Binance ticks for chart overlay
 // ═══════════════════════ HELPERS ═══════════════════════
 const $ = id => document.getElementById(id);
 const fmt = (n, d=2) => n == null ? '--' : Number(n).toFixed(d);
-const fmtUsd = n => n == null ? '--' : (n >= 0 ? '+' : '') + '$' + Math.abs(n).toFixed(2);
+const fmtUsd = n => n == null ? '--' : (n < 0 ? '-$' : '+$') + Math.abs(n).toFixed(2);
 const fmtPct = n => n == null ? '--' : (n*100).toFixed(1) + '%';
 const fmtK = n => n == null ? '--' : n >= 1000 ? (n/1000).toFixed(1)+'K' : String(n);
 const fmtTime = ts => { const d = new Date(ts); return d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false}); };
@@ -452,7 +452,7 @@ function drawEquityCurve() {
   ctx.setLineDash([]);
 
   // Line
-  ctx.beginPath(); ctx.strokeStyle = cum >= 0 ? 'var(--green)' : 'var(--red)'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.strokeStyle = cum >= 0 ? '#12B76A' : '#F04438'; ctx.lineWidth = 2;
   pts.forEach((p,i) => { i === 0 ? ctx.moveTo(x(p.t,i), y(p.v)) : ctx.lineTo(x(p.t,i), y(p.v)); });
   ctx.stroke();
 
@@ -464,7 +464,7 @@ function drawEquityCurve() {
   ctx.fill();
 
   // End label
-  ctx.fillStyle = cum >= 0 ? 'var(--green)' : 'var(--red)';
+  ctx.fillStyle = cum >= 0 ? '#12B76A' : '#F04438';
   ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
   ctx.fillText(fmtUsd(cum), W - 4, y(cum) - 6);
 }
@@ -497,6 +497,9 @@ async function pollFast() {
     if (s.implied_vol != null) {
       $('mIVol').textContent = (s.implied_vol * 100).toFixed(1) + '%';
       $('mIVolBar').style.width = Math.min(s.implied_vol * 200, 100) + '%';
+    } else {
+      $('mIVol').textContent = 'N/A';
+      $('mIVolBar').style.width = '0%';
     }
 
     // Edge + Prob KPIs
@@ -522,23 +525,26 @@ async function pollFast() {
 }
 
 async function pollSlow() {
-  // Trades
+  // ── Trades (direct, small table) ──
   const trades = await sq('trade_log', 'order=ts.desc&limit=20');
   tradeData = [...trades].reverse();
-  const wins = trades.filter(t => t.outcome === 'win').length;
-  const losses = trades.filter(t => t.outcome === 'loss').length;
-  const totalPnl = trades.reduce((s, t) => s + (t.pnl || 0), 0);
 
-  const prevPnl = $('kTotalPnl').textContent;
-  $('kTotalPnl').textContent = fmtUsd(totalPnl);
-  $('kTotalPnl').className = 'val ' + (totalPnl >= 0 ? 'positive' : 'negative');
-  flashEl($('kTotalPnl'), totalPnl, parseFloat(prevPnl.replace(/[^-\d.]/g,'')));
-  $('kTotalTrades').textContent = trades.length + ' trades';
-  $('kWinRate').textContent = trades.length ? ((wins / trades.length) * 100).toFixed(1) + '%' : '--';
-  $('kWinRate').className = 'val ' + (wins > losses ? 'positive' : wins < losses ? 'negative' : '');
-  $('kWL').textContent = wins + 'W / ' + losses + 'L';
+  // ── Trade KPIs (from view — accurate) ──
+  const tSum = await sq('dashboard_trade_summary', 'limit=1');
+  if (tSum.length) {
+    const t = tSum[0];
+    const totalPnl = parseFloat(t.total_pnl);
+    const prevPnl = $('kTotalPnl').textContent;
+    $('kTotalPnl').textContent = fmtUsd(totalPnl);
+    $('kTotalPnl').className = 'val ' + (totalPnl >= 0 ? 'positive' : 'negative');
+    flashEl($('kTotalPnl'), totalPnl, parseFloat(prevPnl.replace(/[^-\d.]/g,'')));
+    $('kTotalTrades').textContent = t.total_trades + ' trades';
+    $('kWinRate').textContent = t.win_rate_pct + '%';
+    $('kWinRate').className = 'val ' + (t.wins > t.losses ? 'positive' : t.wins < t.losses ? 'negative' : '');
+    $('kWL').textContent = t.wins + 'W / ' + t.losses + 'L';
+  }
 
-  // Trade table
+  // ── Trade table ──
   const tbody = $('tradeBody');
   tbody.innerHTML = trades.slice(0, 8).map(t => {
     const side = t.side === 'up' ? '▲ UP' : '▼ DOWN';
@@ -561,63 +567,46 @@ async function pollSlow() {
 
   drawEquityCurve();
 
-  // Shadow summary
-  const sh = await sq('shadow_trade_log', 'select=id,outcome,pnl,settled&limit=10000');
-  const shTotal = sh.length;
-  const shSettled = sh.filter(s => s.settled).length;
-  const shWins = sh.filter(s => s.outcome === 'win').length;
-  const shLosses = sh.filter(s => s.outcome === 'loss').length;
-  const shPnl = sh.filter(s => s.settled).reduce((a, s) => a + (s.pnl || 0), 0);
+  // ── Shadow summary (from view — aggregates all 2K+ rows server-side) ──
+  const shArr = await sq('dashboard_shadow_summary', 'limit=1');
+  if (shArr.length) {
+    const sh = shArr[0];
+    const shPnl = parseFloat(sh.total_pnl);
+    $('shTotal').textContent = fmtK(sh.total);
+    $('shSettled').textContent = fmtK(sh.settled);
+    $('shWins').textContent = sh.wins;
+    $('shLosses').textContent = sh.losses;
+    const prevShPnl = $('shPnl').textContent;
+    $('shPnl').textContent = fmtUsd(shPnl);
+    $('shPnl').className = 'sv ' + (shPnl >= 0 ? 'positive' : 'negative');
+    flashEl($('shPnl'), shPnl, parseFloat(prevShPnl.replace(/[^-\d.]/g,'')));
 
-  $('shTotal').textContent = fmtK(shTotal);
-  $('shSettled').textContent = fmtK(shSettled);
-  $('shWins').textContent = shWins;
-  $('shLosses').textContent = shLosses;
-  const prevShPnl = $('shPnl').textContent;
-  $('shPnl').textContent = fmtUsd(shPnl);
-  $('shPnl').className = 'sv ' + (shPnl >= 0 ? 'positive' : 'negative');
-  flashEl($('shPnl'), shPnl, parseFloat(prevShPnl.replace(/[^-\d.]/g,'')));
+    $('kShadowPnl').textContent = fmtUsd(shPnl);
+    $('kShadowPnl').className = 'val ' + (shPnl >= 0 ? 'positive' : 'negative');
+    $('kShadowCount').textContent = sh.settled + ' settled';
+    const shWR = sh.settled > 0 ? ((sh.wins / sh.settled) * 100).toFixed(1) : '0.0';
+    $('kShadowWR').textContent = shWR + '%';
+    $('kShadowWR').className = 'val ' + (sh.wins > sh.losses ? 'positive' : 'negative');
+    $('kShadowWL').textContent = sh.wins + 'W / ' + sh.losses + 'L';
+  }
 
-  $('kShadowPnl').textContent = fmtUsd(shPnl);
-  $('kShadowPnl').className = 'val ' + (shPnl >= 0 ? 'positive' : 'negative');
-  $('kShadowCount').textContent = shSettled + ' settled';
-  $('kShadowWR').textContent = shSettled ? ((shWins / shSettled) * 100).toFixed(1) + '%' : '--';
-  $('kShadowWR').className = 'val ' + (shWins > shLosses ? 'positive' : 'negative');
-  $('kShadowWL').textContent = shWins + 'W / ' + shLosses + 'L';
-
-  // Blockers
-  const blockers = await sq('shadow_trade_log', 'select=blocking_conditions,outcome,pnl,settled&blocking_conditions=not.is.null&blocking_conditions=not.eq.&limit=10000');
-  const bMap = {};
-  blockers.forEach(b => {
-    const k = b.blocking_conditions;
-    if (!bMap[k]) bMap[k] = { cnt: 0, pnl: 0 };
-    bMap[k].cnt++;
-    if (b.settled) bMap[k].pnl += (b.pnl || 0);
-  });
-  const bArr = Object.entries(bMap).sort((a,b) => b[1].cnt - a[1].cnt).slice(0, 8);
-  const maxCnt = bArr.length ? bArr[0][1].cnt : 1;
-
-  $('blockerList').innerHTML = bArr.map(([name, d]) => {
-    const pnlColor = d.pnl >= 0 ? 'var(--green)' : 'var(--red)';
-    const barColor = d.pnl > 0 ? 'var(--green)' : d.pnl < -10 ? 'var(--red)' : 'var(--amber)';
+  // ── Blockers (from view — pre-aggregated) ──
+  const blockers = await sq('dashboard_blockers', 'order=cnt.desc&limit=8');
+  const maxCnt = blockers.length ? blockers[0].cnt : 1;
+  $('blockerList').innerHTML = blockers.map(d => {
+    const pnl = parseFloat(d.missed_pnl);
+    const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
+    const barColor = pnl > 0 ? 'var(--green)' : pnl < -10 ? 'var(--red)' : 'var(--amber)';
     return `<div class="blocker-row">
-      <span class="blocker-name" title="${name}">${name}</span>
+      <span class="blocker-name" title="${d.name}">${d.name}</span>
       <div class="blocker-bar-bg"><div class="blocker-bar-fill" style="width:${(d.cnt/maxCnt)*100}%;background:${barColor}"></div></div>
       <span class="blocker-cnt">${d.cnt}</span>
-      <span class="blocker-pnl" style="color:${pnlColor}">${fmtUsd(d.pnl)}</span>
+      <span class="blocker-pnl" style="color:${pnlColor}">${fmtUsd(pnl)}</span>
     </div>`;
   }).join('');
 
-  // Hourly signals
-  const hourly = await sq('signal_log', 'select=ts,trade_fired&order=ts.desc&limit=50000');
-  const hMap = {};
-  hourly.forEach(r => {
-    const h = new Date(r.ts).toISOString().slice(0,13) + ':00:00Z';
-    if (!hMap[h]) hMap[h] = { hour: h, signals: 0, fired: 0 };
-    hMap[h].signals++;
-    if (r.trade_fired) hMap[h].fired++;
-  });
-  signalData = Object.values(hMap).sort((a,b) => a.hour.localeCompare(b.hour)).slice(-24);
+  // ── Hourly signals (from view — pre-aggregated) ──
+  signalData = await sq('dashboard_signals_hourly', 'order=hour.asc');
   const totalSigs = signalData.reduce((a,d) => a + d.signals, 0);
   const totalFired = signalData.reduce((a,d) => a + d.fired, 0);
   $('kSignals').textContent = fmtK(totalSigs);
