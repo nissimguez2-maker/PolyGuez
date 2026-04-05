@@ -136,14 +136,17 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
 <div class="shell">
 
 <!-- KPI ROW -->
-<div class="kpi-row">
+<div class="kpi-row" style="grid-template-columns:repeat(4,1fr)">
   <div class="kpi"><div class="label">Balance</div><div class="val" id="kBalance">--</div><div class="sub">simulated USDC</div></div>
   <div class="kpi"><div class="label">Total P&L</div><div class="val" id="kTotalPnl">--</div><div class="sub" id="kTotalTrades">-- trades</div></div>
-  <div class="kpi"><div class="label">Shadow P&L</div><div class="val" id="kShadowPnl">--</div><div class="sub" id="kShadowCount">-- settled</div></div>
   <div class="kpi"><div class="label">Win Rate</div><div class="val" id="kWinRate">--</div><div class="sub" id="kWL">--W / --L</div></div>
-  <div class="kpi"><div class="label">Shadow Win Rate</div><div class="val" id="kShadowWR">--</div><div class="sub" id="kShadowWL">--W / --L</div></div>
-  <div class="kpi"><div class="label">Signals (24h)</div><div class="val" id="kSignals">--</div><div class="sub" id="kFired">-- fired</div></div>
-  <div class="kpi"><div class="label">Latest Edge</div><div class="val" id="kEdge">--</div><div class="sub" id="kProb">prob --</div></div>
+  <div class="kpi"><div class="label">Shadow P&L</div><div class="val" id="kShadowPnl">--</div><div class="sub" id="kShadowCount">-- settled</div></div>
+</div>
+<!-- Hidden elements for JS compatibility -->
+<div style="display:none">
+  <span id="kShadowWR"></span><span id="kShadowWL"></span>
+  <span id="kSignals"></span><span id="kFired"></span>
+  <span id="kEdge"></span><span id="kProb"></span>
 </div>
 
 <!-- GRID: LEFT + RIGHT -->
