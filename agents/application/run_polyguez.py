@@ -35,6 +35,7 @@ from agents.strategies.polyguez_strategy import (
 )
 from agents.utils.logger import get_logger, log_event
 from agents.utils.supabase_logger import log_signal, log_trade, log_shadow_trade, settle_shadow_trades
+from agents.utils.vol_tracker import RealizedVolTracker, implied_vol as compute_implied_vol
 from agents.utils.objects import (
     DashboardSnapshot,
     PendingSettlement,
@@ -66,6 +67,7 @@ class PolyGuezRunner:
 
         # New components
         self._btc_feed = PriceFeedManager(self.config)
+        self._vol_tracker = RealizedVolTracker()
 
         # State
         self._rolling_stats = load_rolling_stats()
@@ -492,6 +494,9 @@ class PolyGuezRunner:
                 await asyncio.sleep(self.config.clob_poll_interval)
                 continue
 
+            # Feed BTC price into volatility tracker
+            self._vol_tracker.update(btc_price_raw)
+
             cl_price, cl_age = self._btc_feed.get_chainlink_price()
 
             # Evaluate signal first with depth=-1 (skip gate) to get delta direction
@@ -574,6 +579,19 @@ class PolyGuezRunner:
                 signal.cooldown_ok, signal.daily_loss_ok, signal.balance_ok,
                 signal.position_limit_ok,
             ]
+            # ── Vol & CLOB indicators for signal_log ──
+            _sigma = self._vol_tracker.sigma()
+            _token_price = signal.yes_price if signal.direction == "up" else signal.no_price
+            _iv = compute_implied_vol(
+                token_price=_token_price,
+                spot=cl_price,
+                strike=signal.p2b_value,
+                seconds_remaining=(300 - elapsed),
+                sigma_hint=_sigma,
+            ) if _sigma is not None else None
+            _clob_spread = getattr(signal, "clob_spread_raw", None)
+            _depth_at_ask = getattr(signal, "depth_at_ask_raw", None)
+
             log_signal({
                 "market_id": market_id,
                 "market_question": self._current_market.get("question", "") if self._current_market else "",
@@ -590,6 +608,10 @@ class PolyGuezRunner:
                 "conditions_met": sum(_v2_conds),
                 "all_conditions_met": signal.all_conditions_met,
                 "trade_fired": trade_fired,
+                "sigma_realized": round(_sigma, 4) if _sigma is not None else None,
+                "implied_vol": round(_iv, 4) if _iv is not None else None,
+                "clob_spread": round(_clob_spread, 4) if _clob_spread is not None else None,
+                "depth_at_ask": round(_depth_at_ask, 2) if _depth_at_ask is not None else None,
                 "mode": self.config.mode,
             }, session_tag=self.config.session_tag)
 
