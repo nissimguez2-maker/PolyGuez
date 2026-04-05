@@ -110,6 +110,7 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
   .grid-main { grid-template-columns:1fr; }
 }
 </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
 
@@ -192,7 +193,7 @@ body { background: var(--bg); color: var(--text-1); font-family: var(--font); mi
         <div class="shadow-stat"><div class="sv" id="shSettled">--</div><div class="sl">Settled</div></div>
         <div class="shadow-stat"><div class="sv positive" id="shWins">--</div><div class="sl">Wins</div></div>
         <div class="shadow-stat"><div class="sv negative" id="shLosses">--</div><div class="sl">Losses</div></div>
-        <div class="shadow-stat" style="grid-column:span 2"><div class="sv" id="shPnl">--</div><div class="sl">Net Shadow P&L</div></div>
+        <div class="shadow-stat" style="grid-column:span 2"><div class="sv" id="shPnl">--</div><div class="sl">Net Shadow P&L (settled only)</div></div>
       </div>
     </div>
 
@@ -267,6 +268,17 @@ async function sq(table, params='') {
   } catch(e) { return []; }
 }
 
+async function sqCount(table, filterPrefix='') {
+  try {
+    const r = await fetch(`${SB_URL}/${table}?${filterPrefix}select=count`, {
+      method: 'HEAD',
+      headers: { ...SB_HDR, Prefer: 'count=exact' },
+    });
+    const range = r.headers.get('content-range'); // "0-0/12345"
+    return range ? parseInt(range.split('/')[1], 10) || 0 : 0;
+  } catch(e) { return 0; }
+}
+
 // ═══════════════════════ SESSION TAG (FIX-1) ═══════════════════════
 async function initSessionTag() {
   const latest = await sq('signal_log', 'select=session_tag&order=ts.desc&limit=1');
@@ -278,6 +290,59 @@ async function initSessionTag() {
   document.querySelector('.topbar-right').prepend(tagEl);
 }
 function tagFilter() { return SESSION_TAG ? `session_tag=eq.${SESSION_TAG}&` : ''; }
+
+// ═══════════════════════ SUPABASE REALTIME (FIX-3) ═══════════════════════
+let _realtimeSignalCount = 0;
+function initRealtime() {
+  try {
+    const sbClient = window.supabase.createClient(
+      'https://rapmxqnxsobvxqtfnwqh.supabase.co', SB_KEY
+    );
+    sbClient
+      .channel('signal_log_live')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'signal_log' },
+        (payload) => {
+          const row = payload.new;
+          // Update signal age instantly
+          const sigAgeEl = $('sigAge');
+          if (sigAgeEl) sigAgeEl.textContent = 'signal 0s ago';
+          // Increment scanned counter
+          _realtimeSignalCount++;
+          const ksc = $('kScanned');
+          if (ksc && ksc.textContent !== '--') {
+            const prev = parseInt(ksc.textContent.replace(/[^0-9]/g,''), 10) || 0;
+            ksc.textContent = fmtK(prev + 1);
+          }
+          // Update blocking conditions in real time
+          if (row.blocking_conditions != null) {
+            const ALL_CONDITIONS = [
+              'terminal_edge','delta_magnitude','edge','spread','depth',
+              'clob_consensus','has_position','cooldown','daily_loss','balance',
+              'position_limit','price_feed','chainlink_stale','time_of_day','entry_price','direction'
+            ];
+            const blocking = row.blocking_conditions
+              ? row.blocking_conditions.split(',').map(b => b.trim()).filter(Boolean)
+              : [];
+            const lb = $('liveBlockers');
+            if (lb) {
+              lb.innerHTML = ALL_CONDITIONS.map(c => {
+                const isBlocking = blocking.includes(c);
+                return `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;
+                  background:${isBlocking ? 'var(--red-bg)' : 'var(--green-bg)'};
+                  color:${isBlocking ? 'var(--red)' : 'var(--green)'}
+                ">${c.replace(/_ok$/, '').replace(/_/g,' ')}</span>`;
+              }).join('');
+            }
+          }
+        }
+      )
+      .subscribe();
+    console.log('[Realtime] Subscribed to signal_log');
+  } catch(e) {
+    console.warn('[Realtime] Failed to init:', e);
+  }
+}
 
 // ═══════════════════════ BINANCE WEBSOCKET ═══════════════════════
 let ws, wsRetry = 0;
@@ -823,10 +888,10 @@ async function pollSlow() {
     </div>`;
   }).join('');
 
-  // FIX-9: Markets Scanned KPI
-  const sigCount = await sq('signal_log', `${tagFilter()}select=id&order=ts.desc&limit=10000`);
+  // FIX-9: Markets Scanned KPI (HEAD count — no row transfer)
+  const scannedCount = await sqCount('signal_log', tagFilter());
   if ($('kScanned')) {
-    $('kScanned').textContent = fmtK(sigCount.length);
+    $('kScanned').textContent = fmtK(scannedCount);
     $('kScannedSub').textContent = SESSION_TAG ? `session ${SESSION_TAG}` : 'this session';
   }
 
@@ -852,6 +917,7 @@ async function loadPriceHistory() {
 (async function init() {
   connectBinance();
   await initSessionTag(); // FIX-1: resolve session tag before any queries
+  initRealtime(); // FIX-3: Supabase Realtime for live signal updates
   await Promise.all([loadPriceHistory(), pollFast(), pollSlow()]);
   setInterval(pollFast, POLL_FAST);
   setInterval(pollSlow, POLL_SLOW);

@@ -103,13 +103,13 @@ WHERE session_tag = 'V4';
 
 CREATE OR REPLACE VIEW dashboard_shadow_summary AS
 SELECT
-    COUNT(*) FILTER (WHERE outcome = 'win')  AS shadow_wins,
-    COUNT(*) FILTER (WHERE outcome = 'loss') AS shadow_losses,
-    COALESCE(SUM(pnl), 0)                   AS shadow_pnl,
-    COUNT(*) FILTER (WHERE settled = TRUE)   AS settled_count,
-    COUNT(*) FILTER (WHERE settled = FALSE)  AS pending_count
-FROM shadow_trade_log
-WHERE session_tag = 'V4';
+    COUNT(*)                                 AS total,
+    COUNT(*) FILTER (WHERE settled = TRUE)   AS settled,
+    COUNT(*) FILTER (WHERE settled = TRUE AND outcome = 'win' AND size_usdc IS NOT NULL)  AS wins,
+    COUNT(*) FILTER (WHERE settled = TRUE AND outcome = 'loss' AND size_usdc IS NOT NULL) AS losses,
+    COALESCE(SUM(pnl) FILTER (WHERE settled = TRUE AND size_usdc IS NOT NULL), 0)::FLOAT AS total_pnl,
+    COUNT(*) FILTER (WHERE settled = FALSE)  AS pending
+FROM shadow_trade_log;
 
 CREATE OR REPLACE VIEW dashboard_blockers AS
 SELECT
