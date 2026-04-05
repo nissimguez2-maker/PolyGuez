@@ -880,6 +880,8 @@ class PolyGuezRunner:
                     "size_usdc": self._position.size_usdc,
                     "pnl": pnl,
                     "llm_verdict": self._last_llm_verdict,
+                    "llm_reason": self._last_llm_reason,
+                    "llm_provider": self._last_llm_provider,
                     "outcome": "loss",
                     "mode": self.config.mode,
                 }, session_tag=self.config.session_tag)
@@ -1000,6 +1002,8 @@ class PolyGuezRunner:
                 "size_usdc": self._position.size_usdc,
                 "pnl": pnl,
                 "llm_verdict": self._last_llm_verdict,
+                "llm_reason": self._last_llm_reason,
+                "llm_provider": self._last_llm_provider,
                 "outcome": outcome_str,
                 "mode": self.config.mode,
             }, session_tag=self.config.session_tag)
