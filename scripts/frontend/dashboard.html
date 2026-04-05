@@ -321,17 +321,18 @@ function drawPriceChart() {
   const pad = (maxP - minP) * 0.1 || 50;
   minP -= pad; maxP += pad;
 
-  const x = t => ((t - minT) / (maxT - minT)) * (W - 60) + 40;
+  const LM = 64; // left margin for "$XX,XXX" labels
+  const x = t => ((t - minT) / (maxT - minT)) * (W - LM - 10) + LM;
   const y = p => H - 24 - ((p - minP) / (maxP - minP)) * (H - 36);
 
   // Grid + Y-axis labels (with comma formatting)
   ctx.strokeStyle = '#F2F4F7'; ctx.lineWidth = 1;
   for (let i = 0; i < 5; i++) {
     const gy = 12 + i * (H - 36) / 4;
-    ctx.beginPath(); ctx.moveTo(40, gy); ctx.lineTo(W, gy); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(LM, gy); ctx.lineTo(W, gy); ctx.stroke();
     const pv = maxP - i * (maxP - minP) / 4;
     ctx.fillStyle = '#98A2B3'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'right';
-    ctx.fillText('$' + pv.toLocaleString('en-US', {maximumFractionDigits:0}), 36, gy + 4);
+    ctx.fillText('$' + pv.toLocaleString('en-US', {maximumFractionDigits:0}), LM - 4, gy + 4);
   }
 
   // 5-minute market boundaries (vertical dashed lines)
@@ -341,6 +342,7 @@ function drawPriceChart() {
   ctx.setLineDash([4, 4]);
   for (let t = firstBoundary; t <= maxT; t += marketInterval) {
     const xi = x(t);
+    if (xi < LM) continue;
     ctx.beginPath(); ctx.moveTo(xi, 12); ctx.lineTo(xi, H - 24); ctx.stroke();
   }
   ctx.setLineDash([]);
@@ -462,26 +464,15 @@ function drawVolRadar() {
   ctx.fillStyle = '#64748B';
   ctx.textAlign = 'right';
 
-  // Helper: draw horizontal bar
-  const drawBar = (y, label, value, max, color, unit = '%') => {
-    // Label
+  // Helper: draw horizontal bar (no value text — stats panel shows values)
+  const drawBar = (y, label, value, max, color) => {
+    ctx.fillStyle = '#64748B'; ctx.textAlign = 'right';
     ctx.fillText(label, labelWidth - 5, y + 10);
-    
-    // Background
     ctx.fillStyle = '#E2E8F0';
     ctx.fillRect(barX, y, barWidth, 12);
-    
-    // Fill
     const fillW = Math.max(0, Math.min((value / max) * barWidth, barWidth));
     ctx.fillStyle = color;
     ctx.fillRect(barX, y, fillW, 12);
-    
-    // Value text (on the right of bar)
-    ctx.fillStyle = '#1E293B';
-    const text = value.toFixed(1) + unit;
-    ctx.textAlign = 'left';
-    ctx.fillText(text, barX + barWidth + 8, y + 10);
-    ctx.textAlign = 'right';
   };
 
   // Draw bars
@@ -508,12 +499,9 @@ function drawVolRadar() {
   const edgeNorm = Math.max(0, Math.min((termEdge - edgeMin) / (edgeMax - edgeMin), 1));
   ctx.fillStyle = termEdge >= 3 ? '#12B76A' : '#3B82F6';
   ctx.fillRect(barX, currentY, edgeNorm * barWidth, 12);
-  ctx.fillStyle = '#1E293B';
+  ctx.fillStyle = '#64748B';
   ctx.textAlign = 'right';
   ctx.fillText('Terminal Edge', labelWidth - 5, currentY + 10);
-  ctx.textAlign = 'left';
-  ctx.fillText(termEdge.toFixed(1) + '%', barX + barWidth + 8, currentY + 10);
-  ctx.textAlign = 'right';
   currentY += barHeight + barGap;
   
   // Conditions Met (0-15, turns green at 15)
