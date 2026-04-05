@@ -106,6 +106,6 @@ def implied_vol(
         return _norm_cdf(d2) - token_price
 
     try:
-        return _brentq(bs_digital, 0.01, 10.0, xtol=1e-4, maxiter=50)
+        return _brentq(bs_digital, 0.01, 1000.0, xtol=1e-4, maxiter=100)
     except (ValueError, RuntimeError):
         return None

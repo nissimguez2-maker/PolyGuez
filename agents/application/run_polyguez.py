@@ -578,6 +578,9 @@ class PolyGuezRunner:
                 signal.spread_ok, signal.depth_ok, signal.clob_consensus_ok, signal.no_position,
                 signal.cooldown_ok, signal.daily_loss_ok, signal.balance_ok,
                 signal.position_limit_ok,
+                getattr(signal, 'time_of_day_ok', True),
+                getattr(signal, 'entry_price_ok', True),
+                getattr(signal, 'direction_ok', True),
             ]
             # ── Vol & CLOB indicators for signal_log ──
             _sigma = self._vol_tracker.sigma()
@@ -637,6 +640,9 @@ class PolyGuezRunner:
                 if not signal.daily_loss_ok: blocking.append("daily_loss")
                 if not signal.balance_ok: blocking.append("balance")
                 if not signal.position_limit_ok: blocking.append("position_limit")
+                if hasattr(signal, 'time_of_day_ok') and not signal.time_of_day_ok: blocking.append("time_of_day")
+                if hasattr(signal, 'entry_price_ok') and not signal.entry_price_ok: blocking.append("entry_price")
+                if hasattr(signal, 'direction_ok') and not signal.direction_ok: blocking.append("direction_blocked")
 
                 shadow_entry_price = signal.yes_price if signal.direction == "up" else signal.no_price
                 log_shadow_trade({

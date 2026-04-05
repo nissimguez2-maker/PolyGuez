@@ -120,7 +120,7 @@ def evaluate_entry_signal(
 
     # Stale Chainlink guard near expiry
     chainlink_fresh_ok = True
-    if chainlink_age > 15.0 and seconds_remaining < 90.0:
+    if chainlink_age > config.chainlink_stale_max_age and seconds_remaining < config.chainlink_stale_expiry_window:
         chainlink_fresh_ok = False
         log_event(logger, "signal_stale_cl",
             f"[SIGNAL] chainlink_stale age={chainlink_age:.1f}s seconds_remaining={seconds_remaining:.0f}s → blocked")
@@ -128,6 +128,17 @@ def evaluate_entry_signal(
     # CLOB consensus: don't trade against overwhelming market consensus
     our_price = yes_price if direction == "up" else no_price
     clob_consensus_ok = our_price >= config.min_clob_consensus
+
+    # V4: Time-of-day filter
+    current_hour_utc = datetime.now(timezone.utc).hour
+    time_of_day_ok = current_hour_utc not in config.blocked_hours_utc
+
+    # V4: Entry price sweet-spot filter
+    entry_token_price = yes_price if direction == "up" else no_price
+    entry_price_ok = config.min_entry_token_price <= entry_token_price <= config.max_entry_token_price
+
+    # V4: Direction mode filter
+    direction_ok = (config.direction_mode == "both" or config.direction_mode == direction)
 
     # Build all conditions for diagnostic logging
     _velocity_ok = abs(btc_velocity) > effective_velocity_threshold
@@ -144,6 +155,9 @@ def evaluate_entry_signal(
         (chainlink_fresh_ok, f"stale_chainlink={chainlink_age:.0f}s_near_expiry"),
         (terminal_edge_ok, f"terminal_edge={terminal_edge:.4f}<{config.min_terminal_edge}"),
         (delta_magnitude_ok, f"delta={abs(strike_delta):.1f}<{active_delta_threshold}({'strict' if fast_market else 'normal'})"),
+        (time_of_day_ok, f"blocked_hour_utc={current_hour_utc}"),
+        (entry_price_ok, f"entry_price={entry_token_price:.3f}_outside_{config.min_entry_token_price}-{config.max_entry_token_price}"),
+        (direction_ok, f"direction={direction}_blocked_by_{config.direction_mode}"),
         (_edge_ok, f"edge={edge:.4f}<{effective_required_edge:.4f}"),
         (_spread_ok, f"spread={spread:.4f}>={config.max_spread}"),
         (depth_ok, f"depth={clob_depth:.0f}<{config.min_clob_depth}"),
@@ -194,6 +208,9 @@ def evaluate_entry_signal(
         terminal_edge=terminal_edge,
         terminal_edge_ok=terminal_edge_ok,
         delta_magnitude_ok=delta_magnitude_ok,
+        time_of_day_ok=time_of_day_ok,
+        entry_price_ok=entry_price_ok,
+        direction_ok=direction_ok,
         price_feed_ok=price_feed_ok,
     )
 

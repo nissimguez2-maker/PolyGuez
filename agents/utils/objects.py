@@ -226,8 +226,8 @@ class Article(BaseModel):
 
 class PolyGuezConfig(BaseModel):
     # Fixed bet sizing
-    bet_size_normal: float = Field(default=5.0, ge=0.5, le=50.0, description="Normal signal bet size")
-    bet_size_strong: float = Field(default=7.0, ge=0.5, le=50.0, description="Strong signal bet size")
+    bet_size_normal: float = Field(default=8.0, ge=0.5, le=50.0, description="Normal signal bet size")
+    bet_size_strong: float = Field(default=10.0, ge=0.5, le=50.0, description="Strong signal bet size")
     bet_size_low_balance_normal: float = Field(default=3.0, ge=0.5, le=50.0, description="Normal bet when balance < low_balance_threshold")
     bet_size_low_balance_strong: float = Field(default=5.0, ge=0.5, le=50.0, description="Strong bet when balance < low_balance_threshold")
     use_maker_orders: bool = Field(default=True, description="Use limit orders as maker to avoid taker fees")
@@ -237,7 +237,7 @@ class PolyGuezConfig(BaseModel):
     low_balance_threshold: float = Field(default=40.0, ge=1.0, le=500.0, description="Balance below which low-balance sizing applies")
     max_daily_loss: Optional[float] = Field(default=None)
     max_open_positions: int = Field(default=1, ge=1, le=5)
-    velocity_threshold: float = Field(default=0.01, ge=0.001, le=1.0)
+    velocity_threshold: float = Field(default=0.005, ge=0.001, le=1.0)
     min_edge: float = Field(default=0.03, ge=0.01, le=0.5)
     max_spread: float = Field(default=0.10, ge=0.01, le=0.5)
     min_oracle_gap: float = Field(default=0.0, ge=0.0)
@@ -296,6 +296,14 @@ class PolyGuezConfig(BaseModel):
     conviction_min_delta: float = Field(default=0.5, ge=0.0, le=200.0, description="Min $ delta between Chainlink and P2B for conviction")
     conviction_min_delta_strict: float = Field(default=2.0, ge=0.0, le=500.0, description="Strict delta threshold for fast-moving markets")
     min_clob_consensus: float = Field(default=0.15, ge=0.05, le=0.90, description="Min CLOB price on our side to confirm market consensus")
+
+    # V4 filters from audit
+    chainlink_stale_max_age: float = Field(default=30.0, ge=5.0, le=120.0, description="Max Chainlink age (seconds) before blocking near expiry")
+    chainlink_stale_expiry_window: float = Field(default=60.0, ge=30.0, le=180.0, description="Seconds remaining threshold for stale Chainlink check")
+    blocked_hours_utc: List[int] = Field(default=[0, 3], description="UTC hours to avoid trading (low-edge periods)")
+    min_entry_token_price: float = Field(default=0.25, ge=0.01, le=0.90, description="Min token price for entry (sweet spot filter)")
+    max_entry_token_price: float = Field(default=0.45, ge=0.10, le=0.95, description="Max token price for entry (sweet spot filter)")
+    direction_mode: str = Field(default="both", description="Trade direction: 'both', 'down', or 'up'")
 
     dashboard_secret: str = Field(default="")
     session_tag: str = Field(default_factory=lambda: os.environ.get("SESSION_TAG", "v1.1"), description="Version tag — set SESSION_TAG env var in Railway to start a new session without code changes")
@@ -359,6 +367,9 @@ class SignalState(BaseModel):
     terminal_edge: float = 0.0
     terminal_edge_ok: bool = False
     delta_magnitude_ok: bool = False
+    time_of_day_ok: bool = True
+    entry_price_ok: bool = True
+    direction_ok: bool = True
 
     @property
     def all_conditions_met(self) -> bool:
@@ -372,6 +383,9 @@ class SignalState(BaseModel):
             self.oracle_gap_ok,          # Binance-Chainlink gap must confirm direction
             self.terminal_edge_ok,       # Terminal probability edge above minimum
             self.delta_magnitude_ok,     # Strike delta large enough for conviction
+            self.time_of_day_ok,         # Not in blocked UTC hours
+            self.entry_price_ok,         # Token price in sweet spot
+            self.direction_ok,           # Direction allowed by config
             self.edge_ok,                # Fair value edge (now based on terminal prob)
             # Execution gates
             self.spread_ok,              # CLOB spread acceptable
