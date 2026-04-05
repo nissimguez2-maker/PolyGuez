@@ -1227,11 +1227,11 @@ class PolyGuezRunner:
 
     async def _poll_clob(self, yes_token, no_token):
         """Get CLOB prices: prefer WS cache, fall back to REST, then Gamma."""
-        # Try WS cache first (fresh if message within 10s)
+        # Try WS cache first (fresh if message within 60s)
         ws_fresh = (
             self._clob_ws_connected
             and self._clob_ws_last_msg > 0
-            and time.time() - self._clob_ws_last_msg < 10.0
+            and time.time() - self._clob_ws_last_msg < 60.0
             and self._clob_ws_yes > 0
             and self._clob_ws_no > 0
         )
