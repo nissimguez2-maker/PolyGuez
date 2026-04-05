@@ -77,6 +77,7 @@ class PolyGuezRunner:
         self._current_depth = 0.0  # FIX 2
         self._last_llm_verdict = ""
         self._last_llm_reason = ""
+        self._last_llm_provider = ""
         self._last_llm_time = 0.0
         self._killed = False
         self._kill_timestamp = None
@@ -125,8 +126,13 @@ class PolyGuezRunner:
             if exp_dt:
                 expiry = exp_dt.isoformat()
                 expiry_seconds = max(0, (exp_dt - datetime.now(timezone.utc)).total_seconds())
-                end_total = 300.0
-                elapsed = max(0, end_total - expiry_seconds)
+                # ISSUE-4 fix: use signal's elapsed_seconds when available (computed fresh each cycle)
+                # instead of deriving from expiry which assumes exactly 300s total market duration
+                if self._current_signal and self._current_signal.elapsed_seconds > 0:
+                    elapsed = self._current_signal.elapsed_seconds
+                else:
+                    end_total = 300.0
+                    elapsed = max(0, end_total - expiry_seconds)
 
         unrealized = 0.0
         if self._position:
@@ -492,6 +498,7 @@ class PolyGuezRunner:
         self._current_depth = 0.0
         self._last_llm_verdict = ""
         self._last_llm_reason = ""
+        self._last_llm_provider = ""
         self._price_to_beat = None
         self._p2b_source = "none"
         self._p2b_cross_check_passed = None
@@ -698,11 +705,13 @@ class PolyGuezRunner:
                 if hasattr(signal, 'direction_ok') and not signal.direction_ok: blocking.append("direction_blocked")
 
                 shadow_entry_price = signal.yes_price if signal.direction == "up" else signal.no_price
+                shadow_size = calculate_position_size(self._usdc_balance, self.config, edge=signal.edge, depth=self._current_depth)
                 log_shadow_trade({
                     "market_id": market_id,
                     "market_question": self._current_market.get("question", "") if self._current_market else "",
                     "direction": signal.direction,
                     "entry_price": shadow_entry_price,
+                    "size_usdc": shadow_size,
                     "edge": round(signal.edge, 4),
                     "terminal_edge": round(signal.terminal_edge, 4),
                     "terminal_probability": round(signal.terminal_probability, 4),
@@ -740,6 +749,7 @@ class PolyGuezRunner:
         )
         self._last_llm_verdict = verdict
         self._last_llm_reason = reason
+        self._last_llm_provider = provider
         self._last_llm_time = llm_time
 
         if verdict == "REDUCE-SIZE":
@@ -845,6 +855,9 @@ class PolyGuezRunner:
                     pnl=pnl,
                     outcome="emergency-exit",
                     reason="Velocity reversal exceeded threshold",
+                    llm_verdict=self._last_llm_verdict,
+                    llm_reason=self._last_llm_reason,
+                    llm_provider=self._last_llm_provider,
                 )
                 self._rolling_stats.trades.append(record)
                 self._rolling_stats.daily_pnl += pnl
@@ -952,6 +965,7 @@ class PolyGuezRunner:
             signal_strength=abs(self._current_signal.btc_velocity) if self._current_signal else 0.0,
             llm_verdict=self._last_llm_verdict,
             llm_reason=self._last_llm_reason,
+            llm_provider=self._last_llm_provider,
             outcome=outcome_str,
         )
         self._rolling_stats.trades.append(record)
@@ -1047,6 +1061,13 @@ class PolyGuezRunner:
             trade.reason = "pending > 2h — evicted"
             log_event(logger, "pending_evicted", f"Evicted stale pending: {trade.market_id}")
         
+        # BUG-3 fix: rebuild pending list after eviction so evicted trades aren't re-queried
+        pending_trades = [t for t in self._rolling_stats.trades if t.outcome == "pending"]
+        if not pending_trades:
+            if stale:
+                save_rolling_stats(self._rolling_stats)
+            return
+
         resolved_count = 0
         for trade in pending_trades:
             try:

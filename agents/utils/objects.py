@@ -349,7 +349,7 @@ class SignalState(BaseModel):
     gap_favors_position: bool = False
     velocity_ok: bool = False
     oracle_gap_ok: bool = False
-    clob_mispricing_ok: bool = False
+    clob_mispricing_ok: bool = False  # DEPRECATED: redundant with edge_ok, kept for serialization compat
     edge_ok: bool = False
     spread_ok: bool = False
     no_position: bool = False
@@ -384,9 +384,7 @@ class SignalState(BaseModel):
             # Feed health gates
             self.price_feed_ok,          # At least one price source alive
             self.chainlink_fresh_ok,     # Chainlink not stale near expiry
-            # V2 core gates
-            self.velocity_ok,            # BTC must be moving fast enough
-            self.oracle_gap_ok,          # Binance-Chainlink gap must confirm direction
+            # V2 core gates (velocity_ok and oracle_gap_ok removed — nearly always True, adding noise)
             self.terminal_edge_ok,       # Terminal probability edge above minimum
             self.delta_magnitude_ok,     # Strike delta large enough for conviction
             self.time_of_day_ok,         # Not in blocked UTC hours
@@ -445,8 +443,13 @@ class RollingStats(BaseModel):
         recent = self.last_n_trades
         if not recent:
             return 0.0
-        wins = sum(1 for t in recent if t.outcome == "win")
-        return wins / len(recent)
+        # ISSUE-5 fix: return 0.0 if sample is too small (< 5 trades)
+        # to avoid over-tightening cooldown thresholds prematurely
+        completed = [t for t in recent if t.outcome in ("win", "loss", "emergency-exit")]
+        if len(completed) < 5:
+            return 0.0
+        wins = sum(1 for t in completed if t.outcome == "win")
+        return wins / len(completed)
 
     @property
     def total_pnl(self) -> float:

@@ -80,6 +80,7 @@ class PriceFeedManager:
         self._binance_msg_count = 0
         self._chainlink_msg_count = 0
         self._last_binance_msg_time = 0.0
+        self._last_ws_msg_time = 0.0  # ISSUE-9: separate WS timestamp for source labeling
         self._last_chainlink_msg_time = 0.0
         self._last_rtds_msg_time = 0.0
         self._last_stats_log = 0.0
@@ -315,6 +316,7 @@ class PriceFeedManager:
             self._binance_msg_count += 1
             self._binance_msg_count_window += 1
             self._last_binance_msg_time = time.time()
+            self._last_ws_msg_time = time.time()  # ISSUE-9: track WS freshness separately
             if ts - self._last_binance_buffer_ts >= 0.1:
                 self._binance_buffer.append((ts, price))
                 self._last_binance_buffer_ts = ts
@@ -350,6 +352,7 @@ class PriceFeedManager:
                 self._binance_msg_count += 1
                 self._binance_msg_count_window += 1
                 self._last_binance_msg_time = time.time()
+                self._last_ws_msg_time = time.time()  # ISSUE-9: track WS freshness separately
                 self._update_gap()
         await ws.close()
 
@@ -425,8 +428,10 @@ class PriceFeedManager:
                         self._binance_buffer.append((ts, price))
                         self._last_binance_buffer_ts = ts
                         self._update_gap()
-                    # Only claim source if WS isn't actively providing data
-                    if not self._binance_connected or (time.time() - self._last_binance_msg_time > 5.0):
+                    # ISSUE-9 fix: check staleness against time BEFORE this poll updated _last_binance_msg_time
+                    # Only claim source if WS isn't actively providing fresh data
+                    ws_stale = (ts - getattr(self, '_last_ws_msg_time', 0)) > 5.0
+                    if not self._binance_connected or ws_stale:
                         self._binance_source = "multi-rest"
                         self._binance_connected = True
                     self._maybe_log_stats()

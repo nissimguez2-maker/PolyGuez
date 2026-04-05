@@ -322,12 +322,35 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
 
     start = asyncio.get_event_loop().time()
 
+    # BUG-1 fix: fetch provider data (news/tavily) for LLM context
+    context_data = ""
+    if config.data_providers:
+        try:
+            market_ctx = {
+                "direction": signal_state.direction,
+                "velocity": signal_state.btc_velocity,
+                "elapsed_seconds": signal_state.elapsed_seconds,
+                "binance_chainlink_gap": signal_state.binance_chainlink_gap,
+            }
+            provider_results = await fetch_all_providers(
+                config.data_providers, market_ctx,
+                timeout=config.data_provider_timeout,
+            )
+            if provider_results:
+                import json as _json
+                context_data = _json.dumps(provider_results, default=str)[:2000]
+                log_event(logger, "provider_data_fetched",
+                    f"Fetched {len(provider_results)} provider(s) for LLM context")
+        except Exception as prov_exc:
+            log_event(logger, "provider_data_error",
+                f"Provider fetch failed (non-fatal): {prov_exc}", level=30)
+
     prompt = _prompter.momentum_confirmation(
         velocity=signal_state.btc_velocity, direction=signal_state.direction,
         yes_price=signal_state.yes_price, no_price=signal_state.no_price,
         spread=signal_state.spread, elapsed_seconds=signal_state.elapsed_seconds,
         win_rate=rolling_stats.win_rate, recent_trades_summary="",
-        context_data="", chainlink_price=signal_state.chainlink_price,
+        context_data=context_data, chainlink_price=signal_state.chainlink_price,
         binance_chainlink_gap=signal_state.binance_chainlink_gap,
         gap_direction=gap_direction, price_to_beat=price_to_beat,
         clob_depth_summary=clob_depth_summary,
@@ -391,7 +414,7 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                             await asyncio.sleep(2)
                             try:
                                 status = await loop.run_in_executor(None, polymarket_client.client.get_order, order_id)
-                                if isinstance(status, dict) and status.get("status") == "MATCHED":
+                                if isinstance(status, dict) and status.get("status", "").upper() in ("MATCHED", "FILLED"):
                                     filled_price = float(status.get("price", limit_price))
                                     log_event(logger, "maker_order_confirmed_filled", f"[MAKER] Order {order_id} filled at {filled_price:.4f}")
                                     return {"status": "filled", "price": filled_price, "response": status}

@@ -124,11 +124,13 @@ def settle_shadow_trades(market_id: str, outcome_prices: list) -> None:
                 yes_settled = float(outcome_prices[0])
                 no_settled = float(outcome_prices[1])
                 settled_price = yes_settled if direction == "up" else no_settled
+                # BUG-2 fix: use actual size_usdc instead of hardcoded $5
+                size = float(shadow.get("size_usdc", 0) or 5.0)
                 if settled_price > 0.5:
-                    pnl = round(5.0 * (1.0 / entry_price - 1.0), 4) if entry_price > 0 else 0
+                    pnl = round(size * (1.0 / entry_price - 1.0), 4) if entry_price > 0 else 0
                     outcome = "win"
                 else:
-                    pnl = -5.0
+                    pnl = -size
                     outcome = "loss"
             else:
                 pnl = 0.0

@@ -42,5 +42,6 @@ class Prompter:
             f"Binance-Chainlink gap: ${binance_chainlink_gap:+.2f}\n"
             f"Recent win rate: {win_rate:.0%} | Signal quality: {conditions_met}/8\n"
             f"Order book: {clob_depth_summary}\n"
-            f"Should this trade execute?"
+            + (f"External context: {context_data}\n" if context_data else "")
+            + f"Should this trade execute?"
         )

@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS shadow_trade_log (
     market_question TEXT,
     direction   TEXT,
     entry_price FLOAT,
+    size_usdc   FLOAT,
     exit_price  FLOAT,
     edge        FLOAT,
     terminal_edge FLOAT,
