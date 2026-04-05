@@ -439,10 +439,12 @@ function drawPriceChart() {
   const W = rect.width, H = rect.height;
   ctx.clearRect(0, 0, W, H);
 
-  // Merge historical + live into single continuous array
+  // Merge historical + live — downsample live ticks for longer ranges
+  const liveStep = currentRangeSeconds <= 300 ? 1 : currentRangeSeconds <= 21600 ? 15 : 60;
+  const sampledLive = livePrices.filter((_,i) => i % liveStep === 0);
   const all = [
     ...priceHistory.map(h => ({t: new Date(h.t).getTime(), p: h.p})),
-    ...livePrices
+    ...sampledLive
   ];
   if (all.length < 2) return;
 
@@ -466,8 +468,8 @@ function drawPriceChart() {
     ctx.fillText('$' + pv.toLocaleString('en-US', {maximumFractionDigits:0}), LM - 4, gy + 4);
   }
 
-  // 5-minute market boundaries (vertical dashed lines)
-  const marketInterval = 300000; // 5 minutes in ms
+  // 5-minute market boundaries (vertical dashed lines) — only show on <=5min views
+  const marketInterval = currentRangeSeconds <= 300 ? 300000 : currentRangeSeconds <= 21600 ? 3600000 : 14400000;
   const firstBoundary = Math.ceil(minT / marketInterval) * marketInterval;
   ctx.strokeStyle = '#C0C8D4'; ctx.lineWidth = 1; // FIX-7: better contrast
   ctx.setLineDash([4, 4]);
@@ -491,7 +493,7 @@ function drawPriceChart() {
 
   // FIX-7: gap-aware price line — break at >2min gaps
   if (all.length > 1) {
-    const GAP_MS = 15000;
+    const GAP_MS = currentRangeSeconds <= 300 ? 15000 : currentRangeSeconds <= 21600 ? 120000 : 600000;
     ctx.beginPath(); ctx.strokeStyle = '#3B82F6'; ctx.lineWidth = 1.5;
     all.forEach((d, i) => {
       const px = x(d.t), py = y(d.p);
