@@ -98,6 +98,8 @@ class PolyGuezRunner:
         self._clob_ws_last_msg = 0.0
         self._clob_ws_tokens = (None, None)  # (yes_token, no_token)
         self._clob_ws_connected = False
+        self._clob_ws_reconnect_count = 0
+        self._clob_ws_ping_task = None
         self._clob_http_session = None
 
     # -- Public API for dashboard / CLI ------------------------------------
@@ -220,6 +222,9 @@ class PolyGuezRunner:
             self._position = None
 
         # Stop CLOB WS
+        if self._clob_ws_ping_task:
+            self._clob_ws_ping_task.cancel()
+            self._clob_ws_ping_task = None
         if self._clob_ws_task:
             self._clob_ws_task.cancel()
             try: await self._clob_ws_task
@@ -1163,6 +1168,11 @@ class PolyGuezRunner:
                 self._clob_ws_connected = True
                 log_event(logger, "clob_ws_connected", "[CLOB/WS] Connected")
 
+                # Start application-level ping keep-alive
+                if self._clob_ws_ping_task:
+                    self._clob_ws_ping_task.cancel()
+                self._clob_ws_ping_task = asyncio.create_task(self._clob_ws_ping_loop())
+
                 # Re-subscribe if we already have tokens
                 yes_tok, no_tok = self._clob_ws_tokens
                 if yes_tok and no_tok:
@@ -1181,6 +1191,10 @@ class PolyGuezRunner:
                     if self._killed:
                         break
                     self._clob_ws_last_msg = time.time()
+                    # Reset backoff after first successful message
+                    if self._clob_ws_reconnect_count > 0:
+                        log_event(logger, "clob_ws_stable", f"[CLOB/WS] Stable — resetting backoff (was {self._clob_ws_reconnect_count})")
+                        self._clob_ws_reconnect_count = 0
                     try:
                         msg = json.loads(raw)
                     except (json.JSONDecodeError, TypeError):
@@ -1193,9 +1207,16 @@ class PolyGuezRunner:
                 self._clob_ws_connected = False
                 log_event(logger, "clob_ws_error",
                           f"[CLOB/WS] Error: {type(exc).__name__}: {exc}", level=30)
-            # Reconnect delay
+            # Cancel ping task on disconnect
+            if self._clob_ws_ping_task:
+                self._clob_ws_ping_task.cancel()
+                self._clob_ws_ping_task = None
+            # Exponential backoff on reconnect (cap 30s)
             self._clob_ws_connected = False
-            await asyncio.sleep(2.0)
+            delay = min(2 ** self._clob_ws_reconnect_count, 30)
+            self._clob_ws_reconnect_count += 1
+            log_event(logger, "clob_ws_backoff", f"[CLOB/WS] Reconnecting in {delay}s (attempt {self._clob_ws_reconnect_count})")
+            await asyncio.sleep(delay)
 
     def _handle_clob_ws_msg(self, msg):
         """Parse CLOB WS messages and update cached prices."""
@@ -1243,6 +1264,19 @@ class PolyGuezRunner:
                 if self._clob_ws_yes > 0 and self._clob_ws_no > 0:
                     log_event(logger, "clob_ws_price",
                               f"[CLOB/WS] UP={self._clob_ws_yes:.4f} DOWN={self._clob_ws_no:.4f}")
+
+    async def _clob_ws_ping_loop(self):
+        """Application-level ping to keep the CLOB WS connection alive."""
+        try:
+            while self._clob_ws_connected and not self._killed:
+                await asyncio.sleep(10)
+                try:
+                    if self._clob_ws:
+                        await self._clob_ws.ping()
+                except Exception:
+                    break
+        except asyncio.CancelledError:
+            pass
 
     async def _subscribe_clob_ws(self, yes_token, no_token):
         """Subscribe to new market tokens on the CLOB WS."""
@@ -1374,8 +1408,8 @@ class PolyGuezRunner:
         """Try both midpoints URL formats, return (yes, no, spread) or None."""
         base = "https://clob.polymarket.com/midpoints"
         urls = [
+            f"{base}?token_id={yes_token}&token_id={no_token}",
             f"{base}?token_ids={yes_token},{no_token}",
-            f"{base}?token_ids={yes_token}&token_ids={no_token}",
         ]
         for url in urls:
             try:
