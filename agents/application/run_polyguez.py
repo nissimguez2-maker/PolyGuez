@@ -836,6 +836,8 @@ class PolyGuezRunner:
     async def _hold_loop(self, expiry_dt, yes_token=None, no_token=None):
         """Monitor position for emergency exit until expiry."""
         entry_direction = "up" if self._position.side == "YES" else "down"
+        strike_delta_at_entry = self._current_signal.strike_delta if self._current_signal else 0.0
+        terminal_probability_at_entry = self._current_signal.terminal_probability if self._current_signal else 0.0
 
         while not self._killed and self._position:
             if expiry_dt:
@@ -862,6 +864,7 @@ class PolyGuezRunner:
                 )
                 # Record as emergency exit
                 # Fetch CLOB mid price for accurate emergency exit PnL
+                exit_price = self._position.entry_price  # fallback: flat exit
                 try:
                     loop = asyncio.get_event_loop()
                     book = await loop.run_in_executor(None, self._polymarket.client.get_order_book, self._position.token_id)
@@ -870,11 +873,10 @@ class PolyGuezRunner:
                     best_ask = float(book.get("asks", [{}])[0].get("price", 0))
                     mid_price = (best_bid + best_ask) / 2.0 if best_bid and best_ask else 0.0
                     if mid_price > 0:
-                        pnl = round(self._position.size_usdc * (mid_price / self._position.entry_price - 1.0), 4)
-                    else:
-                        pnl = -self._position.size_usdc
+                        exit_price = mid_price
                 except Exception:
-                    pnl = -self._position.size_usdc
+                    pass  # exit_price stays at entry_price (flat exit)
+                pnl = round((exit_price - self._position.entry_price) * (self._position.size_usdc / self._position.entry_price), 4) if self._position.entry_price > 0 else 0.0
                 record = TradeRecord(
                     market_id=self._position.market_id,
                     side=self._position.side,
@@ -904,14 +906,16 @@ class PolyGuezRunner:
                     "market_question": self._current_market.get("question", "") if self._current_market else "",
                     "side": "up" if self._position.side == "YES" else "down",
                     "entry_price": self._position.entry_price,
-                    "exit_price": 0.0,
+                    "exit_price": exit_price,
                     "size_usdc": self._position.size_usdc,
                     "pnl": pnl,
                     "llm_verdict": self._last_llm_verdict,
                     "llm_reason": self._last_llm_reason,
                     "llm_provider": self._last_llm_provider,
-                    "outcome": "loss",
+                    "outcome": "emergency-exit",
                     "mode": self.config.mode,
+                    "strike_delta_at_entry": strike_delta_at_entry,
+                    "terminal_probability_at_entry": terminal_probability_at_entry,
                 }, session_tag=self.config.session_tag)
                 if self.config.mode == "dry-run":
                     self._rolling_stats.simulated_balance = round(
