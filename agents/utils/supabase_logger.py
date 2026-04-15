@@ -64,7 +64,9 @@ def log_signal(snapshot: dict, session_tag: str = "V5") -> None:
     """Fire-and-forget in background thread — never blocks the main loop."""
     snapshot["ts"] = datetime.now(timezone.utc).isoformat()
     snapshot["session_tag"] = session_tag
-    snapshot.setdefault("era", session_tag)  # permanent era boundary: V5+ = clean data
+    # Permanent era boundary: V5+ = clean data. Always override caller to
+    # prevent pre-V5 rows from being written with a mismatched era.
+    snapshot["era"] = session_tag
     def _insert():
         try:
             client = _client()
@@ -80,7 +82,8 @@ def log_trade(record: dict, session_tag: str = "V5") -> None:
     """Fire-and-forget in background thread — never blocks the main loop."""
     record["ts"] = datetime.now(timezone.utc).isoformat()
     record["session_tag"] = session_tag
-    record.setdefault("era", session_tag)
+    # era column added by migration 2026-04-15 — every trade_log row must carry it.
+    record["era"] = session_tag
     def _insert():
         try:
             client = _client()
@@ -107,8 +110,36 @@ def log_shadow_trade(record: dict, session_tag: str = "v2") -> None:
     _log_executor.submit(_insert)
 
 
-def settle_shadow_trades(market_id: str, outcome_prices: list) -> None:
-    """Settle all pending shadow trades for a given market."""
+def settle_shadow_trades(
+    market_id: str,
+    outcome_prices: list | None = None,
+    *,
+    btc_close_price: float | None = None,
+    strike: float | None = None,
+) -> None:
+    """Settle all pending shadow trades for a given market.
+
+    Two modes (BTC-feed is preferred — independent of Polymarket resolution timing):
+
+    1. BTC-feed mode (authoritative for BTC up/down markets):
+       Pass `btc_close_price` + `strike`. "up" wins if close > strike,
+       "down" wins if close < strike. Uses the same BTC feed the bot trades on.
+
+    2. Polymarket-resolution mode (legacy fallback):
+       Pass `outcome_prices` = [yes_settled, no_settled] from Gamma. "up" wins
+       if yes_settled > 0.5. Only works once the market has actually resolved.
+    """
+    use_btc_mode = (
+        btc_close_price is not None and strike is not None and strike > 0
+    )
+    use_polymarket_mode = (
+        not use_btc_mode
+        and outcome_prices is not None
+        and len(outcome_prices) >= 2
+    )
+    if not use_btc_mode and not use_polymarket_mode:
+        return
+
     try:
         client = _client()
         if not client:
@@ -118,31 +149,51 @@ def settle_shadow_trades(market_id: str, outcome_prices: list) -> None:
         ).eq("settled", False).execute()
         if not resp.data:
             return
+
+        up_wins = (btc_close_price > strike) if use_btc_mode else None
+        yes_settled = float(outcome_prices[0]) if use_polymarket_mode else None
+        no_settled = float(outcome_prices[1]) if use_polymarket_mode else None
+
         for shadow in resp.data:
             direction = shadow.get("direction", "")
-            entry_price = shadow.get("entry_price", 0)
-            settled_price = 0.0
-            if len(outcome_prices) >= 2:
-                yes_settled = float(outcome_prices[0])
-                no_settled = float(outcome_prices[1])
-                settled_price = yes_settled if direction == "up" else no_settled
-                # BUG-2 fix: use actual size_usdc instead of hardcoded $5
-                size = float(shadow.get("size_usdc", 0) or 5.0)
-                if settled_price > 0.5:
-                    pnl = round(size * (1.0 / entry_price - 1.0), 4) if entry_price > 0 else 0
+            entry_price = shadow.get("entry_price", 0) or 0
+            size = float(shadow.get("size_usdc", 0) or 5.0)
+
+            if use_btc_mode:
+                won = (direction == "up" and up_wins) or (direction == "down" and not up_wins)
+                settled_price = 1.0 if won else 0.0
+                if won:
+                    pnl = round(size * (1.0 / entry_price - 1.0), 4) if entry_price > 0 else 0.0
                     outcome = "win"
                 else:
                     pnl = -size
                     outcome = "loss"
             else:
-                pnl = 0.0
-                outcome = "unknown"
+                settled_price = yes_settled if direction == "up" else no_settled
+                # BUG-2 fix: use actual size_usdc instead of hardcoded $5
+                if settled_price > 0.5:
+                    pnl = round(size * (1.0 / entry_price - 1.0), 4) if entry_price > 0 else 0.0
+                    outcome = "win"
+                else:
+                    pnl = -size
+                    outcome = "loss"
+
             client.table("shadow_trade_log").update({
                 "exit_price": settled_price,
                 "pnl": pnl,
                 "outcome": outcome,
                 "settled": True,
             }).eq("id", shadow["id"]).execute()
-        logger.info(f"[SHADOW] Settled {len(resp.data)} shadow trades for market {market_id}")
+
+        mode_label = "btc_feed" if use_btc_mode else "polymarket"
+        detail = (
+            f"close=${btc_close_price:.2f} strike=${strike:.2f}"
+            if use_btc_mode
+            else f"yes={yes_settled:.3f} no={no_settled:.3f}"
+        )
+        logger.info(
+            f"[SHADOW] Settled {len(resp.data)} shadow trades for market {market_id} "
+            f"via {mode_label} ({detail})"
+        )
     except Exception as e:
         logger.warning(f"Supabase shadow settle failed: {e}")

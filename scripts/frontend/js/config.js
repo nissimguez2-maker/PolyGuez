@@ -116,9 +116,20 @@ async function sqCount(table, filterPrefix='') {
 }
 
 // ═══════════════════════ SESSION TAG (FIX-1) ═══════════════════════
+// Read from the session_tag_current singleton (seeded with 'V5') so the
+// dashboard stays in sync with dashboard views (which also filter on
+// session_tag = (SELECT tag FROM session_tag_current)). Fall back to the
+// latest signal_log row, then hardcoded 'V5', if the singleton is missing.
 async function initSessionTag() {
-  const latest = await sq('signal_log', 'select=session_tag&order=ts.desc&limit=1');
-  SESSION_TAG = latest.length ? latest[0].session_tag : 'V4';
+  let tag = null;
+  const singleton = await sq('session_tag_current', 'select=tag&id=eq.true&limit=1');
+  if (singleton.length && singleton[0].tag) {
+    tag = singleton[0].tag;
+  } else {
+    const latest = await sq('signal_log', 'select=session_tag&order=ts.desc&limit=1');
+    tag = latest.length ? latest[0].session_tag : 'V5';
+  }
+  SESSION_TAG = tag;
   const tagEl = document.createElement('span');
   tagEl.style.cssText = 'font-size:11px;color:var(--text-3);font-family:monospace';
   tagEl.id = 'sessionTag';
