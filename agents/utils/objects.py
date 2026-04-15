@@ -167,7 +167,7 @@ class ComplexMarket(BaseModel):
     id: int
     condition_id: str
     question_id: str
-    tokens: Union[str, str]
+    tokens: list[str]  # pair of CTF token IDs (YES/NO)
     rewards: str
     minimum_order_size: str
     minimum_tick_size: str
@@ -203,7 +203,6 @@ class SimpleEvent(BaseModel):
     restricted: bool
     new: bool
     featured: bool
-    restricted: bool
     markets: str
 
 

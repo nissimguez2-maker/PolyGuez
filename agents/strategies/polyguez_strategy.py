@@ -376,7 +376,7 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
     if not config.llm_enabled:
         return ("GO", "llm-disabled", "", 0.0)
 
-    start = asyncio.get_event_loop().time()
+    start = asyncio.get_running_loop().time()
 
     # Provider context is now supplied from PolyGuezRunner's background cache
     # instead of fetching inline on the critical path.
@@ -411,7 +411,7 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
         log_event(logger, "llm_timeout", f"LLM confirmation timed out after {config.llm_timeout}s — skipping trade", level=30)
         return ("NO-GO", "timeout-skipped", adapter.name, config.llm_timeout)
 
-    elapsed = asyncio.get_event_loop().time() - start
+    elapsed = asyncio.get_running_loop().time() - start
 
     logger.debug(f"LLM raw reason: {reason}")
     if reason == "parse-fallback":
@@ -566,15 +566,25 @@ def save_rolling_stats(stats):
         client = _client()
         if client:
             stats_data = stats.model_dump()
-            stats_data["updated_at"] = datetime.now(timezone.utc).isoformat()
+            written_at = datetime.now(timezone.utc).isoformat()
+            stats_data["updated_at"] = written_at
             client.table("rolling_stats").upsert({
                 "id": "singleton",
                 "data": stats_data,
             }).execute()
-            # Verify write-back
-            verify = client.table("rolling_stats").select("id").eq("id", "singleton").execute()
+            # Verify write-back: confirm the persisted updated_at matches what we just wrote.
+            # A "row exists" check was insufficient — a silently-cached/failed write would still
+            # return the stale row and pass. Comparing updated_at catches real write failures.
+            verify = client.table("rolling_stats").select("data").eq("id", "singleton").execute()
             if not verify.data:
                 logger.error("[STATS] Supabase write-back verification FAILED — row not found after upsert")
+            else:
+                persisted = (verify.data[0].get("data") or {}).get("updated_at")
+                if persisted != written_at:
+                    logger.error(
+                        f"[STATS] Supabase write-back verification FAILED — "
+                        f"persisted updated_at={persisted} != written_at={written_at}"
+                    )
     except Exception as exc:
         logger.error(f"[STATS] Supabase save failed — stats may be lost on redeploy: {exc}")
 
@@ -620,10 +630,20 @@ def load_rolling_stats():
                     if supa_reset_token and supa_reset_token != file_reset_token:
                         logger.info(f"[STATS] Supabase reset_token mismatch ({supa_reset_token}) — using Supabase clean state")
                         return supa_stats
-                    # PRIORITY 2: Supabase updated_at is newer (handles trade-count-decreasing archival)
-                    if supa_updated and supa_updated > getattr(file_stats, "_loaded_at", ""):
+                    # PRIORITY 2: Supabase updated_at is newer than the local file's mtime
+                    # (handles trade-count-decreasing archival). We compare Supabase's ISO
+                    # updated_at against the file's mtime converted to UTC ISO — RollingStats
+                    # itself carries no updated_at field, so the filesystem mtime is the only
+                    # honest local timestamp we have.
+                    try:
+                        file_mtime_iso = datetime.fromtimestamp(
+                            os.path.getmtime(_HISTORY_FILE), tz=timezone.utc
+                        ).isoformat()
+                    except OSError:
+                        file_mtime_iso = ""
+                    if supa_updated and supa_updated > file_mtime_iso:
                         if supa_stats.total_trades > file_stats.total_trades:
-                            logger.info(f"[STATS] Supabase is newer ({supa_updated}, "
+                            logger.info(f"[STATS] Supabase is newer ({supa_updated} > {file_mtime_iso}, "
                                 f"trades: {supa_stats.total_trades} > {file_stats.total_trades}) — using Supabase")
                             return supa_stats
         except Exception as exc:
