@@ -196,6 +196,17 @@ function runInstruction(content) {
 const app = express();
 app.use(express.json());
 
+const SECRET = process.env.DASHBOARD_SECRET || "";
+function requireSecret(req, res, next) {
+  if (!SECRET) return next(); // if no secret set, open (backward compat)
+  const token =
+    req.headers["x-secret"] ||
+    req.query.secret ||
+    (req.body && req.body.secret);
+  if (token === SECRET) return next();
+  return res.status(401).json({ ok: false, error: "unauthorized" });
+}
+
 app.get("/health", (_req, res) => res.json({
   ok: true,
   status: agentStatus,
@@ -205,6 +216,9 @@ app.get("/health", (_req, res) => res.json({
 
 // SSE
 app.get("/api/stream", (req, res) => {
+  if (SECRET && req.query.secret !== SECRET) {
+    return res.status(401).end();
+  }
   res.setHeader("Content-Type",  "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection",    "keep-alive");
@@ -225,7 +239,7 @@ app.get("/api/stream", (req, res) => {
   });
 });
 
-app.post("/api/instructions", (req, res) => {
+app.post("/api/instructions", requireSecret, (req, res) => {
   const content = (req.body?.content || "").trim();
   if (!content) return res.status(400).json({ ok: false, error: "content required" });
 
@@ -241,7 +255,7 @@ app.post("/api/instructions", (req, res) => {
   res.json({ ok: true, queued: false });
 });
 
-app.post("/api/stop", (_req, res) => {
+app.post("/api/stop", requireSecret, (_req, res) => {
   if (currentProc) {
     currentProc.kill("SIGTERM");
     log("system", "⛔ Stopped by operator");
@@ -252,8 +266,8 @@ app.post("/api/stop", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/api/messages", (_req, res) => res.json(messages));
-app.get("/api/status",   (_req, res) => res.json({ status: agentStatus, queue: queue.length }));
+app.get("/api/messages", requireSecret, (_req, res) => res.json(messages));
+app.get("/api/status",   requireSecret, (_req, res) => res.json({ status: agentStatus, queue: queue.length }));
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 const HTML = `<!DOCTYPE html>
@@ -334,13 +348,16 @@ async function send(){
   if(!c)return;
   box.value='';
   box.style.height='38px';
-  await fetch('/api/instructions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({content:c})});
+  const secret = new URLSearchParams(window.location.search).get('secret') || '';
+  await fetch('/api/instructions',{method:'POST',headers:{'Content-Type':'application/json','x-secret':secret},body:JSON.stringify({content:c})});
 }
 async function stopAgent(){
-  await fetch('/api/stop',{method:'POST'});
+  const secret = new URLSearchParams(window.location.search).get('secret') || '';
+  await fetch('/api/stop',{method:'POST',headers:{'x-secret':secret}});
 }
 box.addEventListener('input',()=>{box.style.height='38px';box.style.height=Math.min(box.scrollHeight,120)+'px'});
-const es=new EventSource('/api/stream');
+const secret=new URLSearchParams(window.location.search).get('secret')||'';
+const es=new EventSource('/api/stream'+(secret?'?secret='+encodeURIComponent(secret):''));
 es.onmessage=e=>{
   try{
     const d=JSON.parse(e.data);
