@@ -222,7 +222,7 @@ def evaluate_entry_signal(
     )
 
 
-def calculate_position_size(usdc_balance, config, edge=0.0, depth=0.0):
+def calculate_position_size(usdc_balance, config, edge=0.0, depth=0.0, size_multiplier=1.0):
     # Edge-scaled sizing: fractional Kelly interpolation between normal and strong
     if getattr(config, 'edge_scaled_sizing', False):
         if usdc_balance < config.low_balance_threshold:
@@ -246,7 +246,9 @@ def calculate_position_size(usdc_balance, config, edge=0.0, depth=0.0):
             raw = config.bet_size_strong if is_strong else config.bet_size_normal
     # Cap individual bet by max_capital_fraction
     max_bet = usdc_balance * getattr(config, 'max_capital_fraction', 0.20)
-    return min(raw, max_bet) if max_bet > 0 else raw
+    sized = min(raw, max_bet) if max_bet > 0 else raw
+    # Apply daily loss tier multiplier (tiered reduction, not hard stop)
+    return sized * max(0.0, min(1.0, size_multiplier))
 
 
 def calculate_max_capital_at_risk(usdc_balance, config):
@@ -264,6 +266,37 @@ def check_daily_loss_limit(rolling_stats, config, usdc_balance):
     if limit is None:
         limit = calculate_max_capital_at_risk(usdc_balance, config)
     return rolling_stats.daily_pnl > -abs(limit)
+
+
+def get_daily_loss_size_multiplier(rolling_stats, config, usdc_balance):
+    """Tiered daily loss reduction: reduces position size before hard stop.
+
+    Tiers (relative to max_daily_loss):
+      - 0%  → 50% of limit: full size (1.0)
+      - 50% → 75% of limit: reduce to 50% sizing
+      - 75% → 100% of limit: reduce to 25% sizing
+      - >= 100% of limit: hard stop (0.0) — check_daily_loss_limit also returns False here
+    """
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    if rolling_stats.daily_pnl_reset_utc != today:
+        return 1.0  # New day, full size
+    limit = config.max_daily_loss
+    if limit is None:
+        limit = calculate_max_capital_at_risk(usdc_balance, config)
+    limit = abs(limit)
+    loss = -rolling_stats.daily_pnl  # positive number = loss
+    if loss < limit * 0.50:
+        return 1.0    # Tier 0: full size
+    elif loss < limit * 0.75:
+        log_event(logger, "daily_loss_tier",
+            f"[RISK] Daily loss ${loss:.2f} → Tier 1 (50–75% limit): sizing reduced to 50%")
+        return 0.5    # Tier 1: half size
+    elif loss < limit * 1.00:
+        log_event(logger, "daily_loss_tier",
+            f"[RISK] Daily loss ${loss:.2f} → Tier 2 (75–100% limit): sizing reduced to 25%")
+        return 0.25   # Tier 2: quarter size
+    else:
+        return 0.0    # Tier 3: hard stop (duplicates check_daily_loss_limit behaviour)
 
 
 def compute_cooldown(rolling_stats, config):
