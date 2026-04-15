@@ -90,6 +90,10 @@ class PolyGuezRunner:
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
 
+        # Provider context cache (refreshed by background task)
+        self._provider_context_cache = {"fetched_at": 0.0, "data": ""}
+        self._provider_cache_task = None
+
         # CLOB WebSocket state
         self._clob_ws = None
         self._clob_ws_task = None
@@ -221,6 +225,12 @@ class PolyGuezRunner:
             await execute_emergency_exit(self._polymarket, self._position, self.config.mode)
             self._position = None
 
+        # Stop provider cache task
+        if self._provider_cache_task:
+            self._provider_cache_task.cancel()
+            try: await self._provider_cache_task
+            except asyncio.CancelledError: pass
+
         # Stop CLOB WS
         if self._clob_ws_ping_task:
             self._clob_ws_ping_task.cancel()
@@ -240,6 +250,34 @@ class PolyGuezRunner:
 
         # Stop BTC feed
         await self._btc_feed.stop()
+
+    async def _provider_cache_loop(self):
+        """Background task: refresh provider context every 30s."""
+        from agents.strategies.data_providers import fetch_all_providers
+        while not self._killed:
+            try:
+                market_ctx = {}
+                if self._current_signal:
+                    market_ctx = {
+                        "direction": self._current_signal.direction,
+                        "velocity": self._current_signal.btc_velocity,
+                        "elapsed_seconds": self._current_signal.elapsed_seconds,
+                        "binance_chainlink_gap": self._current_signal.binance_chainlink_gap,
+                    }
+                results = await fetch_all_providers(
+                    self.config.data_providers, market_ctx,
+                    timeout=self.config.data_provider_timeout,
+                )
+                if results:
+                    import json as _json
+                    self._provider_context_cache = {
+                        "fetched_at": time.time(),
+                        "data": _json.dumps(results, default=str)[:2000],
+                    }
+            except Exception as exc:
+                log_event(logger, "provider_cache_error",
+                    f"Provider cache refresh failed: {exc}", level=30)
+            await asyncio.sleep(30)
 
     # -- Main loop ---------------------------------------------------------
 
@@ -319,6 +357,10 @@ class PolyGuezRunner:
 
         # Start BTC price feed
         await self._btc_feed.start()
+
+        # Start provider context cache refresh loop
+        if self.config.data_providers:
+            self._provider_cache_task = asyncio.create_task(self._provider_cache_loop())
 
         # Start CLOB WebSocket feed (if enabled)
         if self.config.clob_ws_enabled:
@@ -778,12 +820,16 @@ class PolyGuezRunner:
             yes_token if signal.direction == "up" else no_token,
         )
 
-        # LLM confirmation
+        # LLM confirmation — provider context from background cache (not fetched inline)
+        _cache = self._provider_context_cache
+        _cache_age = time.time() - _cache["fetched_at"] if _cache["fetched_at"] else float("inf")
+        _provider_ctx = _cache["data"] if _cache_age <= 60.0 else ""
         verdict, reason, provider, llm_time = await get_llm_confirmation(
             signal, self._rolling_stats, self.config,
             price_to_beat=self._price_to_beat,
             gap_direction=self._btc_feed.get_gap_direction(),
             clob_depth_summary=clob_depth,
+            provider_context=_provider_ctx,
         )
         self._last_llm_verdict = verdict
         self._last_llm_reason = reason

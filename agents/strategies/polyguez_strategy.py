@@ -316,34 +316,15 @@ def compute_clob_depth(order_book, side):
     return depth
 
 
-async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_beat=0.0, gap_direction="unknown", clob_depth_summary=""):
+async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_beat=0.0, gap_direction="unknown", clob_depth_summary="", provider_context=""):
     if not config.llm_enabled:
         return ("GO", "llm-disabled", "", 0.0)
 
     start = asyncio.get_event_loop().time()
 
-    # BUG-1 fix: fetch provider data (news/tavily) for LLM context
-    context_data = ""
-    if config.data_providers:
-        try:
-            market_ctx = {
-                "direction": signal_state.direction,
-                "velocity": signal_state.btc_velocity,
-                "elapsed_seconds": signal_state.elapsed_seconds,
-                "binance_chainlink_gap": signal_state.binance_chainlink_gap,
-            }
-            provider_results = await fetch_all_providers(
-                config.data_providers, market_ctx,
-                timeout=config.data_provider_timeout,
-            )
-            if provider_results:
-                import json as _json
-                context_data = _json.dumps(provider_results, default=str)[:2000]
-                log_event(logger, "provider_data_fetched",
-                    f"Fetched {len(provider_results)} provider(s) for LLM context")
-        except Exception as prov_exc:
-            log_event(logger, "provider_data_error",
-                f"Provider fetch failed (non-fatal): {prov_exc}", level=30)
+    # Provider context is now supplied from PolyGuezRunner's background cache
+    # instead of fetching inline on the critical path.
+    context_data = provider_context
 
     prompt = _prompter.momentum_confirmation(
         velocity=signal_state.btc_velocity, direction=signal_state.direction,
