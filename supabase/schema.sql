@@ -35,7 +35,14 @@ CREATE TABLE IF NOT EXISTS signal_log (
     implied_vol FLOAT,
     clob_spread FLOAT,
     depth_at_ask FLOAT,
-    signal_id   TEXT
+    signal_id   TEXT,
+    blocking_conditions TEXT,
+    in_trade    BOOLEAN,
+    chainlink_age_seconds FLOAT,
+    bid_yes     FLOAT,
+    bid_no      FLOAT,
+    complete_set_edge FLOAT,
+    era         TEXT
 );
 
 CREATE TABLE IF NOT EXISTS trade_log (

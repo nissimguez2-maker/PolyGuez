@@ -310,6 +310,18 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font); min-he
       <div class="blocker-grid" id="blockerList"></div>
     </div>
 
+    <!-- BLOCKERS — LAST 24H (from signal_log, unbiased) -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+        <div class="card-title" style="margin-bottom:0">Blockers — last 24h</div>
+        <span id="blocker24hCount" style="font-size:10px;color:var(--muted-fg);font-family:var(--mono);font-weight:500"></span>
+      </div>
+      <div style="font-size:10px;color:var(--muted-fg);margin-bottom:10px">
+        Which gate is filtering trades right now. Unbiased — counts every blocked signal_log row in the last 24h.
+      </div>
+      <div id="blocker24hList" style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px"></div>
+    </div>
+
     <!-- COMPLETE-SET EDGE -->
     <div class="card" style="padding:14px 20px">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">

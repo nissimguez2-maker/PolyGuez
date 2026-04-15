@@ -335,20 +335,45 @@ async function pollSlow() {
     }
   } catch(e) {}
 
-  // ── Blockers (from view — pre-aggregated) ──
-  const blockers = await sq('dashboard_blockers', 'order=cnt.desc&limit=8');
-  const maxCnt = blockers.length ? blockers[0].cnt : 1;
-  $('blockerList').innerHTML = blockers.map(d => {
-    const pnl = parseFloat(d.missed_pnl);
-    const pnlColor = pnl >= 0 ? 'var(--green)' : 'var(--red)';
-    const barColor = pnl > 0 ? 'var(--green)' : pnl < -10 ? 'var(--red)' : 'var(--amber)';
-    return `<div class="blocker-row">
-      <span class="blocker-name" title="${d.name}">${d.name}</span>
-      <div class="blocker-bar-bg"><div class="blocker-bar-fill" style="width:${(d.cnt/maxCnt)*100}%;background:${barColor}"></div></div>
-      <span class="blocker-cnt">${d.cnt}</span>
-      <span class="blocker-pnl" style="color:${pnlColor}">${fmtUsd(pnl)}</span>
-    </div>`;
-  }).join('');
+  // ── Blockers 24h (from signal_log — unbiased; replaces the old
+  // shadow-based render that was stomping on live blocker pills) ──
+  // Render into the dedicated `blocker24hList` card added to dashboard.html
+  // so the live pass/block pill grid in `blockerList` (pollFast) is never
+  // overwritten by this aggregate view.
+  try {
+    const [blockers24h, counts24hArr] = await Promise.all([
+      sq('dashboard_signal_blockers_24h', 'order=cnt.desc&limit=10'),
+      sq('dashboard_signal_counts_24h', 'limit=1'),
+    ]);
+    const counts24h = counts24hArr && counts24hArr[0] ? counts24hArr[0] : null;
+    const lb24 = $('blocker24hList');
+    if (lb24) {
+      if (!blockers24h || blockers24h.length === 0) {
+        lb24.innerHTML = '<div style="color:var(--muted-fg);padding:8px 0">no blocked signals in last 24h</div>';
+      } else {
+        const maxCnt24 = blockers24h[0].cnt || 1;
+        lb24.innerHTML = blockers24h.map(d => {
+          const pct = d.pct_of_blocked_signals != null ? parseFloat(d.pct_of_blocked_signals).toFixed(1) + '%' : '';
+          return `<div class="blocker-row" style="display:grid;grid-template-columns:1fr 2fr auto auto;gap:8px;align-items:center">
+            <span class="blocker-name" title="${d.name}" style="color:var(--text-2)">${d.name}</span>
+            <div class="blocker-bar-bg" style="height:6px;background:var(--border);border-radius:3px;overflow:hidden">
+              <div class="blocker-bar-fill" style="height:100%;width:${(d.cnt/maxCnt24)*100}%;background:var(--amber)"></div>
+            </div>
+            <span class="blocker-cnt" style="color:var(--text-1);min-width:32px;text-align:right">${d.cnt}</span>
+            <span class="blocker-pct" style="color:var(--muted-fg);min-width:44px;text-align:right">${pct}</span>
+          </div>`;
+        }).join('');
+      }
+    }
+    const hdr = $('blocker24hCount');
+    if (hdr && counts24h) {
+      const total = counts24h.total_signals || 0;
+      const met   = counts24h.all_met || 0;
+      const fired = counts24h.trades_fired || 0;
+      const metPct = total ? ((met/total)*100).toFixed(1) : '0.0';
+      hdr.textContent = `${total} signals · ${met} met (${metPct}%) · ${fired} fired`;
+    }
+  } catch (e) { /* view may not exist yet on first deploy */ }
 
   // FIX-9: Markets Scanned KPI (HEAD count — no row transfer)
   const scannedCount = await sqCount('signal_log', tagFilter());
