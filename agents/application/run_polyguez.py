@@ -107,6 +107,11 @@ class PolyGuezRunner:
         self._clob_http_session = None
         self._heartbeat_task = None
 
+        # Hot-path timing (set per entry, read at settle)
+        self._last_entry_llm_ms = 0.0
+        self._last_entry_order_ms = 0.0
+        self._last_entry_total_ms = 0.0
+
     # -- Public API for dashboard / CLI ------------------------------------
 
     @property
@@ -862,6 +867,7 @@ class PolyGuezRunner:
         _cache = self._provider_context_cache
         _cache_age = time.time() - _cache["fetched_at"] if _cache["fetched_at"] else float("inf")
         _provider_ctx = _cache["data"] if _cache_age <= 60.0 else ""
+        _t_llm_start = asyncio.get_event_loop().time()
         verdict, reason, provider, llm_time = await get_llm_confirmation(
             signal, self._rolling_stats, self.config,
             price_to_beat=self._price_to_beat,
@@ -873,6 +879,7 @@ class PolyGuezRunner:
         self._last_llm_reason = reason
         self._last_llm_provider = provider
         self._last_llm_time = llm_time
+        _llm_ms = (asyncio.get_event_loop().time() - _t_llm_start) * 1000
 
         if verdict == "REDUCE-SIZE":
             log_event(logger, "llm_reduce_size", f"LLM REDUCE-SIZE — halving bet: {reason}")
@@ -903,7 +910,17 @@ class PolyGuezRunner:
 
         # Execute — pass seconds_remaining so maker timeout adapts to expiry
         _seconds_remaining = max(1.0, 300.0 - signal.elapsed_seconds)
+        _t_order_start = asyncio.get_event_loop().time()
         result = await execute_entry(self._polymarket, token_id, size, self.config.mode, config=self.config, seconds_remaining=_seconds_remaining)
+        _order_ms = (asyncio.get_event_loop().time() - _t_order_start) * 1000
+        _total_ms = _llm_ms + _order_ms
+        log_event(logger, "hot_path_timing",
+            f"LLM={_llm_ms:.0f}ms order={_order_ms:.0f}ms total={_total_ms:.0f}ms")
+
+        # Store timing for log_trade at settlement
+        self._last_entry_llm_ms = _llm_ms
+        self._last_entry_order_ms = _order_ms
+        self._last_entry_total_ms = _total_ms
 
         if result["status"] == "error":
             log_event(logger, "entry_failed", f"Entry failed: {result.get('error', '')}")
@@ -1006,6 +1023,9 @@ class PolyGuezRunner:
                     "llm_reason": self._last_llm_reason,
                     "llm_provider": self._last_llm_provider,
                     "outcome": "loss",
+                    "llm_response_ms": round(self._last_entry_llm_ms, 1),
+                    "order_submit_ms": round(self._last_entry_order_ms, 1),
+                    "total_latency_ms": round(self._last_entry_total_ms, 1),
                     "mode": self.config.mode,
                 }, session_tag=self.config.session_tag)
                 if self.config.mode == "dry-run":
@@ -1128,6 +1148,9 @@ class PolyGuezRunner:
                 "llm_reason": self._last_llm_reason,
                 "llm_provider": self._last_llm_provider,
                 "outcome": outcome_str,
+                "llm_response_ms": round(self._last_entry_llm_ms, 1),
+                "order_submit_ms": round(self._last_entry_order_ms, 1),
+                "total_latency_ms": round(self._last_entry_total_ms, 1),
                 "mode": self.config.mode,
             }, session_tag=self.config.session_tag)
 
