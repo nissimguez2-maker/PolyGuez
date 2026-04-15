@@ -3,6 +3,7 @@
 import asyncio
 import json
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -64,7 +65,36 @@ app.mount('/static', StaticFiles(directory=str(_STATIC_PATH)), name='static')
 
 @app.get("/health")
 async def health():
-    return JSONResponse({"status": "ok", "runner_active": _runner is not None})
+    """Real health signal for Railway / load balancers.
+
+    Returns 200 only when all of these hold:
+      - runner is attached
+      - runner is not in killed state
+      - BTC feed is connected (the bot has no signal without it)
+      - main loop ticked within HEALTH_MAX_STALE_SECONDS (default 120s)
+
+    Returns 503 otherwise so Railway restarts the instance instead of sending
+    traffic to a dead event loop whose FastAPI thread is still alive.
+    """
+    max_stale = float(os.environ.get("HEALTH_MAX_STALE_SECONDS", "120"))
+    now = time.time()
+    if _runner is None:
+        return JSONResponse({"status": "starting", "runner_active": False}, status_code=503)
+    killed = bool(getattr(_runner, "is_killed", False))
+    btc_ok = bool(getattr(getattr(_runner, "_btc_feed", None), "is_connected", False))
+    last_tick = float(getattr(_runner, "_loop_heartbeat_ts", 0.0) or 0.0)
+    loop_age = (now - last_tick) if last_tick else float("inf")
+    loop_ok = loop_age <= max_stale
+    healthy = (not killed) and btc_ok and loop_ok
+    payload = {
+        "status": "ok" if healthy else "unhealthy",
+        "runner_active": True,
+        "killed": killed,
+        "btc_feed_connected": btc_ok,
+        "loop_age_seconds": round(loop_age, 1) if last_tick else None,
+        "loop_stale_threshold_seconds": max_stale,
+    }
+    return JSONResponse(payload, status_code=200 if healthy else 503)
 
 
 # -- HTML dashboard --------------------------------------------------------

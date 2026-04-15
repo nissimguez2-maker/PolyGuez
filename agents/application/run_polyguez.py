@@ -82,6 +82,7 @@ class PolyGuezRunner:
         self._last_llm_time = 0.0
         self._killed = False
         self._kill_timestamp = None
+        self._loop_heartbeat_ts = 0.0  # monotonic seconds; updated each main-loop tick for health check
         self._usdc_balance = 0.0
         self._gamma_ok = False
         self._clob_ok = False
@@ -423,6 +424,7 @@ class PolyGuezRunner:
         await self._recover_pending_position()
 
         while not self._killed:
+            self._loop_heartbeat_ts = time.time()
             try:
                 await asyncio.wait_for(self._cycle(), timeout=360.0)
             except asyncio.TimeoutError:
