@@ -22,6 +22,7 @@ from agents.strategies.polyguez_strategy import (
     calculate_max_capital_at_risk,
     calculate_position_size,
     check_daily_loss_limit,
+    get_daily_loss_size_multiplier,
     check_emergency_exit,
     compute_clob_depth,
     compute_cooldown,
@@ -688,7 +689,8 @@ class PolyGuezRunner:
             signal.depth_ok = True if depth < 0 else depth >= self.config.min_clob_depth
             self._current_signal = signal
 
-            bet_size = calculate_position_size(self._usdc_balance, self.config, edge=signal.edge, depth=depth)
+            _size_multiplier = get_daily_loss_size_multiplier(self._rolling_stats, self.config, self._usdc_balance)
+            bet_size = calculate_position_size(self._usdc_balance, self.config, edge=signal.edge, depth=depth, size_multiplier=_size_multiplier)
             is_strong = signal.edge >= self.config.strong_edge_threshold and depth >= self.config.strong_depth_threshold
             sig_msg = f"Signal: {signal.all_conditions_met}"
             if signal.all_conditions_met:
