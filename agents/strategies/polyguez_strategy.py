@@ -550,10 +550,15 @@ def load_rolling_stats():
             data = f.read().strip()
             if data:
                 file_stats = RollingStats.model_validate_json(data)
-    except (FileNotFoundError, json.JSONDecodeError, Exception):
+    except FileNotFoundError:
         pass
-    
-    # Cross-check: prefer Supabase if it has more trades (file may be stale)
+    except (json.JSONDecodeError, Exception) as exc:
+        logger.warning(f"[STATS] Local file corrupted, falling back to Supabase: {exc}")
+
+    # Cross-check: prefer Supabase if it was updated more recently.
+    # NOTE: total_trades is a computed property over the capped trades list
+    # (max 500 entries), so it can decrease after archival. We use the
+    # updated_at timestamp from the Supabase data payload instead.
     if file_stats is not None:
         try:
             from agents.utils.supabase_logger import _client
@@ -561,9 +566,13 @@ def load_rolling_stats():
             if client:
                 resp = client.table("rolling_stats").select("data").eq("id", "singleton").execute()
                 if resp.data and len(resp.data) > 0:
-                    supa_stats = RollingStats.model_validate(resp.data[0]["data"])
-                    if supa_stats.total_trades > file_stats.total_trades:
-                        logger.info(f"[STATS] Supabase has more trades ({supa_stats.total_trades} > {file_stats.total_trades}) — using Supabase")
+                    supa_data = resp.data[0]["data"]
+                    supa_updated = supa_data.get("updated_at", "")
+                    supa_stats = RollingStats.model_validate(supa_data)
+                    # Prefer Supabase if it has a newer updated_at timestamp
+                    if supa_updated and supa_stats.total_trades > file_stats.total_trades:
+                        logger.info(f"[STATS] Supabase is newer (updated_at={supa_updated}, "
+                            f"trades: {supa_stats.total_trades} > {file_stats.total_trades}) — using Supabase")
                         return supa_stats
         except Exception as exc:
             logger.warning(f"[STATS] Supabase cross-check failed: {exc}")
