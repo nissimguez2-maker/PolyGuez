@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import time
 from datetime import datetime, timezone
 
 from agents.application.prompts import Prompter
@@ -396,10 +397,11 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                 if book and book.asks:
                     best_ask = float(book.asks[0].price)
                     limit_price = max(0.01, round(best_ask - config.maker_price_offset, 4))
-                    order_args = OrderArgs(token_id=token_id, price=limit_price, size=size_usdc, side=BUY)
+                    expiration = int(time.time()) + 60 + int(seconds_remaining)
+                    order_args = OrderArgs(token_id=token_id, price=limit_price, size=size_usdc, side=BUY, expiration=expiration)
                     signed = await loop.run_in_executor(None, polymarket_client.client.create_order, order_args)
-                    resp = await loop.run_in_executor(None, lambda: polymarket_client.client.post_order(signed, orderType=OrderType.GTC))
-                    log_event(logger, "maker_order_posted", f"[MAKER] Limit order at {limit_price:.4f}")
+                    resp = await loop.run_in_executor(None, lambda: polymarket_client.client.post_order(signed, orderType=OrderType.GTD, post_only=True))
+                    log_event(logger, "maker_order_posted", f"[MAKER/GTD] Limit order at {limit_price:.4f}, expires in {60 + int(seconds_remaining)}s")
                     # Dynamic timeout based on seconds_remaining
                     max_wait = min(30.0, max(5.0, seconds_remaining * 0.4))
                     polls = int(max_wait / 2)
