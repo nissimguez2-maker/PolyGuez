@@ -464,6 +464,7 @@ class RollingStats(BaseModel):
     max_capital_at_risk: float = 0.0
     simulated_balance: float = 100.0  # Persistent dry-run balance, starts at $100
     p2b_skips: int = 0
+    reset_token: str = Field(default="", description="Set to a unique value to force local file to yield to Supabase on next startup")
     pending_settlements: List[PendingSettlement] = Field(default_factory=list)
 
     @property
