@@ -264,7 +264,7 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font); min-he
       <table class="trades-table">
         <thead>
           <tr>
-            <th>Time</th><th>Market</th><th>Side</th><th>Entry</th><th>P&L</th><th>LLM</th><th>Outcome</th>
+            <th>Time</th><th>Market</th><th>Side</th><th>Entry</th><th>Size</th><th>P&L</th><th>LLM</th><th>Latency</th><th>Result</th>
           </tr>
         </thead>
         <tbody id="tradeBody"></tbody>
@@ -308,6 +308,22 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font); min-he
         <span id="blockingCount" style="font-size:10px;color:var(--red);font-family:var(--mono);font-weight:600"></span>
       </div>
       <div class="blocker-grid" id="blockerList"></div>
+    </div>
+
+    <!-- COMPLETE-SET EDGE -->
+    <div class="card" style="padding:14px 20px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+        <div class="card-title" style="margin-bottom:0">Complete-Set Edge</div>
+        <div id="csEdgeBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;background:var(--border);color:var(--text-2)">loading</div>
+      </div>
+      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
+        <span id="csEdgeVal" style="font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--text-1)">--</span>
+        <span style="font-size:12px;color:var(--text-3)">cs edge now</span>
+      </div>
+      <div style="display:flex;gap:16px;font-size:11px;color:var(--text-2)">
+        <span>24h avg: <strong id="csEdge24hAvg">--</strong></span>
+        <span>≥1%: <strong id="csEdge24hPct">--%</strong></span>
+      </div>
     </div>
 
     <!-- SHADOW SCOREBOARD -->
@@ -1351,6 +1367,24 @@ async function pollFast() {
   lastPollTime = Date.now();
   $('lastUpdate').textContent = 'just now';
   
+  // ── Complete-set edge (live, from latest signal row) ──
+    if (s.complete_set_edge != null) {
+      const cse = s.complete_set_edge;
+      const csEl = $('csEdgeVal');
+      const csBadge = $('csEdgeBadge');
+      if (csEl) {
+        const prevCse = parseFloat(csEl.textContent) || 0;
+        csEl.textContent = (cse * 100).toFixed(2) + '%';
+        csEl.style.color = cse >= 0.01 ? 'var(--green)' : cse > 0 ? 'var(--amber)' : 'var(--text-3)';
+        flashEl(csEl, cse, prevCse);
+      }
+      if (csBadge) {
+        if (cse >= 0.01) { csBadge.textContent = 'EDGE'; csBadge.style.background = 'var(--green-bg)'; csBadge.style.color = 'var(--green)'; }
+        else if (cse > 0) { csBadge.textContent = 'LOW'; csBadge.style.background = 'var(--amber-bg)'; csBadge.style.color = 'var(--amber)'; }
+        else { csBadge.textContent = 'NONE'; csBadge.style.background = 'var(--border)'; csBadge.style.color = 'var(--text-2)'; }
+      }
+    }
+
   // Draw the vol radar
   drawVolRadar();
 }
@@ -1421,13 +1455,23 @@ async function pollSlow() {
       <td>$${fmt(t.size_usdc, 0)}</td>
       <td class="${pnlClass}" style="font-weight:600">${fmtUsd(t.pnl)}</td>
       <td>${(function(v){if(!v||v==='--')return '--';const vl=v.toUpperCase();if(vl==='GO')return '<span class="llm-go">GO</span>';if(vl==='SKIP')return '<span class="llm-skip">SKIP</span>';if(vl==='ABORT')return '<span class="llm-abort">ABORT</span>';return v;})(t.llm_verdict)}</td>
+      <td>${(function(t){
+        if (t.total_latency_ms != null) {
+          const ms = Math.round(t.total_latency_ms);
+          const color = ms < 400 ? 'var(--green)' : ms < 1000 ? 'var(--amber)' : 'var(--red)';
+          return `<span style="font-size:10px;font-weight:600;color:${color}">${ms}ms</span>`;
+        }
+        return '<span style="color:var(--text-3)">--</span>';
+      })(t)}</td>
       <td>${pill}</td>
     </tr>
     <tr style="display:none">
-      <td colspan="8" style="padding:8px 12px;background:#FAFBFC;font-size:11px;color:var(--text-2);border-bottom:1px solid var(--border)">
+      <td colspan="9" style="padding:8px 12px;background:#FAFBFC;font-size:11px;color:var(--text-2);border-bottom:1px solid var(--border)">
         <strong>Provider:</strong> ${t.llm_provider||'--'} &nbsp;·&nbsp;
         <strong>Edge:</strong> ${t.terminal_edge != null ? (t.terminal_edge*100).toFixed(1)+'%' : '--'} &nbsp;·&nbsp;
-        <strong>Duration:</strong> ${t.duration_seconds != null ? t.duration_seconds.toFixed(0)+'s' : '--'}<br>
+        <strong>Duration:</strong> ${t.duration_seconds != null ? t.duration_seconds.toFixed(0)+'s' : '--'} &nbsp;·&nbsp;
+        <strong>LLM:</strong> ${t.llm_response_ms != null ? Math.round(t.llm_response_ms)+'ms' : '--'} &nbsp;·&nbsp;
+        <strong>Order:</strong> ${t.order_submit_ms != null ? Math.round(t.order_submit_ms)+'ms' : '--'}<br>
         <em style="color:var(--text-1);margin-top:4px;display:block">${t.llm_reason||'No reason recorded'}</em>
       </td>
     </tr>`;
@@ -1521,6 +1565,21 @@ async function pollSlow() {
   $('kSignals').textContent = fmtK(totalSigs);
   $('kFired').textContent = totalFired + ' fired';
   drawSignalChart();
+
+  // ── Complete-set edge 24h stats ──
+  try {
+    const since24h = new Date(Date.now() - 86400000).toISOString();
+    const csRows = await sq('signal_log', `select=complete_set_edge&${tagFilter()}ts=gte.${since24h}&complete_set_edge=not.is.null&limit=5000`);
+    if (csRows.length > 0) {
+      const vals = csRows.map(r => r.complete_set_edge).filter(v => v != null);
+      const avg = vals.reduce((a, b) => a + b, 0) / vals.length;
+      const pctAbove = (vals.filter(v => v >= 0.01).length / vals.length) * 100;
+      const avgEl = $('csEdge24hAvg');
+      const pctEl = $('csEdge24hPct');
+      if (avgEl) avgEl.textContent = (avg * 100).toFixed(3) + '%';
+      if (pctEl) pctEl.textContent = pctAbove.toFixed(1) + '%';
+    }
+  } catch(e) {}
 }
 
 // ═══════════════════════ HISTORICAL PRICE LOAD — Binance Klines ═══════════════════════
