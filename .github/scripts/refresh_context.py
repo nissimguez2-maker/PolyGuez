@@ -1,4 +1,13 @@
-"""Regenerate the LIVE STATE block in CONTEXT.md."""
+"""Regenerate the LIVE STATE block in CONTEXT.md.
+
+Run from the repo root by the refresh-context workflow. Queries Supabase via
+the PostgREST HTTP API (service key) and summarizes recent git history, then
+rewrites the block between <!-- LIVE_STATE_BEGIN --> / <!-- LIVE_STATE_END -->.
+
+Environment:
+  SUPABASE_URL            — full https://<project-ref>.supabase.co
+  SUPABASE_SERVICE_KEY    — service-role key (used read-only here)
+"""
 from __future__ import annotations
 
 import os
@@ -14,23 +23,27 @@ BEGIN_MARK = "<!-- LIVE_STATE_BEGIN -->"
 END_MARK = "<!-- LIVE_STATE_END -->"
 
 
-def sh(cmd):
+def sh(cmd: list[str]) -> str:
     return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.rstrip()
 
 
-def recent_commits():
+def recent_commits() -> str:
     try:
         since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
         out = sh([
-            "git", "log", f"--since={since}",
-            "--pretty=format:- `%h` %ad %s", "--date=short", "-n", "40",
+            "git", "log",
+            f"--since={since}",
+            "--pretty=format:- `%h` %ad %s",
+            "--date=short",
+            "-n", "40",
         ])
         return out or "_no commits in the last 7 days_"
     except subprocess.CalledProcessError as e:
         return f"_error reading git log: {e}_"
 
 
-def supabase_get(url, key, path, params=None):
+def supabase_get(url: str, key: str, path: str, params: dict | None = None) -> list | dict:
+    """GET from PostgREST. Returns parsed JSON."""
     headers = {
         "apikey": key,
         "Authorization": f"Bearer {key}",
@@ -41,51 +54,54 @@ def supabase_get(url, key, path, params=None):
     return resp.json()
 
 
-def trade_counts(url, key):
-    rows = supabase_get(url, key, "trade_log", {"select": "session_tag,pnl,outcome", "limit": "1000"})
-    by_tag = {}
-    for r in rows:
-        tag = r.get("session_tag") or "null"
-        d = by_tag.setdefault(tag, {"n": 0, "pnl": 0.0, "wins": 0, "losses": 0})
-        d["n"] += 1
-        d["pnl"] += float(r.get("pnl") or 0.0)
-        if r.get("outcome") == "win":
-            d["wins"] += 1
-        elif r.get("outcome") == "loss":
-            d["losses"] += 1
-    if not by_tag:
+def supabase_rpc(url: str, key: str, fn: str, body: dict | None = None) -> list | dict:
+    """POST to /rest/v1/rpc/<fn>. Bypasses PostgREST's ~1000-row cap by doing aggregation server-side."""
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+    }
+    resp = requests.post(f"{url}/rest/v1/rpc/{fn}", headers=headers, json=body or {}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def trade_counts(url: str, key: str) -> str:
+    try:
+        rows = supabase_rpc(url, key, "rpc_trade_counts")
+    except Exception as e:
+        return f"_error calling rpc_trade_counts: {e}_"
+    if not rows:
         return "_no trades yet_"
+    rows = sorted(rows, key=lambda r: -(r.get("trades") or 0))
     lines = ["| session_tag | trades | wins | losses | total PnL (USDC) |", "|---|---|---|---|---|"]
-    for tag in sorted(by_tag.keys(), key=lambda t: -by_tag[t]["n"]):
-        d = by_tag[tag]
-        lines.append(f"| `{tag}` | {d['n']} | {d['wins']} | {d['losses']} | {d['pnl']:+.2f} |")
-    return "\n".join(lines)
-
-
-def shadow_counts(url, key):
-    rows = supabase_get(url, key, "shadow_trade_log", {"select": "session_tag,settled,outcome,pnl", "limit": "100000"})
-    by_tag = {}
     for r in rows:
-        tag = r.get("session_tag") or "null"
-        d = by_tag.setdefault(tag, {"n": 0, "settled": 0, "wins": 0, "losses": 0, "pnl": 0.0})
-        d["n"] += 1
-        if r.get("settled"):
-            d["settled"] += 1
-            if r.get("outcome") == "win":
-                d["wins"] += 1
-            elif r.get("outcome") == "loss":
-                d["losses"] += 1
-            d["pnl"] += float(r.get("pnl") or 0.0)
-    if not by_tag:
-        return "_no shadow trades yet_"
-    lines = ["| session_tag | total | settled | wins | losses | settled PnL |", "|---|---|---|---|---|---|"]
-    for tag in sorted(by_tag.keys(), key=lambda t: -by_tag[t]["n"]):
-        d = by_tag[tag]
-        lines.append(f"| `{tag}` | {d['n']} | {d['settled']} | {d['wins']} | {d['losses']} | {d['pnl']:+.2f} |")
+        lines.append(
+            f"| `{r.get('session_tag')}` | {r.get('trades')} | {r.get('wins')} | "
+            f"{r.get('losses')} | {float(r.get('total_pnl') or 0.0):+.2f} |"
+        )
     return "\n".join(lines)
 
 
-def rolling_stats(url, key):
+def shadow_counts(url: str, key: str) -> str:
+    try:
+        rows = supabase_rpc(url, key, "rpc_shadow_counts")
+    except Exception as e:
+        return f"_error calling rpc_shadow_counts: {e}_"
+    if not rows:
+        return "_no shadow trades yet_"
+    rows = sorted(rows, key=lambda r: -(r.get("total") or 0))
+    lines = ["| session_tag | total | settled | wins | losses | settled PnL |", "|---|---|---|---|---|---|"]
+    for r in rows:
+        lines.append(
+            f"| `{r.get('session_tag')}` | {r.get('total')} | {r.get('settled')} | "
+            f"{r.get('wins')} | {r.get('losses')} | {float(r.get('settled_pnl') or 0.0):+.2f} |"
+        )
+    return "\n".join(lines)
+
+
+def rolling_stats(url: str, key: str) -> str:
     rows = supabase_get(url, key, "rolling_stats", {"select": "id,data,updated_at", "limit": "5"})
     if not rows:
         return "_rolling_stats empty_"
@@ -102,7 +118,7 @@ def rolling_stats(url, key):
     return "\n".join(lines)
 
 
-def active_session_tag(url, key):
+def active_session_tag(url: str, key: str) -> str:
     try:
         rows = supabase_get(url, key, "session_tag_current", {"select": "tag", "limit": "1"})
         if rows and isinstance(rows, list) and rows[0].get("tag"):
@@ -112,7 +128,7 @@ def active_session_tag(url, key):
         return f"_error: {e}_"
 
 
-def build_block(url, key):
+def build_block(url: str, key: str) -> str:
     now = datetime.now(timezone.utc).isoformat(timespec="seconds")
     try:
         last_sha = sh(["git", "rev-parse", "--short", "HEAD"])
@@ -155,7 +171,7 @@ def build_block(url, key):
     return "\n".join(parts)
 
 
-def main():
+def main() -> int:
     url = os.environ.get("SUPABASE_URL", "").rstrip("/")
     key = os.environ.get("SUPABASE_SERVICE_KEY", "")
     if not url or not key:
