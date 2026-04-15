@@ -105,6 +105,7 @@ class PolyGuezRunner:
         self._clob_ws_reconnect_count = 0
         self._clob_ws_ping_task = None
         self._clob_http_session = None
+        self._heartbeat_task = None
 
     # -- Public API for dashboard / CLI ------------------------------------
 
@@ -231,6 +232,11 @@ class PolyGuezRunner:
             try: await self._provider_cache_task
             except asyncio.CancelledError: pass
 
+        if self._heartbeat_task:
+            self._heartbeat_task.cancel()
+            try: await self._heartbeat_task
+            except asyncio.CancelledError: pass
+
         # Stop CLOB WS
         if self._clob_ws_ping_task:
             self._clob_ws_ping_task.cancel()
@@ -278,6 +284,26 @@ class PolyGuezRunner:
                 log_event(logger, "provider_cache_error",
                     f"Provider cache refresh failed: {exc}", level=30)
             await asyncio.sleep(30)
+
+    async def _heartbeat_loop(self):
+        """Send CLOB heartbeat every 5s to keep maker orders alive.
+        Polymarket cancels all open orders after 10s without a heartbeat."""
+        heartbeat_id = ""
+        while not self._killed:
+            try:
+                if self._polymarket and self._polymarket.client:
+                    loop = asyncio.get_event_loop()
+                    resp = await loop.run_in_executor(
+                        None,
+                        self._polymarket.client.post_heartbeat,
+                        heartbeat_id,
+                    )
+                    if isinstance(resp, dict):
+                        heartbeat_id = resp.get("heartbeat_id", heartbeat_id)
+            except Exception as e:
+                log_event(logger, "heartbeat_error",
+                    f"Heartbeat failed: {e}", level=30)
+            await asyncio.sleep(5)
 
     # -- Main loop ---------------------------------------------------------
 
@@ -368,6 +394,10 @@ class PolyGuezRunner:
             log_event(logger, "clob_ws_task_created", "[CLOB/WS] Task created")
         else:
             log_event(logger, "clob_ws_disabled", "[CLOB/WS] Disabled — using REST polling")
+
+        # Start heartbeat loop to keep maker orders alive
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        log_event(logger, "heartbeat_started", "Heartbeat loop started (5s interval)")
 
         # CLOB REST session
         self._clob_http_session = aiohttp.ClientSession(
