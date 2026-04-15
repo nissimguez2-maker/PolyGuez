@@ -9,6 +9,8 @@ from typing import Optional
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from starlette.middleware.base import BaseHTTPMiddleware
 
 load_dotenv()
 
@@ -17,6 +19,7 @@ app = FastAPI(title="PolyGuez Dashboard")
 # Shared runner reference — set by the CLI entrypoint
 _runner = None
 _FRONTEND_PATH = Path(__file__).parent.parent / "frontend" / "dashboard.html"
+_STATIC_PATH = Path(__file__).parent.parent / "frontend"
 
 
 def set_runner(runner):
@@ -36,6 +39,25 @@ def _check_auth(secret: str = ""):
     dashboard_secret = _get_dashboard_secret()
     if dashboard_secret and secret != dashboard_secret:
         raise HTTPException(status_code=403, detail="Invalid dashboard secret")
+
+
+# -- Static file auth middleware -------------------------------------------
+class StaticAuthMiddleware(BaseHTTPMiddleware):
+    """Protect /static/ routes with the same dashboard secret."""
+    async def dispatch(self, request, call_next):
+        if request.url.path.startswith('/static/'):
+            secret = _get_dashboard_secret()
+            if secret:
+                qs_ok = request.query_params.get('secret') == secret
+                ref_ok = secret in (request.headers.get('referer') or '')
+                cookie_ok = request.cookies.get('dboard_secret') == secret
+                if not (qs_ok or ref_ok or cookie_ok):
+                    from fastapi.responses import Response as _R
+                    return _R('Forbidden', status_code=403)
+        return await call_next(request)
+
+app.add_middleware(StaticAuthMiddleware)
+app.mount('/static', StaticFiles(directory=str(_STATIC_PATH)), name='static')
 
 
 # -- Health check (Railway / load balancer) --------------------------------
