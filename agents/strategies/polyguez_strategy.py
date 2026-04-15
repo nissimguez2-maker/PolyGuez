@@ -568,6 +568,15 @@ def save_rolling_stats(stats):
             stats_data = stats.model_dump()
             written_at = datetime.now(timezone.utc).isoformat()
             stats_data["updated_at"] = written_at
+            # Surface computed @property values into the persisted blob so
+            # downstream readers (refresh_context.py, dashboard, any ad-hoc
+            # SQL) see real numbers instead of null. RollingStats.model_dump()
+            # skips @property by design; we inject them explicitly.
+            stats_data["trade_count"] = stats.total_trades
+            stats_data["total_pnl"] = stats.total_pnl
+            stats_data["wins"] = stats.total_wins
+            stats_data["losses"] = stats.total_losses
+            stats_data["win_rate"] = stats.win_rate
             client.table("rolling_stats").upsert({
                 "id": "singleton",
                 "data": stats_data,
