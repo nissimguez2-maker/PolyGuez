@@ -259,6 +259,10 @@ def calculate_max_capital_at_risk(usdc_balance, config):
 
 
 def check_daily_loss_limit(rolling_stats, config, usdc_balance):
+    # In dry-run / paper mode the daily loss limit is meaningless — it's a sandbox.
+    # Only enforce in live mode where real capital is at risk.
+    if getattr(config, "mode", "dry-run") != "live":
+        return True
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if rolling_stats.daily_pnl_reset_utc != today:
         return True
@@ -277,6 +281,9 @@ def get_daily_loss_size_multiplier(rolling_stats, config, usdc_balance):
       - 75% → 100% of limit: reduce to 25% sizing
       - >= 100% of limit: hard stop (0.0) — check_daily_loss_limit also returns False here
     """
+    # In dry-run / paper mode: always full size, no daily loss reduction.
+    if getattr(config, "mode", "dry-run") != "live":
+        return 1.0
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     if rolling_stats.daily_pnl_reset_utc != today:
         return 1.0  # New day, full size
