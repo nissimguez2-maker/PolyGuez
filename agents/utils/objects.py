@@ -244,7 +244,7 @@ class PolyGuezConfig(BaseModel):
     max_open_positions: int = Field(default=1, ge=1, le=5)
     velocity_threshold: float = Field(default=0.005, ge=0.001, le=1.0)
     min_edge: float = Field(default=0.03, ge=0.01, le=0.5)
-    max_spread: float = Field(default=0.10, ge=0.01, le=0.5)
+    max_spread: float = Field(default=0.03, ge=0.01, le=0.5)
     min_oracle_gap: float = Field(default=0.0, ge=0.0, description="Binance-Chainlink gap threshold. 0.0 = disabled (strategy uses terminal probability edge instead)")
 
     # FIX 1: Split reversal_threshold into two fields
@@ -303,14 +303,14 @@ class PolyGuezConfig(BaseModel):
     min_terminal_edge: float = Field(default=0.03, ge=0.01, le=0.5, description="Min edge at terminal probability for entry")
     conviction_min_delta: float = Field(default=0.5, ge=0.0, le=200.0, description="Min $ delta between Chainlink and P2B for conviction")
     conviction_min_delta_strict: float = Field(default=2.0, ge=0.0, le=500.0, description="Strict delta threshold for fast-moving markets")
-    min_clob_consensus: float = Field(default=0.15, ge=0.05, le=0.90, description="Min CLOB price on our side to confirm market consensus")
+    min_clob_consensus: float = Field(default=0.30, ge=0.05, le=0.90, description="Min CLOB price on our side to confirm market consensus")
 
     # V4 filters from audit
     chainlink_stale_max_age: float = Field(default=30.0, ge=5.0, le=120.0, description="Max Chainlink age (seconds) before blocking near expiry")
     chainlink_stale_expiry_window: float = Field(default=60.0, ge=30.0, le=180.0, description="Seconds remaining threshold for stale Chainlink check")
     blocked_hours_utc: List[int] = Field(default=[0, 3], description="UTC hours to avoid trading (low-edge periods)")
     min_entry_token_price: float = Field(default=0.35, ge=0.01, le=0.90, description="Min token price for entry (sweet spot filter)")
-    max_entry_token_price: float = Field(default=0.45, ge=0.10, le=0.95, description="Max token price for entry (sweet spot filter)")
+    max_entry_token_price: float = Field(default=0.50, ge=0.10, le=0.95, description="Max token price for entry (sweet spot filter)")
     direction_mode: str = Field(default="both", description="Trade direction: 'both', 'down', or 'up'")
     edge_scaled_sizing: bool = Field(default=False, description="When True, use fractional Kelly sizing interpolated between normal and strong bet sizes based on edge")
 
