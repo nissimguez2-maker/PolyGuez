@@ -594,10 +594,9 @@ def load_rolling_stats():
     except (json.JSONDecodeError, Exception) as exc:
         logger.warning(f"[STATS] Local file corrupted, falling back to Supabase: {exc}")
 
-    # Cross-check: prefer Supabase if it was updated more recently.
-    # NOTE: total_trades is a computed property over the capped trades list
-    # (max 500 entries), so it can decrease after archival. We use the
-    # updated_at timestamp from the Supabase data payload instead.
+    # Cross-check: prefer Supabase if it carries a reset_token the local file doesn't know about.
+    # This is the primary mechanism for deliberate clean-era resets.
+    # We also prefer Supabase if its updated_at is strictly newer than the local file's.
     if file_stats is not None:
         try:
             from agents.utils.supabase_logger import _client
@@ -607,12 +606,19 @@ def load_rolling_stats():
                 if resp.data and len(resp.data) > 0:
                     supa_data = resp.data[0]["data"]
                     supa_updated = supa_data.get("updated_at", "")
+                    supa_reset_token = supa_data.get("reset_token", "")
+                    file_reset_token = getattr(file_stats, "reset_token", "") or ""
                     supa_stats = RollingStats.model_validate(supa_data)
-                    # Prefer Supabase if it has a newer updated_at timestamp
-                    if supa_updated and supa_stats.total_trades > file_stats.total_trades:
-                        logger.info(f"[STATS] Supabase is newer (updated_at={supa_updated}, "
-                            f"trades: {supa_stats.total_trades} > {file_stats.total_trades}) — using Supabase")
+                    # PRIORITY 1: Supabase has a reset_token the local file doesn't — deliberate reset
+                    if supa_reset_token and supa_reset_token != file_reset_token:
+                        logger.info(f"[STATS] Supabase reset_token mismatch ({supa_reset_token}) — using Supabase clean state")
                         return supa_stats
+                    # PRIORITY 2: Supabase updated_at is newer (handles trade-count-decreasing archival)
+                    if supa_updated and supa_updated > getattr(file_stats, "_loaded_at", ""):
+                        if supa_stats.total_trades > file_stats.total_trades:
+                            logger.info(f"[STATS] Supabase is newer ({supa_updated}, "
+                                f"trades: {supa_stats.total_trades} > {file_stats.total_trades}) — using Supabase")
+                            return supa_stats
         except Exception as exc:
             logger.warning(f"[STATS] Supabase cross-check failed: {exc}")
         logger.info("[STATS] Loaded from file")
