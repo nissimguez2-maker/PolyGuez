@@ -570,11 +570,47 @@ class PolyGuezRunner:
                 # Market already expired, brief wait for settlement data
                 await asyncio.sleep(3)
 
+        # ── BTC-feed-based shadow settlement (authoritative for BTC up/down markets) ──
+        # Runs every cycle at market close, regardless of whether we held a real
+        # position. Uses the same Chainlink feed that drives entry decisions, so
+        # settlement is independent of Polymarket resolution timing (which lags
+        # and was the root cause of 2961 V5 shadow trades sitting unsettled).
+        if self._price_to_beat is not None and self._price_to_beat > 0:
+            try:
+                cl_close = None
+                cl_close_offset = None
+                if expiry_dt is not None:
+                    expiry_ts = expiry_dt.timestamp()
+                    cl_close, _cl_ts, cl_close_offset = self._btc_feed.get_chainlink_price_at(expiry_ts)
+                if cl_close is None or cl_close <= 0:
+                    # Fall back to most recent chainlink tick (we've just waited past expiry)
+                    fallback_price, _age = self._btc_feed.get_chainlink_price()
+                    if fallback_price and fallback_price > 0:
+                        cl_close = fallback_price
+                        cl_close_offset = None
+                if cl_close and cl_close > 0:
+                    settle_shadow_trades(
+                        market_id,
+                        btc_close_price=cl_close,
+                        strike=self._price_to_beat,
+                    )
+                    offset_str = f"offset={cl_close_offset:.1f}s" if cl_close_offset is not None else "offset=live"
+                    log_event(logger, "shadow_settled_btc_feed",
+                        f"[SHADOW] BTC-feed settlement fired: close=${cl_close:.2f} strike=${self._price_to_beat:.2f} ({offset_str})")
+                else:
+                    log_event(logger, "shadow_settle_btc_unavailable",
+                        "[SHADOW] BTC feed unavailable at expiry — will rely on Polymarket fallback",
+                        level=30)
+            except Exception as exc:
+                log_event(logger, "shadow_settle_btc_error", f"BTC-feed shadow settlement failed: {exc}", level=30)
+
         # Check settlement
         if self._position:
             await self._settle(market_id)
         else:
-            # No real position — still settle any shadow trades logged for this market
+            # Polymarket-resolution fallback: covers cases where BTC feed was
+            # unavailable above. If BTC-feed settlement already ran, this finds
+            # zero unsettled shadows and is a no-op.
             try:
                 settled_mkt = await settle_with_retry(self._discovery, market_id, self.config)
                 if settled_mkt and settled_mkt.get("closed"):
@@ -587,7 +623,7 @@ class PolyGuezRunner:
                     if isinstance(outcome_prices_raw, list) and len(outcome_prices_raw) >= 2:
                         settle_shadow_trades(market_id, outcome_prices_raw)
                         log_event(logger, "shadow_settled_no_position",
-                            f"[SHADOW] Settled shadow trades for market {market_id} (no real position)")
+                            f"[SHADOW] Polymarket-fallback settlement for market {market_id} (no real position)")
             except Exception as exc:
                 log_event(logger, "shadow_settle_error", f"Shadow settlement failed: {exc}")
 
