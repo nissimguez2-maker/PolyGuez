@@ -222,11 +222,27 @@ def evaluate_entry_signal(
 
 
 def calculate_position_size(usdc_balance, config, edge=0.0, depth=0.0):
-    is_strong = edge >= config.strong_edge_threshold and depth >= config.strong_depth_threshold
-    if usdc_balance < config.low_balance_threshold:
-        raw = config.bet_size_low_balance_strong if is_strong else config.bet_size_low_balance_normal
+    # Edge-scaled sizing: fractional Kelly interpolation between normal and strong
+    if getattr(config, 'edge_scaled_sizing', False):
+        if usdc_balance < config.low_balance_threshold:
+            base = config.bet_size_low_balance_normal
+            top = config.bet_size_low_balance_strong
+        else:
+            base = config.bet_size_normal
+            top = config.bet_size_strong
+        edge_range = config.strong_edge_threshold - config.min_edge
+        if edge_range > 0:
+            frac = max(0.0, min(1.0, (edge - config.min_edge) / edge_range))
+        else:
+            frac = 1.0 if edge >= config.strong_edge_threshold else 0.0
+        raw = base + (top - base) * frac
     else:
-        raw = config.bet_size_strong if is_strong else config.bet_size_normal
+        # Original binary tier logic
+        is_strong = edge >= config.strong_edge_threshold and depth >= config.strong_depth_threshold
+        if usdc_balance < config.low_balance_threshold:
+            raw = config.bet_size_low_balance_strong if is_strong else config.bet_size_low_balance_normal
+        else:
+            raw = config.bet_size_strong if is_strong else config.bet_size_normal
     # Cap individual bet by max_capital_fraction
     max_bet = usdc_balance * getattr(config, 'max_capital_fraction', 0.20)
     return min(raw, max_bet) if max_bet > 0 else raw

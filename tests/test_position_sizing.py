@@ -91,5 +91,58 @@ class TestPositionSizing(unittest.TestCase):
         self.assertEqual(size, 3.0)
 
 
+class TestEdgeScaledSizing(unittest.TestCase):
+    """Tests for edge_scaled_sizing=True fractional Kelly interpolation."""
+
+    def test_edge_at_min_returns_normal(self):
+        """edge == min_edge → normal bet size."""
+        config = _default_config(edge_scaled_sizing=True, min_edge=0.03, strong_edge_threshold=0.25)
+        size = calculate_position_size(100.0, config, edge=0.03, depth=50000.0)
+        self.assertAlmostEqual(size, config.bet_size_normal, places=2)
+
+    def test_edge_at_strong_returns_strong(self):
+        """edge == strong_edge_threshold → strong bet size."""
+        config = _default_config(edge_scaled_sizing=True, min_edge=0.03, strong_edge_threshold=0.25)
+        size = calculate_position_size(100.0, config, edge=0.25, depth=50000.0)
+        self.assertAlmostEqual(size, config.bet_size_strong, places=2)
+
+    def test_edge_halfway_returns_midpoint(self):
+        """edge halfway between min_edge and strong_edge_threshold → linear interp."""
+        config = _default_config(
+            edge_scaled_sizing=True, min_edge=0.03, strong_edge_threshold=0.25,
+            bet_size_normal=8.0, bet_size_strong=10.0,
+        )
+        mid_edge = (0.03 + 0.25) / 2  # 0.14
+        size = calculate_position_size(100.0, config, edge=mid_edge, depth=50000.0)
+        expected = 8.0 + (10.0 - 8.0) * 0.5  # 9.0
+        self.assertAlmostEqual(size, expected, places=2)
+
+    def test_edge_below_min_clamps_to_normal(self):
+        """edge below min_edge → clamp to normal (frac=0)."""
+        config = _default_config(edge_scaled_sizing=True, min_edge=0.03, strong_edge_threshold=0.25)
+        size = calculate_position_size(100.0, config, edge=0.01, depth=50000.0)
+        self.assertAlmostEqual(size, config.bet_size_normal, places=2)
+
+    def test_edge_above_strong_clamps_to_strong(self):
+        """edge above strong_edge_threshold → clamp to strong (frac=1)."""
+        config = _default_config(edge_scaled_sizing=True, min_edge=0.03, strong_edge_threshold=0.25)
+        size = calculate_position_size(100.0, config, edge=0.50, depth=50000.0)
+        self.assertAlmostEqual(size, config.bet_size_strong, places=2)
+
+    def test_still_capped_by_max_capital_fraction(self):
+        """Edge-scaled size still respects max_capital_fraction cap."""
+        config = _default_config(edge_scaled_sizing=True, bet_size_strong=50.0)
+        size = calculate_position_size(100.0, config, edge=0.30, depth=50000.0)
+        # max_bet = 100 * 0.20 = 20
+        self.assertEqual(size, 20.0)
+
+    def test_default_flag_false_preserves_binary(self):
+        """Default edge_scaled_sizing=False uses original binary logic."""
+        config = _default_config()
+        self.assertFalse(config.edge_scaled_sizing)
+        size = calculate_position_size(100.0, config, edge=0.10, depth=5000.0)
+        self.assertEqual(size, config.bet_size_normal)
+
+
 if __name__ == "__main__":
     unittest.main()

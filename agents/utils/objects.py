@@ -309,6 +309,7 @@ class PolyGuezConfig(BaseModel):
     min_entry_token_price: float = Field(default=0.25, ge=0.01, le=0.90, description="Min token price for entry (sweet spot filter)")
     max_entry_token_price: float = Field(default=0.45, ge=0.10, le=0.95, description="Max token price for entry (sweet spot filter)")
     direction_mode: str = Field(default="both", description="Trade direction: 'both', 'down', or 'up'")
+    edge_scaled_sizing: bool = Field(default=False, description="When True, use fractional Kelly sizing interpolated between normal and strong bet sizes based on edge")
 
     dashboard_secret: str = Field(default_factory=lambda: __import__('secrets').token_urlsafe(32), description="Dashboard auth secret — auto-generated if not set via env")
     session_tag: str = Field(default_factory=lambda: os.environ.get("SESSION_TAG", "v1.1"), description="Version tag — set SESSION_TAG env var in Railway to start a new session without code changes")
