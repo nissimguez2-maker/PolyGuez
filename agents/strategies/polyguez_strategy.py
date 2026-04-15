@@ -253,7 +253,6 @@ def calculate_max_capital_at_risk(usdc_balance, config):
     fraction = getattr(config, 'max_capital_fraction', 0.20)
     computed = min(usdc_balance * fraction, config.bet_size_strong * 3)
     result = max(computed, config.bet_size_strong)
-    log_event(logger, "max_capital_computed", f"max_capital_at_risk=${result:.2f} (balance=${usdc_balance:.2f}, fraction={fraction})")
     return result
 
 

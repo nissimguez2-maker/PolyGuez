@@ -292,19 +292,27 @@ class PolyGuezRunner:
 
     async def _heartbeat_loop(self):
         """Send CLOB heartbeat every 5s to keep maker orders alive.
-        Polymarket cancels all open orders after 10s without a heartbeat."""
+        Polymarket cancels all open orders after 10s without a heartbeat.
+        Degrades gracefully if post_heartbeat is not available in the installed client version."""
         heartbeat_id = ""
+        _heartbeat_supported = None  # None = unknown, True/False after first check
         while not self._killed:
             try:
                 if self._polymarket and self._polymarket.client:
-                    loop = asyncio.get_event_loop()
-                    resp = await loop.run_in_executor(
-                        None,
-                        self._polymarket.client.post_heartbeat,
-                        heartbeat_id,
-                    )
-                    if isinstance(resp, dict):
-                        heartbeat_id = resp.get("heartbeat_id", heartbeat_id)
+                    if _heartbeat_supported is None:
+                        _heartbeat_supported = hasattr(self._polymarket.client, 'post_heartbeat')
+                        if not _heartbeat_supported:
+                            log_event(logger, "heartbeat_warn",
+                                "post_heartbeat not available in this py-clob-client version — heartbeat disabled. Upgrade to v0.22+ to enable.", level=30)
+                    if _heartbeat_supported:
+                        loop = asyncio.get_event_loop()
+                        resp = await loop.run_in_executor(
+                            None,
+                            self._polymarket.client.post_heartbeat,
+                            heartbeat_id,
+                        )
+                        if isinstance(resp, dict):
+                            heartbeat_id = resp.get("heartbeat_id", heartbeat_id)
             except Exception as e:
                 log_event(logger, "heartbeat_error",
                     f"Heartbeat failed: {e}", level=30)
