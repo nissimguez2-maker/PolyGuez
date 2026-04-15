@@ -151,135 +151,182 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font); min-he
 </head>
 <body>
 
-<!-- ═══ TOPBAR ═══ -->
+<!-- STATUS BAR -->
 <div class="topbar">
-  <div class="logo">PolyGuez</div>
-  <span class="conn-dot off" id="wsDot" title="Binance WS"></span>
-  <div class="topbar-price">
-    <span class="label">Binance</span>
-    <span class="val" id="btcPrice">--</span>
+  <div class="logo">POLYGUEZ</div>
+  <div class="topbar-center">
+    <div class="topbar-price">
+      <span class="label">BTC</span><span class="val" id="btcPrice">--</span>
+    </div>
+    <div class="topbar-price">
+      <span class="label">CL</span><span class="val" id="clPrice">--</span>
+    </div>
+    <div class="topbar-delta" id="deltaBox">Δ --</div>
   </div>
-  <div class="topbar-price">
-    <span class="label">Chainlink <span id="clAge" style="font-size:10px;color:var(--text-3)"></span></span>
-    <span class="val" id="clPrice">--</span>
-  </div>
-  <div id="deltaBox" class="topbar-delta" style="background:var(--amber-bg);color:var(--amber)">Δ --</div>
   <div class="topbar-right">
-    <span id="sigAge" style="font-size:10px;color:var(--text-3)"></span>
+    <span class="conn-dot off" id="wsDot" title="Binance WS"></span>
+    <span class="conn-dot off" id="botDot" title="Bot WS"></span>
     <span class="badge badge-dry" id="modeBadge">DRY-RUN</span>
-    <span class="badge" id="botStatus" style="padding:3px 10px;border-radius:6px;font-size:11px;font-weight:600;border:1px solid transparent">● scanning</span>
+    <span class="section-tag" id="sessionTagEl"></span>
+    <span class="section-tag" id="lastUpdate">--</span>
   </div>
 </div>
-
-<!-- ═══ MAIN ═══ -->
-<div class="shell">
 
 <!-- KPI ROW -->
-<div class="kpi-row" style="grid-template-columns:repeat(4,1fr);">
-  <div class="kpi"><div class="label">Balance</div><div class="val" id="kBalance">--</div><div class="sub">simulated USDC</div></div>
-  <div class="kpi"><div class="label">Total P&L</div><div class="val" id="kTotalPnl">--</div><div class="sub" id="kTotalTrades">-- trades</div></div>
-  <div class="kpi"><div class="label">Win Rate</div><div class="val" id="kWinRate">--</div><div class="sub" id="kWL">--W / --L</div></div>
-  <div class="kpi"><div class="label">Markets Scanned</div><div class="val" id="kScanned">--</div><div class="sub" id="kScannedSub">this session</div></div>
-</div>
-<!-- Hidden elements for JS compatibility -->
-<div style="display:none">
-  <span id="kShadowWR"></span><span id="kShadowWL"></span>
-  <span id="kShadowPnl"></span><span id="kShadowCount"></span>
-  <span id="kSignals"></span><span id="kFired"></span>
-  <span id="kEdge"></span><span id="kProb"></span>
+<div style="padding:16px 16px 0">
+  <div class="kpi-row">
+    <div class="kpi">
+      <div class="label">Balance</div>
+      <div class="val" id="kBalance">--</div>
+      <div class="sub" id="balSub">simulated USDC</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Total P&L</div>
+      <div class="val" id="kTotalPnl">--</div>
+      <div class="sub" id="kTotalTrades">-- trades</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Win Rate</div>
+      <div class="val" id="kWinRate">--</div>
+      <div class="sub" id="kWL">-- W / -- L</div>
+    </div>
+    <div class="kpi">
+      <div class="label">Shadow W/R</div>
+      <div class="val" id="kShadowWR">--</div>
+      <div class="sub" id="kShadowWL">-- settled</div>
+    </div>
+  </div>
 </div>
 
-<!-- GRID: LEFT + RIGHT -->
-<div class="grid-main">
+<!-- MAIN TWO-COLUMN GRID -->
+<div class="main">
 
-  <!-- LEFT COL -->
-  <div class="left-col">
+  <!-- LEFT COLUMN -->
+  <div class="col-left">
+
     <!-- BTC PRICE CHART -->
     <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <div class="card-title" style="margin-bottom:0" id="btcChartTitle">BTC Price — 5 min <span id="chartLive" style="color:var(--green);margin-left:6px">●</span></div>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="card-title" style="margin-bottom:0" id="btcChartTitle">BTC Price <span id="chartLive" style="color:var(--green);margin-left:4px;font-size:9px">●</span></div>
         <div class="chart-timerange">
-          <button class="tr-btn" data-range="market">Mkt</button>
-          <button class="tr-btn" data-range="60">1m</button>
-          <button class="tr-btn active" data-range="300">5m</button>
-          <button class="tr-btn" data-range="21600">6h</button>
-          <button class="tr-btn" data-range="86400">24h</button>
+          <button class="chart-btn active" id="btn5m"  onclick="setRange('5m')">5m</button>
+          <button class="chart-btn"        id="btn15m" onclick="setRange('15m')">15m</button>
+          <button class="chart-btn"        id="btn1h"  onclick="setRange('1h')">1h</button>
         </div>
       </div>
       <div class="chart-wrap"><canvas id="priceCanvas"></canvas></div>
       <div class="chart-legend">
-        <span class="chart-legend-item"><span class="chart-legend-line" style="background:#2563EB"></span> Binance</span>
-        <span class="chart-legend-item"><span class="chart-legend-line" style="background:#0891B2"></span> Chainlink</span>
-        <span class="chart-legend-item"><span class="chart-legend-dash" style="border-color:#94A3B8"></span> Strike</span>
+        <span class="chart-legend-item"><span class="chart-legend-line" style="background:var(--blue)"></span>Binance</span>
+        <span class="chart-legend-item"><span class="chart-legend-line" style="background:var(--green)"></span>Chainlink</span>
+        <span class="chart-legend-item"><span class="chart-legend-dash" style="border-color:var(--muted-fg)"></span>Strike</span>
       </div>
-      <div class="yn-strip">
-        <div class="yn-badge yn-yes" id="ynYes"><span class="yn-label">YES</span> <span id="ynYesVal">--</span></div>
-        <div class="yn-badge yn-no" id="ynNo"><span class="yn-label">NO</span> <span id="ynNoVal">--</span></div>
+      <div class="yn-row">
+        <div class="yn-badge yn-yes" id="ynYes"><span class="yn-label">YES</span><span id="ynYesVal">--</span></div>
+        <div class="yn-badge yn-no"  id="ynNo"><span class="yn-label">NO</span><span id="ynNoVal">--</span></div>
         <span class="yn-spread" id="ynSpread"></span>
-        <span class="yn-side" id="ynSide"></span>
-      </div>
-    </div>
-
-    <!-- SIGNAL METERS -->
-    <!-- VOL & EDGE RADAR -->
-    <div class="card" style="padding:16px 24px">
-      <div class="card-title">Vol & Edge</div>
-      <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px;">
-        <div class="chart-wrap" style="height:180px"><canvas id="volCanvas"></canvas></div>
-        <div id="radarStats" style="font-size:12px; display:flex; flex-direction:column; justify-content:center; gap:6px;"></div>
+        <span class="yn-side"   id="ynSide"></span>
       </div>
     </div>
 
     <!-- RECENT TRADES -->
     <div class="card">
       <div class="card-title">Recent Trades</div>
-      <table class="tbl">
-        <thead><tr><th>Time</th><th>Market</th><th>Side</th><th>Entry</th><th>Size</th><th>P&L</th><th>LLM</th><th>Result</th></tr></thead>
+      <table class="trades-table">
+        <thead>
+          <tr>
+            <th>Time</th><th>Market</th><th>Side</th><th>Entry</th><th>P&L</th><th>LLM</th><th>Outcome</th>
+          </tr>
+        </thead>
         <tbody id="tradeBody"></tbody>
       </table>
     </div>
+
+    <!-- SIGNAL ACTIVITY -->
+    <div class="card">
+      <div class="card-title">Signal Activity (24h)</div>
+      <div class="chart-wrap" style="height:140px"><canvas id="signalCanvas"></canvas></div>
+    </div>
+
   </div>
 
-  <!-- RIGHT COL -->
-  <div class="right-col">
+  <!-- RIGHT COLUMN -->
+  <div class="col-right">
+
+    <!-- LIVE SIGNAL -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="card-title" style="margin-bottom:0">Live Signal</div>
+        <span class="sig-fresh-dot" id="sigFreshDot"></span>
+      </div>
+      <div style="font-size:11px;color:var(--muted-fg);margin-bottom:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="currentMarketQ">Waiting for market...</div>
+      <div class="live-direction" id="liveDirection" style="color:var(--muted-fg);border-color:var(--border);background:var(--muted)">-- --</div>
+      <div class="elapsed-bar-wrap"><div class="elapsed-bar" id="elapsedBar" style="width:0%;background:var(--green)"></div></div>
+      <div class="signal-grid">
+        <div class="signal-metric"><div class="sm-label">Edge</div><div class="sm-val" id="kEdge">--</div></div>
+        <div class="signal-metric"><div class="sm-label">Required</div><div class="sm-val" id="kEdgeRequired">--</div></div>
+        <div class="signal-metric"><div class="sm-label">Term. Prob</div><div class="sm-val" id="kProb">--</div></div>
+        <div class="signal-metric"><div class="sm-label">Strike Δ</div><div class="sm-val" id="kDelta">--</div></div>
+        <div class="signal-metric"><div class="sm-label">CL Age</div><div class="sm-val" id="kClAge">--</div></div>
+        <div class="signal-metric"><div class="sm-label">Depth</div><div class="sm-val" id="kDepth">--</div></div>
+      </div>
+    </div>
+
+    <!-- BLOCKING CONDITIONS -->
+    <div class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+        <div class="card-title" style="margin-bottom:0">Conditions</div>
+        <span id="blockingCount" style="font-size:10px;color:var(--red);font-family:var(--mono);font-weight:600"></span>
+      </div>
+      <div class="blocker-grid" id="blockerList"></div>
+    </div>
+
     <!-- SHADOW SCOREBOARD -->
     <div class="card">
-      <div class="card-title">Shadow Scoreboard</div>
+      <div class="card-title">Shadow Trades</div>
       <div class="shadow-grid">
         <div class="shadow-stat"><div class="sv" id="shTotal">--</div><div class="sl">Total</div></div>
         <div class="shadow-stat"><div class="sv" id="shSettled">--</div><div class="sl">Settled</div></div>
         <div class="shadow-stat"><div class="sv positive" id="shWins">--</div><div class="sl">Wins</div></div>
         <div class="shadow-stat"><div class="sv negative" id="shLosses">--</div><div class="sl">Losses</div></div>
-        <div class="shadow-stat" style="grid-column:span 2"><div class="sv" id="shPnl">--</div><div class="sl">Net Shadow P&L (settled only)</div></div>
+      </div>
+      <div style="display:flex;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+        <div><div style="font-size:10px;color:var(--muted-fg);text-transform:uppercase;letter-spacing:0.05em">Win Rate</div><div style="font-family:var(--mono);font-size:16px;font-weight:600" id="shWR">--</div></div>
+        <div style="text-align:right"><div style="font-size:10px;color:var(--muted-fg);text-transform:uppercase;letter-spacing:0.05em">Shadow P&L</div><div style="font-family:var(--mono);font-size:16px;font-weight:600" id="shPnl">--</div></div>
       </div>
     </div>
 
-    <!-- BLOCKER BREAKDOWN -->
+    <!-- COMPLETE-SET EDGE -->
     <div class="card">
-      <div class="card-title">Blocking Conditions</div>
-      <div style="margin-bottom:10px">
-        <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:6px">Right Now <span id="blockingCount" class="blocking-count"></span></div>
-        <div id="liveBlockers" style="display:flex;flex-wrap:wrap;gap:5px;min-height:24px"></div>
+      <div class="card-title">Complete-Set Edge</div>
+      <div style="font-size:10px;color:var(--muted-fg);margin-top:-10px;margin-bottom:12px">Phase 2 feasibility · 24h window</div>
+      <div class="cs-grid">
+        <div class="cs-stat">
+          <div class="cs-label">Live Edge</div>
+          <div class="cs-val" id="csEdgeLive">--</div>
+          <div class="cs-sub">1 − (bid_YES + bid_NO)</div>
+        </div>
+        <div class="cs-stat">
+          <div class="cs-label">Frequency</div>
+          <div class="cs-val" id="csFreqPct">--</div>
+          <div class="cs-sub" id="csFreqCount">-- cycles</div>
+        </div>
       </div>
-      <div style="font-size:10px;color:var(--text-3);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:8px;margin-top:4px">24h Frequency</div>
-      <div id="blockerList"></div>
-    </div>
-
-    <!-- SIGNAL ACTIVITY CHART -->
-    <div class="card">
-      <div class="card-title">Signal Activity (24h)</div>
-      <div class="chart-wrap" style="height:160px"><canvas id="signalCanvas"></canvas></div>
+      <div class="cs-note">≥ 10% → Phase 2 viable · &lt; 5% → skip 5m markets</div>
     </div>
 
     <!-- EQUITY CURVE -->
     <div class="card">
-      <div class="card-title">Trade P&L Cumulative</div>
-      <div class="chart-wrap" style="height:120px"><canvas id="equityCanvas"></canvas></div>
+      <div class="card-title">Equity Curve</div>
+      <div class="chart-wrap" style="height:100px"><canvas id="equityCanvas"></canvas></div>
     </div>
-  </div>
-</div>
 
-<div class="footer">PolyGuez v4.0 · Binance · Supabase · Chainlink · <span id="lastUpdate">--</span></div>
+    <!-- VOL & EDGE -->
+    <div class="card">
+      <div class="card-title">Vol & Edge</div>
+      <div class="chart-wrap" style="height:160px"><canvas id="volCanvas"></canvas></div>
+    </div>
+
+  </div>
 </div>
 
 <script>
@@ -456,14 +503,13 @@ function initRealtime() {
             const blocking = row.blocking_conditions
               ? row.blocking_conditions.split(',').map(b => b.trim()).filter(Boolean)
               : [];
-            const lb = $('liveBlockers');
+            const lb = $('blockerList');
             if (lb) {
               lb.innerHTML = ALL_CONDITIONS.map(c => {
                 const isBlocking = blocking.includes(c);
-                return `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;
-                  background:${isBlocking ? 'var(--red-bg)' : 'var(--green-bg)'};
-                  color:${isBlocking ? 'var(--red)' : 'var(--green)'}
-                ">${c.replace(/_ok$/, '').replace(/_/g,' ')}</span>`;
+                return `<div class="blocker-pill ${isBlocking ? 'block' : 'pass'}">
+                  <span class="bp-icon">${isBlocking ? '✗' : '✓'}</span>${c}
+                </div>`;
               }).join('');
             }
           }
@@ -1125,14 +1171,13 @@ async function pollFast() {
     // AESTHETIC-3: update blocking count
     const bcEl = document.getElementById('blockingCount');
     if (bcEl) bcEl.textContent = blocking.length > 0 ? blocking.length + ' blocking' : '';
-    const lb = $('liveBlockers');
+    const lb = $('blockerList');
     if (lb) {
       lb.innerHTML = ALL_CONDITIONS.map(c => {
         const isBlocking = blocking.includes(c);
-        return `<span style="padding:2px 7px;border-radius:4px;font-size:10px;font-weight:600;
-          background:${isBlocking ? 'var(--red)' : 'var(--green-bg)'};
-          color:${isBlocking ? '#fff' : 'var(--green)'}
-        ">${c.replace(/_ok$/, '').replace(/_/g,' ')}</span>`;
+        return `<div class="blocker-pill ${isBlocking ? 'block' : 'pass'}">
+          <span class="bp-icon">${isBlocking ? '✗' : '✓'}</span>${c}
+        </div>`;
       }).join('');
     }
 
