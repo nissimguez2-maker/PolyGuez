@@ -341,7 +341,7 @@ class PolyGuezRunner:
         log_event(logger, "startup_capabilities", f"Capabilities: {_caps}")
 
         # Warn if session_tag doesn't match the dashboard views default
-        _dashboard_tag = "V4"  # Must match session_tag_current default in migrations
+        _dashboard_tag = "V5"  # Must match session_tag_current default in migrations
         if self.config.session_tag != _dashboard_tag:
             log_event(logger, "session_tag_mismatch",
                 f"WARNING: config.session_tag='{self.config.session_tag}' does not match "
