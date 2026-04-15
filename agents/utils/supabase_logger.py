@@ -60,10 +60,11 @@ def _client():
         return None
 
 
-def log_signal(snapshot: dict, session_tag: str = "v1.1") -> None:
+def log_signal(snapshot: dict, session_tag: str = "V5") -> None:
     """Fire-and-forget in background thread — never blocks the main loop."""
     snapshot["ts"] = datetime.now(timezone.utc).isoformat()
     snapshot["session_tag"] = session_tag
+    snapshot.setdefault("era", session_tag)  # permanent era boundary: V5+ = clean data
     def _insert():
         try:
             client = _client()
@@ -75,10 +76,11 @@ def log_signal(snapshot: dict, session_tag: str = "v1.1") -> None:
     _log_executor.submit(_insert)
 
 
-def log_trade(record: dict, session_tag: str = "v1.1") -> None:
+def log_trade(record: dict, session_tag: str = "V5") -> None:
     """Fire-and-forget in background thread — never blocks the main loop."""
     record["ts"] = datetime.now(timezone.utc).isoformat()
     record["session_tag"] = session_tag
+    record.setdefault("era", session_tag)
     def _insert():
         try:
             client = _client()
