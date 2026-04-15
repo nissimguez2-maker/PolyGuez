@@ -1,57 +1,190 @@
-name: refresh-context
+"""Regenerate the LIVE STATE block in CONTEXT.md."""
+from __future__ import annotations
 
-# Regenerates the LIVE STATE block in CONTEXT.md from git log + Supabase.
-# Runs on every push to main (except pushes that only touch CONTEXT.md itself,
-# to avoid an infinite loop) and daily at 06:00 UTC as a safety net.
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone, timedelta
 
-on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - CONTEXT.md
-  schedule:
-    - cron: "0 6 * * *"
-  workflow_dispatch: {}
+import requests
 
-concurrency:
-  group: refresh-context
-  cancel-in-progress: false
+CONTEXT_PATH = "CONTEXT.md"
+BEGIN_MARK = "<!-- LIVE_STATE_BEGIN -->"
+END_MARK = "<!-- LIVE_STATE_END -->"
 
-permissions:
-  contents: write
 
-jobs:
-  refresh:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+def sh(cmd):
+    return subprocess.run(cmd, capture_output=True, text=True, check=True).stdout.rstrip()
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install requests
+def recent_commits():
+    try:
+        since = (datetime.now(timezone.utc) - timedelta(days=7)).strftime("%Y-%m-%d")
+        out = sh([
+            "git", "log", f"--since={since}",
+            "--pretty=format:- `%h` %ad %s", "--date=short", "-n", "40",
+        ])
+        return out or "_no commits in the last 7 days_"
+    except subprocess.CalledProcessError as e:
+        return f"_error reading git log: {e}_"
 
-      - name: Regenerate LIVE STATE block in CONTEXT.md
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python .github/scripts/refresh_context.py
 
-      - name: Commit and push if changed
-        run: |
-          git config user.name "polyguez-context-bot"
-          git config user.email "noreply@github.com"
-          if [[ -n "$(git status --porcelain CONTEXT.md)" ]]; then
-            git add CONTEXT.md
-            git commit -m "chore(ctx): auto-refresh LIVE STATE [skip ci]"
-            git push
-          else
-            echo "CONTEXT.md unchanged — nothing to commit."
-          fi
+def supabase_get(url, key, path, params=None):
+    headers = {
+        "apikey": key,
+        "Authorization": f"Bearer {key}",
+        "Accept": "application/json",
+    }
+    resp = requests.get(f"{url}/rest/v1/{path}", headers=headers, params=params or {}, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+
+def trade_counts(url, key):
+    rows = supabase_get(url, key, "trade_log", {"select": "session_tag,pnl,outcome", "limit": "1000"})
+    by_tag = {}
+    for r in rows:
+        tag = r.get("session_tag") or "null"
+        d = by_tag.setdefault(tag, {"n": 0, "pnl": 0.0, "wins": 0, "losses": 0})
+        d["n"] += 1
+        d["pnl"] += float(r.get("pnl") or 0.0)
+        if r.get("outcome") == "win":
+            d["wins"] += 1
+        elif r.get("outcome") == "loss":
+            d["losses"] += 1
+    if not by_tag:
+        return "_no trades yet_"
+    lines = ["| session_tag | trades | wins | losses | total PnL (USDC) |", "|---|---|---|---|---|"]
+    for tag in sorted(by_tag.keys(), key=lambda t: -by_tag[t]["n"]):
+        d = by_tag[tag]
+        lines.append(f"| `{tag}` | {d['n']} | {d['wins']} | {d['losses']} | {d['pnl']:+.2f} |")
+    return "\n".join(lines)
+
+
+def shadow_counts(url, key):
+    rows = supabase_get(url, key, "shadow_trade_log", {"select": "session_tag,settled,outcome,pnl", "limit": "100000"})
+    by_tag = {}
+    for r in rows:
+        tag = r.get("session_tag") or "null"
+        d = by_tag.setdefault(tag, {"n": 0, "settled": 0, "wins": 0, "losses": 0, "pnl": 0.0})
+        d["n"] += 1
+        if r.get("settled"):
+            d["settled"] += 1
+            if r.get("outcome") == "win":
+                d["wins"] += 1
+            elif r.get("outcome") == "loss":
+                d["losses"] += 1
+            d["pnl"] += float(r.get("pnl") or 0.0)
+    if not by_tag:
+        return "_no shadow trades yet_"
+    lines = ["| session_tag | total | settled | wins | losses | settled PnL |", "|---|---|---|---|---|---|"]
+    for tag in sorted(by_tag.keys(), key=lambda t: -by_tag[t]["n"]):
+        d = by_tag[tag]
+        lines.append(f"| `{tag}` | {d['n']} | {d['settled']} | {d['wins']} | {d['losses']} | {d['pnl']:+.2f} |")
+    return "\n".join(lines)
+
+
+def rolling_stats(url, key):
+    rows = supabase_get(url, key, "rolling_stats", {"select": "id,data,updated_at", "limit": "5"})
+    if not rows:
+        return "_rolling_stats empty_"
+    lines = []
+    for r in rows:
+        data = r.get("data") or {}
+        lines.append(
+            f"- `id={r.get('id')}` updated_at=`{r.get('updated_at')}`  "
+            f"reset_token=`{data.get('reset_token')}`  "
+            f"trade_count=`{data.get('trade_count')}`  "
+            f"total_pnl=`{data.get('total_pnl')}`  "
+            f"wins/losses=`{data.get('wins')}/{data.get('losses')}`"
+        )
+    return "\n".join(lines)
+
+
+def active_session_tag(url, key):
+    try:
+        rows = supabase_get(url, key, "session_tag_current", {"select": "tag", "limit": "1"})
+        if rows and isinstance(rows, list) and rows[0].get("tag"):
+            return f"`{rows[0]['tag']}`"
+        return "_table empty_"
+    except Exception as e:
+        return f"_error: {e}_"
+
+
+def build_block(url, key):
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    try:
+        last_sha = sh(["git", "rev-parse", "--short", "HEAD"])
+        last_author = sh(["git", "log", "-1", "--pretty=format:%an"])
+    except subprocess.CalledProcessError:
+        last_sha, last_author = "unknown", "unknown"
+
+    parts = [
+        BEGIN_MARK,
+        "## LIVE STATE (auto-refreshed)",
+        "",
+        "_This block is regenerated by `.github/workflows/refresh-context.yml` on every push "
+        "to `main` and daily at 06:00 UTC. If the \"Refreshed at\" timestamp below is more "
+        "than 26 hours old, assume the auto-refresh is broken and flag it to Nessim rather "
+        "than acting on the numbers._",
+        "",
+        f"**Refreshed at:** {now} (UTC) — commit `{last_sha}` by {last_author}",
+        "",
+        "### Recent commits (last 7 days)",
+        "",
+        recent_commits(),
+        "",
+        "### Trade counts (from Supabase)",
+        "",
+        trade_counts(url, key),
+        "",
+        "### Shadow trade counts (from Supabase)",
+        "",
+        shadow_counts(url, key),
+        "",
+        "### Rolling stats singleton",
+        "",
+        rolling_stats(url, key),
+        "",
+        "### Current active session_tag (from `session_tag_current`)",
+        "",
+        active_session_tag(url, key),
+        END_MARK,
+    ]
+    return "\n".join(parts)
+
+
+def main():
+    url = os.environ.get("SUPABASE_URL", "").rstrip("/")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    if not url or not key:
+        print("SUPABASE_URL and SUPABASE_SERVICE_KEY required", file=sys.stderr)
+        return 1
+
+    with open(CONTEXT_PATH, "r", encoding="utf-8") as f:
+        doc = f.read()
+
+    new_block = build_block(url, key)
+
+    pattern = re.compile(
+        re.escape(BEGIN_MARK) + r".*?" + re.escape(END_MARK),
+        re.DOTALL,
+    )
+    if not pattern.search(doc):
+        print("LIVE_STATE markers not found in CONTEXT.md — aborting.", file=sys.stderr)
+        return 2
+
+    new_doc = pattern.sub(new_block, doc)
+    if new_doc == doc:
+        print("CONTEXT.md unchanged.")
+        return 0
+
+    with open(CONTEXT_PATH, "w", encoding="utf-8") as f:
+        f.write(new_doc)
+    print("CONTEXT.md LIVE STATE block refreshed.")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
