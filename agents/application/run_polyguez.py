@@ -621,6 +621,11 @@ class PolyGuezRunner:
             # Poll CLOB prices
             yes_price, no_price, spread = await self._poll_clob(yes_token, no_token)
 
+            # Track complete-set edge for Phase 2 verification
+            # bid_yes ≈ yes_price (CLOB mid approximation from WS/REST)
+            # bid_no  ≈ no_price
+            _cs_edge = round(1.0 - (yes_price + no_price), 4) if yes_price > 0 and no_price > 0 else None
+
             # Null-guard: get_price() returns None when buffer is empty
             btc_price_raw = self._btc_feed.get_price()
             if btc_price_raw is None or btc_price_raw == 0:
@@ -785,6 +790,9 @@ class PolyGuezRunner:
                     "implied_vol": round(_iv, 4) if _iv is not None else None,
                     "clob_spread": round(_clob_spread, 4) if _clob_spread is not None else None,
                     "depth_at_ask": round(_depth_at_ask, 2) if _depth_at_ask is not None else None,
+                    "bid_yes": round(yes_price, 4) if yes_price > 0 else None,
+                    "bid_no": round(no_price, 4) if no_price > 0 else None,
+                    "complete_set_edge": _cs_edge,
                     "mode": self.config.mode,
                 }, session_tag=self.config.session_tag)
 
