@@ -422,12 +422,10 @@ const fmtTime = ts => { const d = new Date(ts); return d.toLocaleTimeString('en-
 const fmtTimeFull = ts => { const d = new Date(ts); return d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',second:'2-digit',hour12:false}); };
 
 function flashEl(el, newVal, oldVal) {
-  if (oldVal === undefined || oldVal === null) return;
-  const n = parseFloat(newVal), o = parseFloat(oldVal);
-  if (isNaN(n) || isNaN(o) || n === o) return;
+  if (!el || newVal === oldVal) return;
   el.classList.remove('flash-green','flash-red');
-  void el.offsetWidth; // reflow
-  el.classList.add(n > o ? 'flash-green' : 'flash-red');
+  void el.offsetWidth;
+  el.classList.add(typeof newVal === 'number' && newVal >= (typeof oldVal === 'number' ? oldVal : 0) ? 'flash-green' : 'flash-red');
 }
 
 async function sq(table, params='') {
@@ -665,7 +663,7 @@ function drawPriceChart() {
   livePrices.forEach(lp => { if (lp.t > lastHistT) all.push(lp); });
 
   if (all.length < 2) {
-    ctx.fillStyle = '#94A3B8'; ctx.font = '12px Inter,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#6b7280'; ctx.font = '12px Inter,sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('Loading chart data...', W / 2, H / 2);
     return;
   }
@@ -687,7 +685,7 @@ function drawPriceChart() {
   // Filter data to visible range for price scale
   const visible = _marketMode ? all.filter(d => d.t >= minT && d.t <= maxT) : all;
   if (visible.length < 1) {
-    ctx.fillStyle = '#94A3B8'; ctx.font = '12px Inter,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#6b7280'; ctx.font = '12px Inter,sans-serif'; ctx.textAlign = 'center';
     ctx.fillText('Waiting for market data...', W / 2, H / 2);
     return;
   }
@@ -715,12 +713,12 @@ function drawPriceChart() {
   const y = p => TM + plotH - ((p - minP) / (maxP - minP || 1)) * plotH;
 
   // ── Grid lines (horizontal) ──
-  ctx.strokeStyle = '#F1F5F9'; ctx.lineWidth = 0.5;
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 0.5;
   for (let i = 0; i <= 4; i++) {
     const gy = TM + (i / 4) * plotH;
     ctx.beginPath(); ctx.moveTo(LM, gy); ctx.lineTo(W - RM, gy); ctx.stroke();
     const pv = maxP - (i / 4) * (maxP - minP);
-    ctx.fillStyle = '#94A3B8'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'right';
+    ctx.fillStyle = '#6b7280'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'right';
     ctx.fillText('$' + pv.toLocaleString('en-US', { maximumFractionDigits: 0 }), LM - 6, gy + 3);
   }
 
@@ -739,14 +737,14 @@ function drawPriceChart() {
 
   // Market mode: show minute marks (0:00 to 5:00)
   if (_marketMode) {
-    ctx.strokeStyle = 'rgba(192,200,212,0.4)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+    ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
     for (let s = 60000; s < 300000; s += 60000) {
       const xi = x(minT + s);
       ctx.beginPath(); ctx.moveTo(xi, TM); ctx.lineTo(xi, TM + plotH); ctx.stroke();
     }
     ctx.setLineDash([]);
     // Minute labels: 0:00 through 5:00
-    ctx.fillStyle = '#94A3B8'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#6b7280'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'center';
     for (let s = 0; s <= 300000; s += 60000) {
       const xi = x(minT + s);
       if (xi >= LM && xi <= W - RM) ctx.fillText(Math.floor(s/60000) + ':00', xi, H - 4);
@@ -754,7 +752,7 @@ function drawPriceChart() {
   } else {
     // 5-min market boundaries on 1m/5m
     if (currentRangeSeconds <= 300) {
-      ctx.strokeStyle = 'rgba(192,200,212,0.5)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1; ctx.setLineDash([3, 3]);
       const mStart = Math.ceil(minT / 300000) * 300000;
       for (let t = mStart; t <= maxT; t += 300000) {
         const xi = x(t); if (xi < LM + 2) continue;
@@ -763,14 +761,14 @@ function drawPriceChart() {
       ctx.setLineDash([]);
     }
     // Time axis labels
-    ctx.fillStyle = '#94A3B8'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#6b7280'; ctx.font = '10px Inter,sans-serif'; ctx.textAlign = 'center';
     const vStart = Math.ceil(minT / vInterval) * vInterval;
     let lastLabelX = -100;
     for (let t = vStart; t <= maxT; t += vInterval) {
       const xi = x(t);
       if (xi < LM + 20 || xi > W - RM - 20 || xi - lastLabelX < 50) continue;
       lastLabelX = xi;
-      ctx.strokeStyle = '#E4E7EC'; ctx.lineWidth = 1;
+      ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(xi, TM + plotH); ctx.lineTo(xi, TM + plotH + 4); ctx.stroke();
       ctx.fillText(vLabelFmt(t), xi, H - 4);
     }
@@ -780,13 +778,13 @@ function drawPriceChart() {
   if (window._strikePrice > 0 && window._strikePrice >= minP && window._strikePrice <= maxP) {
     const sy = y(window._strikePrice);
     // Dashed line
-    ctx.strokeStyle = 'rgba(148, 163, 184, 0.6)'; // subtle gray
+    ctx.strokeStyle = 'rgba(255,255,255,0.25)';
     ctx.lineWidth = 1.5; ctx.setLineDash([6, 4]);
     ctx.beginPath(); ctx.moveTo(LM, sy); ctx.lineTo(W - RM, sy); ctx.stroke();
     ctx.setLineDash([]);
     // Label
     ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left';
-    ctx.fillStyle = 'rgba(148, 163, 184, 0.85)';
+    ctx.fillStyle = 'rgba(255,255,255,0.25)';
     ctx.fillText('STRIKE $' + window._strikePrice.toLocaleString('en-US', {maximumFractionDigits:2}), LM + 4, sy - 5);
   }
 
@@ -806,24 +804,24 @@ function drawPriceChart() {
     ctx.lineTo(clPts[0].px, TM + plotH);
     ctx.closePath();
     const clGrad = ctx.createLinearGradient(0, TM, 0, TM + plotH);
-    clGrad.addColorStop(0, 'rgba(8, 145, 178, 0.06)');
-    clGrad.addColorStop(1, 'rgba(8, 145, 178, 0)');
+    clGrad.addColorStop(0, 'rgba(74, 222, 128, 0.06)');
+    clGrad.addColorStop(1, 'rgba(74, 222, 128, 0)');
     ctx.fillStyle = clGrad;
     ctx.fill();
     // Line
     ctx.beginPath();
     ctx.moveTo(clPts[0].px, clPts[0].py);
     for (let i = 1; i < clPts.length; i++) ctx.lineTo(clPts[i].px, clPts[i].py);
-    ctx.strokeStyle = '#0891B2';
+    ctx.strokeStyle = '#4ade80';
     ctx.lineWidth = 2;
     ctx.stroke();
     // Current Chainlink dot
     const lastCl = clVisible[clVisible.length - 1];
     const clx = x(lastCl.t), cly = y(lastCl.p);
     ctx.beginPath(); ctx.arc(clx, cly, 3, 0, Math.PI * 2);
-    ctx.fillStyle = '#0891B2'; ctx.fill();
+    ctx.fillStyle = '#4ade80'; ctx.fill();
     // Chainlink price label (left side)
-    ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#0891B2';
+    ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#4ade80';
     ctx.fillText('CL $' + lastCl.p.toLocaleString('en-US', {maximumFractionDigits:2}), LM + 4, cly + 14);
   }
 
@@ -851,7 +849,7 @@ function drawPriceChart() {
   ctx.lineTo(lastPt.px, TM + plotH);
   ctx.lineTo(pts[0].px, TM + plotH);
   ctx.closePath();
-  const gradColor = '37, 99, 235'; // consistent blue
+  const gradColor = '91, 156, 246'; // blue
   const grad = ctx.createLinearGradient(0, TM, 0, TM + plotH);
   grad.addColorStop(0, `rgba(${gradColor}, 0.12)`);
   grad.addColorStop(0.6, `rgba(${gradColor}, 0.03)`);
@@ -872,7 +870,7 @@ function drawPriceChart() {
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].px, pts[i].py);
   }
   ctx.lineTo(lastPt.px, lastPt.py);
-  ctx.strokeStyle = '#2563EB';
+  ctx.strokeStyle = '#5b9cf6';
   ctx.lineWidth = 2;
   ctx.stroke();
 
@@ -881,23 +879,23 @@ function drawPriceChart() {
   const lx = x(last.t), ly = y(last.p);
 
   // Dashed horizontal at current price
-  ctx.strokeStyle = 'rgba(37,99,235,0.2)';
+  ctx.strokeStyle = 'rgba(91,156,246,0.2)';
   ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
   ctx.beginPath(); ctx.moveTo(LM, ly); ctx.lineTo(W - RM, ly); ctx.stroke();
   ctx.setLineDash([]);
 
   // Glow dot
   ctx.beginPath(); ctx.arc(lx, ly, 5, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(37,99,235,0.15)'; ctx.fill();
+  ctx.fillStyle = 'rgba(91,156,246,0.15)'; ctx.fill();
   ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2);
-  ctx.fillStyle = '#2563EB'; ctx.fill();
+  ctx.fillStyle = '#5b9cf6'; ctx.fill();
 
   // Price badge
   const priceStr = '$' + last.p.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
   ctx.font = 'bold 10px Inter,sans-serif';
   const tw = ctx.measureText(priceStr).width;
   const bx = W - RM - tw - 10, by = ly - 9;
-  ctx.fillStyle = '#2563EB';
+  ctx.fillStyle = '#5b9cf6';
   ctx.beginPath(); ctx.roundRect(bx, by, tw + 10, 18, 4); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
   ctx.fillText(priceStr, bx + 5, ly + 4);
@@ -909,7 +907,7 @@ function drawPriceChart() {
   if (useElapsed > 0) {
     const elapsed = Math.min(300, Math.floor(useElapsed));
     const timerText = 'Market: ' + elapsed + 's / 300s';
-    ctx.fillStyle = '#475569'; ctx.font = '600 11px Inter,sans-serif'; ctx.textAlign = 'right';
+    ctx.fillStyle = '#6b7280'; ctx.font = '600 11px Inter,sans-serif'; ctx.textAlign = 'right';
     ctx.fillText(timerText, W - RM, TM + 14);
   }
 
@@ -926,9 +924,9 @@ function drawPriceChart() {
     const now = Date.now();
     const progress = Math.min(1, (now - minT) / 300000);
     const barY = TM + plotH + 2;
-    ctx.fillStyle = '#E4E7EC';
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
     ctx.fillRect(LM, barY, plotW, 3);
-    ctx.fillStyle = progress < 0.8 ? '#2563EB' : '#F59E0B';
+    ctx.fillStyle = progress < 0.8 ? '#5b9cf6' : '#f59e0b';
     ctx.fillRect(LM, barY, plotW * progress, 3);
   }
 }
@@ -954,20 +952,20 @@ function drawSignalChart() {
     const bx = 40 + i * ((W - 40) / signalData.length);
     const bh = (d.signals / maxSig) * (H - 28);
 
-    // Signal bar (light)
-    ctx.fillStyle = '#E2E8F0';
+    // Signal bar (dark)
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
     ctx.fillRect(bx, H - 20 - bh, barW, bh);
 
     // Fired overlay (blue)
     if (d.fired > 0) {
       const fh = (d.fired / maxSig) * (H - 28);
-      ctx.fillStyle = '#2563EB';
+      ctx.fillStyle = '#5b9cf6';
       ctx.fillRect(bx, H - 20 - fh, barW, fh);
     }
 
     // Time label (every 4th)
     if (i % 4 === 0) {
-      ctx.fillStyle = '#94A3B8'; ctx.font = '9px Inter,sans-serif'; ctx.textAlign = 'center';
+      ctx.fillStyle = '#6b7280'; ctx.font = '9px Inter,sans-serif'; ctx.textAlign = 'center';
       ctx.fillText(fmtTime(d.hour), bx + barW/2, H - 4);
     }
   });
@@ -1006,14 +1004,14 @@ function drawVolRadar() {
   const barWidth = W - barX - 20;
 
   ctx.font = '11px Inter,sans-serif';
-  ctx.fillStyle = '#64748B';
+  ctx.fillStyle = '#6b7280';
   ctx.textAlign = 'right';
 
   // Helper: draw horizontal bar (no value text — stats panel shows values)
   const drawBar = (y, label, value, max, color) => {
-    ctx.fillStyle = '#64748B'; ctx.textAlign = 'right';
+    ctx.fillStyle = '#6b7280'; ctx.textAlign = 'right';
     ctx.fillText(label, labelWidth - 5, y + 10);
-    ctx.fillStyle = '#F1F5F9';
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
     ctx.fillRect(barX, y, barWidth, 12);
     const fillW = Math.max(0, Math.min((value / max) * barWidth, barWidth));
     ctx.fillStyle = color;
@@ -1031,26 +1029,26 @@ function drawVolRadar() {
   drawBar(currentY, 'Implied Vol', implVol, 300, '#0891B2');
   currentY += barHeight + barGap;
   
-  // Terminal Edge (blue background, with green zone > 3%)
-  ctx.fillStyle = '#F1F5F9';
+  // Terminal Edge (dark background, with green zone > 3%)
+  ctx.fillStyle = 'rgba(255,255,255,0.05)';
   ctx.fillRect(barX, currentY, barWidth, 12);
   // Green "fire zone" (3% to 20%)
   const fireStart = Math.max(0, (3 / 30) * barWidth);
   const fireEnd = Math.min(barWidth, (20 / 30) * barWidth);
-  ctx.fillStyle = 'rgba(16, 185, 129, 0.12)';
+  ctx.fillStyle = 'rgba(74, 222, 128, 0.12)';
   ctx.fillRect(barX + fireStart, currentY, fireEnd - fireStart, 12);
   // Actual edge bar
   const edgeMin = -10, edgeMax = 20;
   const edgeNorm = Math.max(0, Math.min((termEdge - edgeMin) / (edgeMax - edgeMin), 1));
-  ctx.fillStyle = termEdge >= 3 ? '#12B76A' : '#3B82F6';
+  ctx.fillStyle = termEdge >= 3 ? '#4ade80' : '#5b9cf6';
   ctx.fillRect(barX, currentY, edgeNorm * barWidth, 12);
-  ctx.fillStyle = '#64748B';
+  ctx.fillStyle = '#6b7280';
   ctx.textAlign = 'right';
   ctx.fillText('Terminal Edge', labelWidth - 5, currentY + 10);
   currentY += barHeight + barGap;
-  
+
   // Conditions Met (0-15, turns green at 15)
-  drawBar(currentY, 'Conditions', condsMet, condsTotal, condsMet === condsTotal ? '#12B76A' : '#3B82F6');
+  drawBar(currentY, 'Conditions', condsMet, condsTotal, condsMet === condsTotal ? '#4ade80' : '#5b9cf6');
 }
 
 // ═══════════════════════ EQUITY CURVE ═══════════════════════
@@ -1080,12 +1078,12 @@ function drawEquityCurve() {
   const y = v => H - 16 - ((v - minV) / (maxV - minV)) * (H - 28);
 
   // Zero line
-  ctx.strokeStyle = '#E4E7EC'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
+  ctx.strokeStyle = 'rgba(255,255,255,0.05)'; ctx.lineWidth = 1; ctx.setLineDash([4,4]);
   ctx.beginPath(); ctx.moveTo(30, y(0)); ctx.lineTo(W, y(0)); ctx.stroke();
   ctx.setLineDash([]);
 
   // Line
-  ctx.beginPath(); ctx.strokeStyle = cum >= 0 ? '#12B76A' : '#F04438'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.strokeStyle = cum >= 0 ? '#4ade80' : '#f87171'; ctx.lineWidth = 2;
   pts.forEach((p,i) => { i === 0 ? ctx.moveTo(x(p.t,i), y(p.v)) : ctx.lineTo(x(p.t,i), y(p.v)); });
   ctx.stroke();
 
@@ -1093,11 +1091,11 @@ function drawEquityCurve() {
   ctx.lineTo(x(pts[pts.length-1].t, pts.length-1), y(0));
   ctx.lineTo(x(pts[0].t, 0), y(0));
   ctx.closePath();
-  ctx.fillStyle = cum >= 0 ? 'rgba(18,183,106,0.08)' : 'rgba(240,68,56,0.08)';
+  ctx.fillStyle = cum >= 0 ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)';
   ctx.fill();
 
   // End label
-  ctx.fillStyle = cum >= 0 ? '#12B76A' : '#F04438';
+  ctx.fillStyle = cum >= 0 ? '#4ade80' : '#f87171';
   ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
   ctx.fillText(fmtUsd(cum), W - 4, y(cum) - 6);
 }
@@ -1124,6 +1122,44 @@ async function pollFast() {
     $('kEdge').textContent = fmtPct(s.terminal_edge);
     flashEl($('kEdge'), s.terminal_edge, parseFloat(prevEdge));
     $('kProb').textContent = 'prob ' + fmtPct(s.terminal_probability);
+
+    // Live signal card updates
+    const dirEl = document.getElementById('liveDirection');
+    if (dirEl && s.entry_side) {
+      dirEl.textContent = s.entry_side === 'up' ? '▲  UP' : '▼  DOWN';
+      dirEl.style.color = s.entry_side === 'up' ? 'var(--green)' : 'var(--red)';
+      dirEl.style.borderColor = s.entry_side === 'up' ? 'oklch(0.696 0.17 162 / 40%)' : 'oklch(0.704 0.191 22.216 / 40%)';
+      dirEl.style.background = s.entry_side === 'up' ? 'oklch(0.696 0.17 162 / 10%)' : 'oklch(0.704 0.191 22.216 / 10%)';
+    }
+    const bar = document.getElementById('elapsedBar');
+    if (bar && s.elapsed_seconds != null) {
+      const pct = Math.min(100, (s.elapsed_seconds / 300) * 100);
+      bar.style.width = pct + '%';
+      bar.style.background = pct < 50 ? 'var(--green)' : pct < 80 ? 'var(--amber)' : 'var(--red)';
+    }
+    const mq = document.getElementById('currentMarketQ');
+    if (mq && s.market_question) mq.textContent = s.market_question.length > 45 ? s.market_question.slice(0,45)+'…' : s.market_question;
+    const dot = document.getElementById('sigFreshDot');
+    if (dot) dot.style.opacity = (Date.now() - (window._signalArrivalTime||0) < 5000) ? '1' : '0.2';
+    const reqEl = document.getElementById('kEdgeRequired');
+    if (reqEl && s.required_edge != null) reqEl.textContent = fmtPct(s.required_edge);
+    const deltaEl = document.getElementById('kDelta');
+    if (deltaEl && s.strike_delta != null) deltaEl.textContent = (s.strike_delta >= 0 ? '+' : '') + s.strike_delta.toFixed(2);
+    const depthEl = document.getElementById('kDepth');
+    if (depthEl && s.depth_at_ask != null) depthEl.textContent = s.depth_at_ask.toFixed(0);
+    const clAgeEl2 = document.getElementById('kClAge');
+    if (clAgeEl2 && s.chainlink_age_seconds != null) {
+      clAgeEl2.textContent = s.chainlink_age_seconds.toFixed(0) + 's';
+      clAgeEl2.style.color = s.chainlink_age_seconds > 30 ? 'var(--amber)' : 'var(--fg)';
+    }
+    // CS edge live value
+    if (s.complete_set_edge != null) {
+      const csEl = document.getElementById('csEdgeLive');
+      if (csEl) {
+        csEl.textContent = (s.complete_set_edge >= 0 ? '+' : '') + (s.complete_set_edge * 100).toFixed(2) + '¢';
+        csEl.style.color = s.complete_set_edge >= 0.01 ? 'var(--green)' : 'var(--muted-fg)';
+      }
+    }
 
     // Mode
     if (s.mode) {
@@ -1353,6 +1389,25 @@ async function pollSlow() {
     $('kShadowWR').className = 'val ' + (sh.wins > sh.losses ? 'positive' : 'negative');
     $('kShadowWL').textContent = sh.settled > 0 ? sh.wins + ' wins \u00B7 ' + sh.settled + ' closed' : '--';
   }
+
+  // Complete-set edge 24h frequency
+  try {
+    const csData = await sq('signal_log',
+      `${tagFilter()}select=complete_set_edge&complete_set_edge=not.is.null&ts=gte.${new Date(Date.now()-86400000).toISOString()}&limit=5000`
+    );
+    if (csData && csData.length > 0) {
+      const total = csData.length;
+      const withEdge = csData.filter(r => r.complete_set_edge >= 0.01).length;
+      const pct = (withEdge / total * 100).toFixed(1);
+      const freqEl = document.getElementById('csFreqPct');
+      if (freqEl) {
+        freqEl.textContent = pct + '%';
+        freqEl.style.color = parseFloat(pct) >= 10 ? 'var(--green)' : parseFloat(pct) >= 5 ? 'var(--amber)' : 'var(--red)';
+      }
+      const ctEl = document.getElementById('csFreqCount');
+      if (ctEl) ctEl.textContent = withEdge + ' / ' + total + ' cycles';
+    }
+  } catch(e) {}
 
   // ── Blockers (from view — pre-aggregated) ──
   const blockers = await sq('dashboard_blockers', 'order=cnt.desc&limit=8');
