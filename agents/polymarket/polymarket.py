@@ -2,7 +2,6 @@
 # https://github.com/Polymarket/py-clob-client/tree/main/examples
 
 import os
-import pdb
 import time
 import ast
 import requests
@@ -446,7 +445,6 @@ def gamma():
                 markets.append(SimpleMarket(**market_data))
             except Exception as err:
                 print(f"error {err} for market {id}")
-        pdb.set_trace()
     else:
         raise Exception()
 
@@ -471,7 +469,6 @@ if __name__ == "__main__":
 
     # t = m[0]['token_id']
     # o = p.get_orderbook(t)
-    # pdb.set_trace()
 
     """
     

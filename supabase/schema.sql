@@ -1,6 +1,11 @@
 -- PolyGuez Supabase Schema
 -- Tables, views, and RLS policies for the trading bot
--- Last updated: 2026-04-05
+-- Last updated: 2026-04-15
+--
+-- IMPORTANT: Dashboard views filter on session_tag = 'V4'.
+-- The bot config default is SESSION_TAG='v1.1' (set via env var).
+-- To see data on dashboards, deploy with SESSION_TAG=V4 or update
+-- the views below to match your chosen session tag.
 
 -- ==========================================================================
 -- TABLES

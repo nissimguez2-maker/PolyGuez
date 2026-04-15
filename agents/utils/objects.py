@@ -1,8 +1,11 @@
 from __future__ import annotations
+import logging
 import os
 from typing import Optional, Union, List
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from datetime import datetime, timezone
+
+_config_logger = logging.getLogger("polyguez.config")
 
 
 class Trade(BaseModel):
@@ -309,9 +312,37 @@ class PolyGuezConfig(BaseModel):
     min_entry_token_price: float = Field(default=0.25, ge=0.01, le=0.90, description="Min token price for entry (sweet spot filter)")
     max_entry_token_price: float = Field(default=0.45, ge=0.10, le=0.95, description="Max token price for entry (sweet spot filter)")
     direction_mode: str = Field(default="both", description="Trade direction: 'both', 'down', or 'up'")
+    edge_scaled_sizing: bool = Field(default=False, description="When True, use fractional Kelly sizing interpolated between normal and strong bet sizes based on edge")
 
     dashboard_secret: str = Field(default_factory=lambda: __import__('secrets').token_urlsafe(32), description="Dashboard auth secret — auto-generated if not set via env")
     session_tag: str = Field(default_factory=lambda: os.environ.get("SESSION_TAG", "v1.1"), description="Version tag — set SESSION_TAG env var in Railway to start a new session without code changes")
+
+    @model_validator(mode='after')
+    def _warn_suspicious_combinations(self):
+        warnings = []
+        if self.min_terminal_edge > 0.10 and self.conviction_min_delta > 50:
+            warnings.append(
+                f"min_terminal_edge={self.min_terminal_edge} AND conviction_min_delta={self.conviction_min_delta} "
+                "— both thresholds are very high, likely to block all trades"
+            )
+        if self.min_entry_token_price > self.max_entry_token_price:
+            warnings.append(
+                f"min_entry_token_price={self.min_entry_token_price} > max_entry_token_price={self.max_entry_token_price} "
+                "— entry price filter will block all trades"
+            )
+        if len(self.blocked_hours_utc) > 12:
+            warnings.append(
+                f"blocked_hours_utc covers {len(self.blocked_hours_utc)} hours (>12) "
+                "— more than half the day is blocked"
+            )
+        if self.direction_mode not in ("both", "up", "down"):
+            warnings.append(
+                f"direction_mode='{self.direction_mode}' is not a recognized value "
+                "(expected 'both', 'up', or 'down')"
+            )
+        for w in warnings:
+            _config_logger.warning(f"[CONFIG] {w}")
+        return self
 
 
 class TradeRecord(BaseModel):

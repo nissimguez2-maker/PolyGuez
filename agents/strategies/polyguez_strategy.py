@@ -222,11 +222,27 @@ def evaluate_entry_signal(
 
 
 def calculate_position_size(usdc_balance, config, edge=0.0, depth=0.0):
-    is_strong = edge >= config.strong_edge_threshold and depth >= config.strong_depth_threshold
-    if usdc_balance < config.low_balance_threshold:
-        raw = config.bet_size_low_balance_strong if is_strong else config.bet_size_low_balance_normal
+    # Edge-scaled sizing: fractional Kelly interpolation between normal and strong
+    if getattr(config, 'edge_scaled_sizing', False):
+        if usdc_balance < config.low_balance_threshold:
+            base = config.bet_size_low_balance_normal
+            top = config.bet_size_low_balance_strong
+        else:
+            base = config.bet_size_normal
+            top = config.bet_size_strong
+        edge_range = config.strong_edge_threshold - config.min_edge
+        if edge_range > 0:
+            frac = max(0.0, min(1.0, (edge - config.min_edge) / edge_range))
+        else:
+            frac = 1.0 if edge >= config.strong_edge_threshold else 0.0
+        raw = base + (top - base) * frac
     else:
-        raw = config.bet_size_strong if is_strong else config.bet_size_normal
+        # Original binary tier logic
+        is_strong = edge >= config.strong_edge_threshold and depth >= config.strong_depth_threshold
+        if usdc_balance < config.low_balance_threshold:
+            raw = config.bet_size_low_balance_strong if is_strong else config.bet_size_low_balance_normal
+        else:
+            raw = config.bet_size_strong if is_strong else config.bet_size_normal
     # Cap individual bet by max_capital_fraction
     max_bet = usdc_balance * getattr(config, 'max_capital_fraction', 0.20)
     return min(raw, max_bet) if max_bet > 0 else raw
@@ -316,34 +332,15 @@ def compute_clob_depth(order_book, side):
     return depth
 
 
-async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_beat=0.0, gap_direction="unknown", clob_depth_summary=""):
+async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_beat=0.0, gap_direction="unknown", clob_depth_summary="", provider_context=""):
     if not config.llm_enabled:
         return ("GO", "llm-disabled", "", 0.0)
 
     start = asyncio.get_event_loop().time()
 
-    # BUG-1 fix: fetch provider data (news/tavily) for LLM context
-    context_data = ""
-    if config.data_providers:
-        try:
-            market_ctx = {
-                "direction": signal_state.direction,
-                "velocity": signal_state.btc_velocity,
-                "elapsed_seconds": signal_state.elapsed_seconds,
-                "binance_chainlink_gap": signal_state.binance_chainlink_gap,
-            }
-            provider_results = await fetch_all_providers(
-                config.data_providers, market_ctx,
-                timeout=config.data_provider_timeout,
-            )
-            if provider_results:
-                import json as _json
-                context_data = _json.dumps(provider_results, default=str)[:2000]
-                log_event(logger, "provider_data_fetched",
-                    f"Fetched {len(provider_results)} provider(s) for LLM context")
-        except Exception as prov_exc:
-            log_event(logger, "provider_data_error",
-                f"Provider fetch failed (non-fatal): {prov_exc}", level=30)
+    # Provider context is now supplied from PolyGuezRunner's background cache
+    # instead of fetching inline on the critical path.
+    context_data = provider_context
 
     prompt = _prompter.momentum_confirmation(
         velocity=signal_state.btc_velocity, direction=signal_state.direction,
@@ -387,7 +384,7 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
     return (verdict, reason, adapter.name, round(elapsed, 2))
 
 
-async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=None):
+async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=None, seconds_remaining=300.0):
     if mode == "live":
         loop = asyncio.get_event_loop()
         # Maker limit order path — avoid taker fees
@@ -403,6 +400,9 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                     signed = await loop.run_in_executor(None, polymarket_client.client.create_order, order_args)
                     resp = await loop.run_in_executor(None, lambda: polymarket_client.client.post_order(signed, orderType=OrderType.GTC))
                     log_event(logger, "maker_order_posted", f"[MAKER] Limit order at {limit_price:.4f}")
+                    # Dynamic timeout based on seconds_remaining
+                    max_wait = min(30.0, max(5.0, seconds_remaining * 0.4))
+                    polls = int(max_wait / 2)
                     # Poll for fill confirmation
                     order_id = None
                     if isinstance(resp, dict):
@@ -410,7 +410,7 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                     elif hasattr(resp, 'orderID'):
                         order_id = resp.orderID
                     if order_id:
-                        for _poll in range(15):
+                        for _poll in range(polls):
                             await asyncio.sleep(2)
                             try:
                                 status = await loop.run_in_executor(None, polymarket_client.client.get_order, order_id)
@@ -423,9 +423,14 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                         # Order didn't fill — cancel it
                         try:
                             await loop.run_in_executor(None, polymarket_client.client.cancel, order_id)
-                            log_event(logger, "maker_order_cancelled", f"[MAKER] Order {order_id} cancelled after 30s unfilled")
+                            log_event(logger, "maker_order_cancelled", f"[MAKER] Order {order_id} cancelled after {max_wait:.0f}s unfilled")
                         except Exception as cancel_exc:
                             log_event(logger, "maker_cancel_error", f"[MAKER] Cancel failed: {cancel_exc}", level=30)
+                        # If market has < 10s remaining, do NOT fall back to FOK
+                        if seconds_remaining - max_wait < 10:
+                            log_event(logger, "maker_expiry_too_close",
+                                f"[MAKER] {seconds_remaining - max_wait:.0f}s remaining after cancel — skipping FOK fallback")
+                            return {"status": "unfilled", "reason": "expiry_too_close"}
                         return {"status": "unfilled", "reason": "maker_timeout"}
                     return {"status": "maker_posted", "price": limit_price, "response": resp}
             except Exception as exc:
@@ -550,10 +555,15 @@ def load_rolling_stats():
             data = f.read().strip()
             if data:
                 file_stats = RollingStats.model_validate_json(data)
-    except (FileNotFoundError, json.JSONDecodeError, Exception):
+    except FileNotFoundError:
         pass
-    
-    # Cross-check: prefer Supabase if it has more trades (file may be stale)
+    except (json.JSONDecodeError, Exception) as exc:
+        logger.warning(f"[STATS] Local file corrupted, falling back to Supabase: {exc}")
+
+    # Cross-check: prefer Supabase if it was updated more recently.
+    # NOTE: total_trades is a computed property over the capped trades list
+    # (max 500 entries), so it can decrease after archival. We use the
+    # updated_at timestamp from the Supabase data payload instead.
     if file_stats is not None:
         try:
             from agents.utils.supabase_logger import _client
@@ -561,9 +571,13 @@ def load_rolling_stats():
             if client:
                 resp = client.table("rolling_stats").select("data").eq("id", "singleton").execute()
                 if resp.data and len(resp.data) > 0:
-                    supa_stats = RollingStats.model_validate(resp.data[0]["data"])
-                    if supa_stats.total_trades > file_stats.total_trades:
-                        logger.info(f"[STATS] Supabase has more trades ({supa_stats.total_trades} > {file_stats.total_trades}) — using Supabase")
+                    supa_data = resp.data[0]["data"]
+                    supa_updated = supa_data.get("updated_at", "")
+                    supa_stats = RollingStats.model_validate(supa_data)
+                    # Prefer Supabase if it has a newer updated_at timestamp
+                    if supa_updated and supa_stats.total_trades > file_stats.total_trades:
+                        logger.info(f"[STATS] Supabase is newer (updated_at={supa_updated}, "
+                            f"trades: {supa_stats.total_trades} > {file_stats.total_trades}) — using Supabase")
                         return supa_stats
         except Exception as exc:
             logger.warning(f"[STATS] Supabase cross-check failed: {exc}")
