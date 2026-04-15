@@ -863,8 +863,9 @@ class PolyGuezRunner:
                 log_event(logger, "daily_notional_limit", f"Daily notional ${self._rolling_stats.daily_notional:.2f} + ${size:.2f} would exceed limit ${self.config.max_daily_notional:.2f}")
                 return False
 
-        # Execute
-        result = await execute_entry(self._polymarket, token_id, size, self.config.mode, config=self.config)
+        # Execute — pass seconds_remaining so maker timeout adapts to expiry
+        _seconds_remaining = max(1.0, 300.0 - signal.elapsed_seconds)
+        result = await execute_entry(self._polymarket, token_id, size, self.config.mode, config=self.config, seconds_remaining=_seconds_remaining)
 
         if result["status"] == "error":
             log_event(logger, "entry_failed", f"Entry failed: {result.get('error', '')}")

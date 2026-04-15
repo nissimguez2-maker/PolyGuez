@@ -368,7 +368,7 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
     return (verdict, reason, adapter.name, round(elapsed, 2))
 
 
-async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=None):
+async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=None, seconds_remaining=300.0):
     if mode == "live":
         loop = asyncio.get_event_loop()
         # Maker limit order path — avoid taker fees
@@ -384,6 +384,9 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                     signed = await loop.run_in_executor(None, polymarket_client.client.create_order, order_args)
                     resp = await loop.run_in_executor(None, lambda: polymarket_client.client.post_order(signed, orderType=OrderType.GTC))
                     log_event(logger, "maker_order_posted", f"[MAKER] Limit order at {limit_price:.4f}")
+                    # Dynamic timeout based on seconds_remaining
+                    max_wait = min(30.0, max(5.0, seconds_remaining * 0.4))
+                    polls = int(max_wait / 2)
                     # Poll for fill confirmation
                     order_id = None
                     if isinstance(resp, dict):
@@ -391,7 +394,7 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                     elif hasattr(resp, 'orderID'):
                         order_id = resp.orderID
                     if order_id:
-                        for _poll in range(15):
+                        for _poll in range(polls):
                             await asyncio.sleep(2)
                             try:
                                 status = await loop.run_in_executor(None, polymarket_client.client.get_order, order_id)
@@ -404,9 +407,14 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                         # Order didn't fill — cancel it
                         try:
                             await loop.run_in_executor(None, polymarket_client.client.cancel, order_id)
-                            log_event(logger, "maker_order_cancelled", f"[MAKER] Order {order_id} cancelled after 30s unfilled")
+                            log_event(logger, "maker_order_cancelled", f"[MAKER] Order {order_id} cancelled after {max_wait:.0f}s unfilled")
                         except Exception as cancel_exc:
                             log_event(logger, "maker_cancel_error", f"[MAKER] Cancel failed: {cancel_exc}", level=30)
+                        # If market has < 10s remaining, do NOT fall back to FOK
+                        if seconds_remaining - max_wait < 10:
+                            log_event(logger, "maker_expiry_too_close",
+                                f"[MAKER] {seconds_remaining - max_wait:.0f}s remaining after cancel — skipping FOK fallback")
+                            return {"status": "unfilled", "reason": "expiry_too_close"}
                         return {"status": "unfilled", "reason": "maker_timeout"}
                     return {"status": "maker_posted", "price": limit_price, "response": resp}
             except Exception as exc:
