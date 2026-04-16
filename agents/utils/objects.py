@@ -241,6 +241,13 @@ class PolyGuezConfig(BaseModel):
     # (not yet a hard entry gate — see docs/k_recalibration_2026_04_16.md).
     taker_fee_coefficient: float = Field(default=0.072, ge=0.0, le=0.2,
         description="Polymarket taker fee coefficient. Used to compute net_edge for calibration logging.")
+    # Post-Feb-2026 speed-bump removal: the taker path is a latency race we
+    # lose from a Hetzner VPS. In live mode we never cross the spread unless
+    # net_edge is large enough to cover fees + spread cost and then some.
+    # In dry-run this gate is ignored (every entry path exercises).
+    live_fok_net_edge_min: float = Field(default=0.10, ge=0.0, le=0.5,
+        description="Live mode only: minimum net_edge required to fall back to FOK taker order "
+                    "if the maker order times out. Below this, an unfilled maker is simply skipped.")
     strong_edge_threshold: float = Field(default=0.25, ge=0.01, le=0.5, description="Edge threshold for strong signal")
     strong_depth_threshold: float = Field(default=40000.0, ge=0.0, description="Depth threshold for strong signal")
     low_balance_threshold: float = Field(default=40.0, ge=1.0, le=500.0, description="Balance below which low-balance sizing applies")
