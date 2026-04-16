@@ -814,6 +814,33 @@ class PolyGuezRunner:
                 await asyncio.sleep(self.config.clob_poll_interval)
                 continue
 
+            # LATENCY-TASK-3: granular feed freshness gate. Ages past the
+            # per-source thresholds flip price_feed_ok to False via the
+            # combined flag below, and the specific reasons get logged to
+            # signal_log so we can answer "which feed was stale?" after
+            # the fact. RTDS is optional — only flagged when it has ever
+            # delivered a sample (age >= 0) but is now stale.
+            _binance_age = self._btc_feed.binance_msg_age
+            _rtds_age = self._btc_feed.rtds_msg_age
+            _feed_lag_reasons = []
+            if _binance_age < 0 or _binance_age > self.config.max_binance_age_seconds:
+                _feed_lag_reasons.append("binance_stale")
+            if _rtds_age >= 0 and _rtds_age > self.config.max_rtds_age_seconds:
+                _feed_lag_reasons.append("rtds_stale")
+            if (
+                cl_price is None
+                or cl_age is None
+                or cl_age < 0
+                or cl_age > self.config.max_chainlink_age_seconds
+            ):
+                _feed_lag_reasons.append("chainlink_stale")
+            _feed_lag_ok = not _feed_lag_reasons
+            _feed_lag_ms = round(max(
+                _binance_age if _binance_age >= 0 else 0.0,
+                _rtds_age if _rtds_age >= 0 else 0.0,
+            ) * 1000.0, 1)
+            _price_feed_healthy = self._btc_feed.price_feed_ok and _feed_lag_ok
+
             # Evaluate signal first with depth=-1 (skip gate) to get delta direction
             signal = evaluate_entry_signal(
                 btc_velocity=btc_velocity,
@@ -832,7 +859,7 @@ class PolyGuezRunner:
                 binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
                 clob_depth=-1.0,  # Sentinel: skip depth gate in first pass
                 price_to_beat=self._price_to_beat,
-                price_feed_ok=self._btc_feed.price_feed_ok,
+                price_feed_ok=_price_feed_healthy,
             )
 
             # Fetch depth using signal's delta-based direction (not velocity direction)
@@ -929,10 +956,18 @@ class PolyGuezRunner:
             _log_interval = getattr(self.config, 'signal_log_interval', 2.5)
             _log_this_signal = (int(elapsed * 10) % int(_log_interval * 10) == 0) or signal.all_conditions_met or trade_fired
             if _log_this_signal:
-                # Build blocking conditions string for this signal
+                # Build blocking conditions string for this signal.
+                # LATENCY-TASK-3: prefer granular feed-lag reasons
+                # (binance_stale / rtds_stale / chainlink_stale) over the
+                # single coarse "price_feed" reason when a specific feed
+                # tripped a threshold.
                 _blocking = []
-                if not signal.price_feed_ok: _blocking.append("price_feed")
-                if not getattr(signal, 'chainlink_fresh_ok', True): _blocking.append("chainlink_stale")
+                if _feed_lag_reasons:
+                    _blocking.extend(_feed_lag_reasons)
+                elif not signal.price_feed_ok:
+                    _blocking.append("price_feed")
+                if not getattr(signal, 'chainlink_fresh_ok', True) and "chainlink_stale" not in _blocking:
+                    _blocking.append("chainlink_stale")
                 if not getattr(signal, 'p2b_ok', True): _blocking.append("p2b_stale")  # LATENCY-TASK-2
                 if not signal.terminal_edge_ok: _blocking.append("terminal_edge")
                 if not signal.delta_magnitude_ok: _blocking.append("delta_magnitude")
@@ -957,6 +992,11 @@ class PolyGuezRunner:
                     "btc_price": self._btc_feed.get_price() or 0.0,
                     "chainlink_price": cl_price,
                     "chainlink_age_seconds": round(cl_age, 1),
+                    # LATENCY-TASK-3: worst-case BTC-feed lag in ms for
+                    # post-hoc PnL-vs-latency analysis. Max of the two
+                    # primary BTC feeds (Binance WS, RTDS). Chainlink
+                    # age has its own column above.
+                    "feed_lag_ms": _feed_lag_ms,
                     "blocking_conditions": ",".join(_blocking) if _blocking else "",
                     "in_trade": self._position is not None,
                     "strike_delta": signal.strike_delta,

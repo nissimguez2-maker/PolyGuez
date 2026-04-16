@@ -309,6 +309,16 @@ class PolyGuezConfig(BaseModel):
     btc_buffer_min_seconds: float = Field(default=10.0)
     price_feed_stale_threshold: float = Field(default=10.0, ge=2.0, le=60.0, description="Seconds before price feed is considered stale")
     clob_ws_enabled: bool = Field(default=True, description="Enable CLOB WebSocket for real-time YES/NO prices")
+    # LATENCY-TASK-3: per-feed hard-stop age thresholds. Previously ages
+    # were logged but not gated; we now refuse to trade when any required
+    # feed is older than its threshold. RTDS is optional — the check is
+    # only applied once it has ever delivered a sample (age >= 0).
+    max_binance_age_seconds: float = Field(default=2.0, ge=0.1, le=30.0,
+        description="Max seconds since the last Binance WS tick before we refuse to trade.")
+    max_rtds_age_seconds: float = Field(default=1.0, ge=0.1, le=30.0,
+        description="Max seconds since the last RTDS message before we refuse to trade. Only applied if RTDS has ever delivered.")
+    max_chainlink_age_seconds: float = Field(default=10.0, ge=0.5, le=60.0,
+        description="Max seconds since the last Chainlink update before we refuse to trade.")
 
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)
