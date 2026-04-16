@@ -319,6 +319,19 @@ class PolyGuezConfig(BaseModel):
         description="Max seconds since the last RTDS message before we refuse to trade. Only applied if RTDS has ever delivered.")
     max_chainlink_age_seconds: float = Field(default=10.0, ge=0.5, le=60.0,
         description="Max seconds since the last Chainlink update before we refuse to trade.")
+    # LATENCY-TASK-4: CLOB WS freshness + heartbeat health gates.
+    # `clob_ws_stale_threshold` — seconds since the last CLOB WS message
+    # past which we treat YES/NO quotes as stale and block entry. 3s is a
+    # reasonable floor for a busy 5-min market; the existing REST
+    # fallback in _poll_clob kicks in long before this threshold.
+    clob_ws_stale_threshold: float = Field(default=3.0, ge=0.5, le=30.0,
+        description="Max seconds since the last CLOB WS message before quotes are treated as stale.")
+    # `heartbeat_stale_threshold` — Polymarket cancels open maker orders
+    # after ~10s without a heartbeat. We block entries at 8s so a
+    # borderline-dead session never fires a trade whose order will be
+    # cancelled before it fills.
+    heartbeat_stale_threshold: float = Field(default=8.0, ge=2.0, le=30.0,
+        description="Max seconds since the last successful CLOB heartbeat before we refuse to trade.")
 
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)
@@ -464,6 +477,14 @@ class SignalState(BaseModel):
     # tolerance. Default True so legacy callers that don't set it keep
     # their existing behaviour.
     p2b_ok: bool = True
+    # LATENCY-TASK-4: CLOB WS freshness + heartbeat gates.
+    # `clob_fresh_ok=False` → last WS message older than
+    # `clob_ws_stale_threshold`. `heartbeat_ok=False` → last successful
+    # heartbeat older than `heartbeat_stale_threshold`. Either flips
+    # all_conditions_met to False so we never enter on stale venue state
+    # or with a session Polymarket is about to cancel.
+    clob_fresh_ok: bool = True
+    heartbeat_ok: bool = True
 
     @property
     def all_conditions_met(self) -> bool:
@@ -473,6 +494,8 @@ class SignalState(BaseModel):
             self.price_feed_ok,          # At least one price source alive
             self.chainlink_fresh_ok,     # Chainlink not stale near expiry
             self.p2b_ok,                 # LATENCY-TASK-2: strike anchored to event start
+            self.clob_fresh_ok,          # LATENCY-TASK-4: CLOB WS message not stale
+            self.heartbeat_ok,           # LATENCY-TASK-4: CLOB heartbeat alive
             # V2 core gates (velocity_ok and oracle_gap_ok removed — nearly always True, adding noise)
             self.terminal_edge_ok,       # Terminal probability edge above minimum
             self.delta_magnitude_ok,     # Strike delta large enough for conviction

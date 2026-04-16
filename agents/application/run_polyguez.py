@@ -131,6 +131,16 @@ class PolyGuezRunner:
         self._clob_ws_prices_valid: bool = False
         self._clob_http_session = None
         self._heartbeat_task = None
+        # LATENCY-TASK-4: monotonic timestamp of the last successful CLOB
+        # heartbeat post. Zero means "never sent successfully". Consumed
+        # by _entry_window to refuse entries when the session is about
+        # to be cancelled by Polymarket's 10s heartbeat timeout.
+        self._last_heartbeat_sent_ts: float = 0.0
+        # LATENCY-TASK-4: startup grace window for the heartbeat gate.
+        # The heartbeat task tick-ones ~5s after runner start; the first
+        # few _entry_window evaluations shouldn't fail on "never sent"
+        # before the task has had a chance to post.
+        self._runner_start_ts: float = time.time()
 
         # Hot-path timing (set per entry, read at settle)
         self._last_entry_llm_ms = 0.0
@@ -343,6 +353,10 @@ class PolyGuezRunner:
                         )
                         if isinstance(resp, dict):
                             heartbeat_id = resp.get("heartbeat_id", heartbeat_id)
+                        # LATENCY-TASK-4: record the successful post so
+                        # _entry_window can see how long ago the last
+                        # heartbeat went out.
+                        self._last_heartbeat_sent_ts = time.time()
             except Exception as e:
                 log_event(logger, "heartbeat_error",
                     f"Heartbeat failed: {e}", level=30)
@@ -881,6 +895,43 @@ class PolyGuezRunner:
                 self._p2b_source == "chainlink_buffer"
                 and (self._p2b_cross_check_passed is not False)
             )
+
+            # LATENCY-TASK-4: CLOB WS freshness + heartbeat health.
+            # clob_msg_age measures seconds since the last CLOB WS
+            # message; above clob_ws_stale_threshold we consider the
+            # quotes we just evaluated against untrustworthy. The
+            # heartbeat gate blocks entries when Polymarket is about to
+            # cancel our maker orders for inactivity (~10s timeout).
+            _now = time.time()
+            if self._clob_ws_last_msg > 0:
+                _clob_msg_age = _now - self._clob_ws_last_msg
+            else:
+                _clob_msg_age = -1.0  # never received
+            signal.clob_fresh_ok = (
+                self.config.clob_ws_enabled is False
+                or (_clob_msg_age >= 0 and _clob_msg_age <= self.config.clob_ws_stale_threshold)
+            )
+            if self._last_heartbeat_sent_ts > 0:
+                _heartbeat_age = _now - self._last_heartbeat_sent_ts
+            else:
+                _heartbeat_age = -1.0
+            # Heartbeat never sent = treat as stale ONLY if we're past the
+            # startup grace period (first 15s of runner life). That grace
+            # avoids gating the first-cycle scan on a task that hasn't
+            # tick-one'd yet.
+            if self._last_heartbeat_sent_ts <= 0 and (_now - self._runner_start_ts) < 15.0:
+                signal.heartbeat_ok = True
+            else:
+                signal.heartbeat_ok = (
+                    _heartbeat_age >= 0
+                    and _heartbeat_age <= self.config.heartbeat_stale_threshold
+                )
+            # Downstream _clob_ok drives the dashboard connection dot;
+            # keep it coherent with the hard gate so operators see the
+            # same view as the runner.
+            if not signal.heartbeat_ok:
+                self._clob_ok = False
+
             self._current_signal = signal
 
             _size_multiplier = get_daily_loss_size_multiplier(self._rolling_stats, self.config, self._usdc_balance)
@@ -969,6 +1020,8 @@ class PolyGuezRunner:
                 if not getattr(signal, 'chainlink_fresh_ok', True) and "chainlink_stale" not in _blocking:
                     _blocking.append("chainlink_stale")
                 if not getattr(signal, 'p2b_ok', True): _blocking.append("p2b_stale")  # LATENCY-TASK-2
+                if not getattr(signal, 'clob_fresh_ok', True): _blocking.append("clob_stale")  # LATENCY-TASK-4
+                if not getattr(signal, 'heartbeat_ok', True): _blocking.append("heartbeat_stale")  # LATENCY-TASK-4
                 if not signal.terminal_edge_ok: _blocking.append("terminal_edge")
                 if not signal.delta_magnitude_ok: _blocking.append("delta_magnitude")
                 if not signal.edge_ok: _blocking.append("edge")
@@ -997,6 +1050,12 @@ class PolyGuezRunner:
                     # primary BTC feeds (Binance WS, RTDS). Chainlink
                     # age has its own column above.
                     "feed_lag_ms": _feed_lag_ms,
+                    # LATENCY-TASK-4: CLOB WS message age in ms at the
+                    # moment this signal was evaluated. Negative age
+                    # encodes "never received" and is logged as None.
+                    "clob_msg_age_ms": (
+                        round(_clob_msg_age * 1000.0, 1) if _clob_msg_age >= 0 else None
+                    ),
                     "blocking_conditions": ",".join(_blocking) if _blocking else "",
                     "in_trade": self._position is not None,
                     "strike_delta": signal.strike_delta,
