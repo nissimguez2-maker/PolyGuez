@@ -156,6 +156,25 @@ async def get_trades(secret: str = Query(default="")):
     return JSONResponse(trades)
 
 
+@app.get("/api/stats")
+async def get_stats(secret: str = Query(default="")):
+    """Subset of the rolling_stats singleton safe to return to an authed dashboard.
+
+    Replaces the frontend's direct Supabase read of the `rolling_stats` row,
+    which exposed full strategy state (reset_token, win_rate, trade_count,
+    etc.) to anyone who extracted the anon JWT from the dashboard JS.
+    """
+    _check_auth(secret)
+    if _runner is None:
+        return JSONResponse({"error": "Runner not active"}, status_code=503)
+    rs = _runner._rolling_stats
+    return JSONResponse({
+        "simulated_balance": rs.simulated_balance,
+        "updated_at": getattr(rs, "updated_at", None),
+        "total_trades": len(rs.trades),
+    })
+
+
 @app.post("/api/mode")
 async def set_mode(request: Request, secret: str = Query(default="")):
     _check_auth(secret)
