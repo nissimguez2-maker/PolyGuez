@@ -6,155 +6,18 @@
 <meta http-equiv="Pragma" content="no-cache">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>PolyGuez</title>
-<!-- v4.0 — Visual overhaul: classy trading terminal -->
+<!-- v5.0 — Onlook-style redesign: glass cards, Live vs Analytics modes -->
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<style>
-:root {
-  --bg:         oklch(0.145 0 0);
-  --card:       oklch(0.205 0 0);
-  --border:     oklch(1 0 0 / 10%);
-  --muted:      oklch(0.269 0 0);
-  --muted-fg:   oklch(0.708 0 0);
-  --fg:         oklch(0.985 0 0);
-  --fg-2:       oklch(0.708 0 0);
-  --green:      oklch(0.696 0.17 162);
-  --green-bg:   oklch(0.696 0.17 162 / 12%);
-  --red:        oklch(0.704 0.191 22.216);
-  --red-bg:     oklch(0.704 0.191 22.216 / 12%);
-  --amber:      oklch(0.768 0.147 70);
-  --blue:       oklch(0.623 0.214 259);
-  --radius:     0.625rem;
-  --font:       'Inter', system-ui, sans-serif;
-  --mono:       'JetBrains Mono', 'IBM Plex Mono', monospace;
-}
-*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
-html { font-size: 13px; }
-body { background: var(--bg); color: var(--fg); font-family: var(--font); min-height: 100vh; font-variant-numeric: tabular-nums; -webkit-font-smoothing: antialiased; }
-
-/* STATUS BAR — replaces topbar */
-.topbar { display:flex; align-items:center; justify-content:space-between; padding:0 24px; height:40px; background:var(--bg); border-bottom:1px solid var(--border); position:sticky; top:0; z-index:100; }
-.logo { font-size:11px; font-weight:700; letter-spacing:0.15em; color:var(--fg); text-transform:uppercase; }
-.topbar-center { display:flex; align-items:center; gap:16px; }
-.topbar-right { display:flex; align-items:center; gap:12px; }
-.topbar-price .val { font-family:var(--mono); font-size:13px; font-weight:500; color:var(--fg); }
-.topbar-price .label { font-size:10px; color:var(--muted-fg); text-transform:uppercase; letter-spacing:0.05em; margin-right:4px; }
-.topbar-delta { font-family:var(--mono); font-size:11px; padding:2px 8px; border-radius:9999px; border:1px solid var(--border); color:var(--muted-fg); }
-.conn-dot { width:6px; height:6px; border-radius:50%; display:inline-block; }
-.conn-dot.on  { background:var(--green); box-shadow:0 0 0 3px oklch(0.696 0.17 162 / 20%); animation:pulse-dot 2s infinite; }
-.conn-dot.off { background:var(--red); }
-@keyframes pulse-dot { 0%,100%{ box-shadow:0 0 0 3px oklch(0.696 0.17 162 / 20%) } 50%{ box-shadow:0 0 0 5px oklch(0.696 0.17 162 / 8%) } }
-
-/* BADGES */
-.badge { font-size:10px; font-weight:600; padding:2px 8px; border-radius:9999px; border:1px solid; text-transform:uppercase; letter-spacing:0.05em; }
-.badge-live  { background:var(--green-bg); color:var(--green); border-color:oklch(0.696 0.17 162 / 30%); }
-.badge-paper { background:oklch(0.623 0.214 259 / 12%); color:var(--blue); border-color:oklch(0.623 0.214 259 / 30%); }
-.badge-dry   { background:var(--muted); color:var(--muted-fg); border-color:var(--border); }
-.badge-killed{ background:var(--red-bg); color:var(--red); border-color:oklch(0.704 0.191 22.216 / 30%); }
-
-/* CARDS */
-.card { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:20px 24px; }
-.card-title { font-size:11px; font-weight:500; color:var(--muted-fg); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:16px; }
-
-/* KPI */
-.kpi-row { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:16px; }
-.kpi { background:var(--card); border:1px solid var(--border); border-radius:var(--radius); padding:16px 20px; }
-.kpi .label { font-size:10px; font-weight:500; color:var(--muted-fg); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:8px; }
-.kpi .val   { font-size:22px; font-weight:600; color:var(--fg); font-family:var(--mono); }
-.kpi .sub   { font-size:11px; color:var(--muted-fg); margin-top:4px; }
-.positive { color:var(--green) !important; }
-.negative { color:var(--red)   !important; }
-.neutral  { color:var(--muted-fg) !important; }
-
-/* MAIN GRID */
-.main { display:grid; grid-template-columns:65fr 35fr; gap:16px; padding:16px; }
-.col-left  { display:flex; flex-direction:column; gap:16px; }
-.col-right { display:flex; flex-direction:column; gap:16px; }
-
-/* CHART */
-.chart-wrap { position:relative; width:100%; height:280px; }
-.chart-wrap canvas { width:100%!important; height:100%!important; }
-.chart-timerange { display:flex; gap:6px; margin-bottom:12px; }
-.chart-btn { background:transparent; border:1px solid var(--border); color:var(--muted-fg); font-family:var(--font); font-size:11px; font-weight:500; padding:3px 10px; border-radius:calc(var(--radius) * 0.6); cursor:pointer; transition:all 0.15s; }
-.chart-btn:hover, .chart-btn.active { background:var(--muted); color:var(--fg); border-color:var(--muted); }
-.chart-legend { display:flex; align-items:center; gap:16px; margin-top:10px; }
-.chart-legend-item { display:flex; align-items:center; gap:5px; font-size:10px; color:var(--muted-fg); }
-.chart-legend-line { width:16px; height:2px; border-radius:1px; }
-.chart-legend-dash { width:16px; height:0; border-top:2px dashed; opacity:0.4; }
-
-/* YES/NO BADGES */
-.yn-row { display:flex; align-items:center; gap:8px; margin-top:12px; }
-.yn-badge { display:flex; align-items:center; gap:6px; padding:5px 14px; border-radius:9999px; border:1px solid; font-family:var(--mono); font-size:13px; font-weight:500; }
-.yn-yes  { border-color:oklch(0.696 0.17 162 / 40%); color:var(--green); background:var(--green-bg); }
-.yn-no   { border-color:oklch(0.704 0.191 22.216 / 40%); color:var(--red); background:var(--red-bg); }
-.yn-label { font-size:10px; font-weight:600; letter-spacing:0.05em; opacity:0.7; }
-.yn-spread { font-size:11px; color:var(--muted-fg); font-family:var(--mono); }
-.yn-side   { font-size:11px; font-weight:600; padding:2px 8px; border-radius:9999px; border:1px solid var(--border); color:var(--muted-fg); }
-
-/* LIVE SIGNAL CARD */
-.live-direction { display:flex; align-items:center; justify-content:center; height:48px; border-radius:calc(var(--radius) * 0.8); border:1px solid; font-size:18px; font-weight:700; letter-spacing:0.05em; margin-bottom:10px; transition:all 0.2s; }
-.elapsed-bar-wrap { height:4px; background:var(--muted); border-radius:9999px; margin-bottom:14px; overflow:hidden; }
-.elapsed-bar { height:100%; border-radius:9999px; transition:width 1s linear, background 0.5s; }
-.signal-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.signal-metric { background:var(--muted); border-radius:calc(var(--radius) * 0.6); padding:10px 12px; }
-.signal-metric .sm-label { font-size:10px; color:var(--muted-fg); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:3px; }
-.signal-metric .sm-val   { font-family:var(--mono); font-size:14px; font-weight:500; color:var(--fg); }
-.sig-fresh-dot { display:inline-block; width:6px; height:6px; border-radius:50%; background:var(--green); margin-left:6px; animation:pulse-dot 1.5s infinite; opacity:0.2; vertical-align:middle; }
-
-/* BLOCKING CONDITIONS */
-.blocker-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
-.blocker-pill { display:flex; align-items:center; gap:5px; padding:4px 10px; border-radius:9999px; border:1px solid; font-size:10px; font-family:var(--mono); font-weight:500; }
-.blocker-pill.pass    { background:transparent; border-color:var(--border); color:var(--muted-fg); }
-.blocker-pill.block   { background:var(--red-bg); border-color:oklch(0.704 0.191 22.216 / 30%); color:var(--red); }
-.blocker-pill .bp-icon{ font-size:9px; }
-
-/* SHADOW SCOREBOARD */
-.shadow-grid { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-.shadow-stat { background:var(--muted); border-radius:calc(var(--radius) * 0.6); padding:12px; text-align:center; }
-.shadow-stat .sv { font-size:18px; font-weight:600; font-family:var(--mono); }
-.shadow-stat .sl { font-size:10px; color:var(--muted-fg); text-transform:uppercase; letter-spacing:0.05em; margin-top:2px; }
-
-/* COMPLETE-SET EDGE CARD */
-.cs-grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:10px; }
-.cs-stat .cs-label { font-size:10px; color:var(--muted-fg); text-transform:uppercase; letter-spacing:0.05em; margin-bottom:4px; }
-.cs-stat .cs-val   { font-family:var(--mono); font-size:22px; font-weight:600; color:var(--muted-fg); }
-.cs-stat .cs-sub   { font-size:10px; color:var(--muted-fg); margin-top:2px; }
-.cs-note { font-size:10px; color:var(--muted-fg); border-top:1px solid var(--border); padding-top:8px; margin-top:4px; }
-
-/* TRADES TABLE */
-.trades-table { width:100%; border-collapse:collapse; font-size:12px; }
-.trades-table th { font-size:10px; font-weight:500; color:var(--muted-fg); text-transform:uppercase; letter-spacing:0.05em; padding:0 8px 10px; text-align:left; border-bottom:1px solid var(--border); }
-.trades-table td { padding:9px 8px; border-bottom:1px solid var(--border); color:var(--fg); }
-.trades-table tr:last-child td { border-bottom:none; }
-.llm-go   { color:var(--green); font-weight:600; }
-.llm-skip { color:var(--muted-fg); }
-.llm-abort{ color:var(--red); font-weight:600; }
-.outcome-win  { color:var(--green); font-weight:600; }
-.outcome-loss { color:var(--red); font-weight:600; }
-.side-up   { color:var(--green); font-weight:600; }
-.side-down { color:var(--red); font-weight:600; }
-
-/* FLASH ANIMATIONS */
-@keyframes flash-green { 0%,100%{ background:transparent } 50%{ background:oklch(0.696 0.17 162 / 15%) } }
-@keyframes flash-red   { 0%,100%{ background:transparent } 50%{ background:oklch(0.704 0.191 22.216 / 15%) } }
-.flash-green { animation:flash-green 0.4s ease; }
-.flash-red   { animation:flash-red 0.4s ease; }
-
-/* MISC */
-.section-tag { font-size:10px; color:var(--muted-fg); font-family:var(--mono); }
-::-webkit-scrollbar { width:3px; height:3px; }
-::-webkit-scrollbar-track { background:transparent; }
-::-webkit-scrollbar-thumb { background:var(--muted); border-radius:9999px; }
-@media(max-width:900px){ .main{ grid-template-columns:1fr; } .kpi-row{ grid-template-columns:repeat(2,1fr); } }
-.yn-flash { animation: ynFlash 0.35s ease; }
-@keyframes ynFlash { 0% { transform: scale(1.08); background: rgba(37,99,235,0.12); } 100% { transform: scale(1); background: transparent; } }
-</style>
+<link rel="stylesheet" href="/static/css/tokens.css">
+<link rel="stylesheet" href="/static/css/shell.css">
+<link rel="stylesheet" href="/static/css/components.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 </head>
 <body>
 
-<!-- STATUS BAR -->
-<div class="topbar">
+<!-- ═══════════════════ TOPBAR ═══════════════════ -->
+<header class="topbar">
   <div class="logo">POLYGUEZ</div>
   <div class="topbar-center">
     <div class="topbar-price">
@@ -167,229 +30,263 @@ body { background: var(--bg); color: var(--fg); font-family: var(--font); min-he
   </div>
   <div class="topbar-right">
     <span class="conn-dot off" id="wsDot" title="Binance WS"></span>
-    <span class="conn-dot off" id="botDot" title="Bot WS"></span>
     <span class="badge badge-dry" id="modeBadge">DRY-RUN</span>
     <span class="section-tag" id="sessionTagEl"></span>
     <span class="section-tag" id="lastUpdate">--</span>
   </div>
-</div>
+</header>
 
-<!-- Hidden elements for JS compatibility (truly unused) -->
-<div style="display:none">
-  <span id="kShadowWR"></span><span id="kShadowWL"></span>
-  <span id="kShadowPnl"></span><span id="kShadowCount"></span>
-  <span id="kSignals"></span><span id="kFired"></span>
-</div>
+<!-- ═══════════════════ MODE TABS ═══════════════════ -->
+<nav class="tabs" id="modeTabs" aria-label="Dashboard mode">
+  <a class="tab is-active" data-view="live"      href="#/live">Live</a>
+  <a class="tab"           data-view="analytics" href="#/analytics">Analytics</a>
+</nav>
 
-<!-- KPI ROW -->
-<div style="padding:16px 16px 0">
-  <div class="kpi-row" style="grid-template-columns:repeat(6,1fr)">
-    <div class="kpi">
-      <div class="label">Balance</div>
-      <div class="val" id="kBalance">--</div>
-      <div class="sub" id="balSub">simulated USDC</div>
-    </div>
-    <div class="kpi">
-      <div class="label">Total P&L</div>
-      <div class="val" id="kTotalPnl">--</div>
-      <div class="sub" id="kTotalTrades">-- trades</div>
-    </div>
-    <div class="kpi">
-      <div class="label">Win Rate</div>
-      <div class="val" id="kWinRate">--</div>
-      <div class="sub" id="kWL">-- W / -- L</div>
-    </div>
-    <div class="kpi">
-      <div class="label">Shadow W/R</div>
-      <div class="val" id="kShadowWR">--</div>
-      <div class="sub" id="kShadowWL">-- settled</div>
-    </div>
-    <div class="kpi"><div class="label">Edge</div><div class="val" id="kEdge">--</div><div class="sub" id="kProb">prob --</div></div>
-    <div class="kpi"><div class="label">Daily P&L</div><div class="val" id="kDailyPnl">--</div><div class="sub">today</div></div>
-  </div>
-</div>
+<!-- ═══════════════════ MAIN ═══════════════════ -->
+<main class="main">
 
-<!-- MAIN TWO-COLUMN GRID -->
-<div class="main">
+  <!-- ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ LIVE VIEW ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ -->
+  <section id="view-live" class="view">
 
-  <!-- LEFT COLUMN -->
-  <div class="col-left">
+    <!-- Hero: price chart + live signal -->
+    <div class="grid-hero">
 
-    <!-- LIVE MARKET -->
-    <div class="card" style="padding:14px 20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
-        <div style="flex:1;min-width:0">
-          <div style="font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.5px;color:var(--text-3);margin-bottom:3px">Active Market</div>
-          <div id="liveMarketQ" style="font-size:13px;font-weight:600;color:var(--text-1);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">--</div>
-        </div>
-        <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
-          <div style="text-align:right">
-            <div style="font-size:10px;color:var(--text-3);font-weight:600;text-transform:uppercase;letter-spacing:0.5px">Time Left</div>
-            <div id="liveMarketTimer" style="font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;color:var(--text-1)">--:--</div>
-          </div>
-          <div id="liveMarketBar" style="width:80px;height:8px;background:var(--border);border-radius:4px;overflow:hidden">
-            <div id="liveMarketBarFill" style="height:100%;width:0%;background:var(--green);border-radius:4px;transition:width 1s linear"></div>
+      <article class="card">
+        <div class="card-head">
+          <div class="card-title" id="btcChartTitle">BTC Price <span id="chartLive" style="color:var(--accent);margin-left:6px;font-size:10px">●</span></div>
+          <div class="chart-timerange">
+            <button class="chart-btn active" id="btn5m">5m</button>
+            <button class="chart-btn"        id="btn15m">15m</button>
+            <button class="chart-btn"        id="btn1h">1h</button>
           </div>
         </div>
-      </div>
-    </div>
-
-    <!-- BTC PRICE CHART -->
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div class="card-title" style="margin-bottom:0" id="btcChartTitle">BTC Price <span id="chartLive" style="color:var(--green);margin-left:4px;font-size:9px">●</span></div>
-        <div class="chart-timerange">
-          <button class="chart-btn active" id="btn5m">5m</button>
-          <button class="chart-btn"        id="btn15m">15m</button>
-          <button class="chart-btn"        id="btn1h">1h</button>
+        <div class="chart-wrap"><canvas id="priceCanvas"></canvas></div>
+        <div class="chart-legend">
+          <span class="chart-legend-item"><span class="chart-legend-line" style="background:var(--accent)"></span>Binance</span>
+          <span class="chart-legend-item"><span class="chart-legend-line" style="background:var(--green)"></span>Chainlink</span>
+          <span class="chart-legend-item"><span class="chart-legend-dash" style="color:var(--text-3)"></span>Strike</span>
         </div>
-      </div>
-      <div class="chart-wrap"><canvas id="priceCanvas"></canvas></div>
-      <div class="chart-legend">
-        <span class="chart-legend-item"><span class="chart-legend-line" style="background:var(--blue)"></span>Binance</span>
-        <span class="chart-legend-item"><span class="chart-legend-line" style="background:var(--green)"></span>Chainlink</span>
-        <span class="chart-legend-item"><span class="chart-legend-dash" style="border-color:var(--muted-fg)"></span>Strike</span>
-      </div>
-      <div class="yn-row">
-        <div class="yn-badge yn-yes" id="ynYes"><span class="yn-label">YES</span><span id="ynYesVal">--</span></div>
-        <div class="yn-badge yn-no"  id="ynNo"><span class="yn-label">NO</span><span id="ynNoVal">--</span></div>
-        <span class="yn-spread" id="ynSpread"></span>
-        <span class="yn-side"   id="ynSide"></span>
-      </div>
+        <div class="yn-row">
+          <div class="yn-badge yn-yes" id="ynYes"><span class="yn-label">YES</span><span id="ynYesVal">--</span></div>
+          <div class="yn-badge yn-no"  id="ynNo"><span class="yn-label">NO</span><span id="ynNoVal">--</span></div>
+          <span class="yn-spread" id="ynSpread"></span>
+          <span class="yn-side"   id="ynSide"></span>
+        </div>
+      </article>
+
+      <article class="card live-signal">
+        <div class="card-head">
+          <div class="card-title">Live Signal</div>
+          <span class="sig-fresh-dot" id="sigFreshDot"></span>
+        </div>
+        <div class="market-q" id="currentMarketQ">Waiting for market…</div>
+        <div class="live-direction" id="liveDirection">—</div>
+        <div class="elapsed-bar-wrap"><div class="elapsed-bar" id="elapsedBar"></div></div>
+        <div class="signal-grid">
+          <div class="signal-metric"><div class="sm-label">Edge</div>       <div class="sm-val" id="kEdge">--</div></div>
+          <div class="signal-metric"><div class="sm-label">Required</div>   <div class="sm-val" id="kEdgeRequired">--</div></div>
+          <div class="signal-metric"><div class="sm-label">Term. Prob</div> <div class="sm-val" id="kProb">--</div></div>
+          <div class="signal-metric"><div class="sm-label">Strike Δ</div>   <div class="sm-val" id="kDelta">--</div></div>
+          <div class="signal-metric"><div class="sm-label">CL Age</div>     <div class="sm-val" id="kClAge">--</div></div>
+          <div class="signal-metric"><div class="sm-label">Depth</div>      <div class="sm-val" id="kDepth">--</div></div>
+        </div>
+      </article>
+
     </div>
 
-    <!-- RECENT TRADES -->
-    <div class="card">
-      <div class="card-title">Recent Trades</div>
+    <!-- Second row: active market + conditions -->
+    <div class="grid-halves">
+
+      <article class="card card-compact">
+        <div class="card-title">Active Market</div>
+        <div class="market-mini">
+          <div class="market-q-big" id="liveMarketQ">--</div>
+          <div>
+            <div class="card-sub" style="margin-top:0;text-align:right">Time Left</div>
+            <div class="market-timer" id="liveMarketTimer">--:--</div>
+          </div>
+          <div class="market-bar"><div class="market-bar-fill" id="liveMarketBarFill"></div></div>
+        </div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div class="card-title">Conditions</div>
+          <span id="blockingCount" style="font-size:11px;color:var(--red);font-family:var(--mono);font-weight:600"></span>
+        </div>
+        <div class="blocker-grid" id="blockerList"></div>
+      </article>
+
+    </div>
+
+    <!-- Third row: recent trades (compact) -->
+    <article class="card">
+      <div class="card-head">
+        <div class="card-title">Recent Trades</div>
+        <a class="card-link" href="#/analytics">View all →</a>
+      </div>
       <table class="trades-table">
         <thead>
           <tr>
-            <th>Time</th><th>Market</th><th>Side</th><th>Entry</th><th>Size</th><th>P&L</th><th>LLM</th><th>Latency</th><th>Result</th>
+            <th>Time</th><th>Market</th><th>Side</th>
+            <th class="num">Entry</th><th class="num">Size</th><th class="num">P&amp;L</th>
+            <th>Result</th>
           </tr>
         </thead>
-        <tbody id="tradeBody"></tbody>
+        <tbody id="tradeBodyLive"></tbody>
       </table>
-    </div>
+    </article>
 
-    <!-- SIGNAL ACTIVITY -->
-    <div class="card">
-      <div class="card-title">Signal Activity (24h)</div>
-      <div class="chart-wrap" style="height:140px"><canvas id="signalCanvas"></canvas></div>
-    </div>
+  </section>
 
-  </div>
+  <!-- ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ ANALYTICS VIEW ┈┈┈┈┈┈┈┈┈┈┈┈┈┈┈ -->
+  <section id="view-analytics" class="view" hidden>
 
-  <!-- RIGHT COLUMN -->
-  <div class="col-right">
-
-    <!-- LIVE SIGNAL -->
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div class="card-title" style="margin-bottom:0">Live Signal</div>
-        <span class="sig-fresh-dot" id="sigFreshDot"></span>
+    <!-- KPI row -->
+    <div class="grid-kpis">
+      <div class="kpi-tile">
+        <div class="kpi-label">Balance</div>
+        <div class="val kpi-val" id="kBalance">--</div>
+        <div class="kpi-sub" id="balSub">simulated USDC</div>
       </div>
-      <div style="font-size:11px;color:var(--muted-fg);margin-bottom:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" id="currentMarketQ">Waiting for market...</div>
-      <div class="live-direction" id="liveDirection" style="color:var(--muted-fg);border-color:var(--border);background:var(--muted)">-- --</div>
-      <div class="elapsed-bar-wrap"><div class="elapsed-bar" id="elapsedBar" style="width:0%;background:var(--green)"></div></div>
-      <div class="signal-grid">
-        <div class="signal-metric"><div class="sm-label">Edge</div><div class="sm-val" id="kEdge">--</div></div>
-        <div class="signal-metric"><div class="sm-label">Required</div><div class="sm-val" id="kEdgeRequired">--</div></div>
-        <div class="signal-metric"><div class="sm-label">Term. Prob</div><div class="sm-val" id="kProb">--</div></div>
-        <div class="signal-metric"><div class="sm-label">Strike Δ</div><div class="sm-val" id="kDelta">--</div></div>
-        <div class="signal-metric"><div class="sm-label">CL Age</div><div class="sm-val" id="kClAge">--</div></div>
-        <div class="signal-metric"><div class="sm-label">Depth</div><div class="sm-val" id="kDepth">--</div></div>
+      <div class="kpi-tile">
+        <div class="kpi-label">Total P&amp;L (V5)</div>
+        <div class="val kpi-val" id="kTotalPnl">--</div>
+        <div class="kpi-sub" id="kTotalTrades">-- trades</div>
       </div>
-    </div>
-
-    <!-- BLOCKING CONDITIONS -->
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
-        <div class="card-title" style="margin-bottom:0">Conditions</div>
-        <span id="blockingCount" style="font-size:10px;color:var(--red);font-family:var(--mono);font-weight:600"></span>
+      <div class="kpi-tile">
+        <div class="kpi-label">Win Rate</div>
+        <div class="val kpi-val" id="kWinRate">--</div>
+        <div class="kpi-sub" id="kWL">-- W / -- L</div>
       </div>
-      <div class="blocker-grid" id="blockerList"></div>
-    </div>
-
-    <!-- BLOCKERS — LAST 24H (from signal_log, unbiased) -->
-    <div class="card">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-        <div class="card-title" style="margin-bottom:0">Blockers — last 24h</div>
-        <span id="blocker24hCount" style="font-size:10px;color:var(--muted-fg);font-family:var(--mono);font-weight:500"></span>
-      </div>
-      <div style="font-size:10px;color:var(--muted-fg);margin-bottom:10px">
-        Which gate is filtering trades right now. Unbiased — counts every blocked signal_log row in the last 24h.
-      </div>
-      <div id="blocker24hList" style="display:flex;flex-direction:column;gap:4px;font-family:var(--mono);font-size:11px"></div>
-    </div>
-
-    <!-- COMPLETE-SET EDGE -->
-    <div class="card" style="padding:14px 20px">
-      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-        <div class="card-title" style="margin-bottom:0">Complete-Set Edge</div>
-        <div id="csEdgeBadge" style="font-size:10px;font-weight:700;padding:2px 8px;border-radius:4px;background:var(--border);color:var(--text-2)">loading</div>
-      </div>
-      <div style="display:flex;align-items:baseline;gap:8px;margin-bottom:4px">
-        <span id="csEdgeVal" style="font-size:28px;font-weight:800;font-variant-numeric:tabular-nums;color:var(--text-1)">--</span>
-        <span style="font-size:12px;color:var(--text-3)">cs edge now</span>
-      </div>
-      <div style="display:flex;gap:16px;font-size:11px;color:var(--text-2)">
-        <span>24h avg: <strong id="csEdge24hAvg">--</strong></span>
-        <span>≥1%: <strong id="csEdge24hPct">--%</strong></span>
+      <div class="kpi-tile">
+        <div class="kpi-label">Shadow W/R</div>
+        <div class="val kpi-val" id="kShadowWR">--</div>
+        <div class="kpi-sub" id="kShadowWL">-- settled</div>
       </div>
     </div>
 
-    <!-- SHADOW SCOREBOARD -->
-    <div class="card">
-      <div class="card-title">Shadow Trades</div>
-      <div class="shadow-grid">
-        <div class="shadow-stat"><div class="sv" id="shTotal">--</div><div class="sl">Total</div></div>
-        <div class="shadow-stat"><div class="sv" id="shSettled">--</div><div class="sl">Settled</div></div>
-        <div class="shadow-stat"><div class="sv positive" id="shWins">--</div><div class="sl">Wins</div></div>
-        <div class="shadow-stat"><div class="sv negative" id="shLosses">--</div><div class="sl">Losses</div></div>
-      </div>
-      <div style="display:flex;justify-content:space-between;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
-        <div><div style="font-size:10px;color:var(--muted-fg);text-transform:uppercase;letter-spacing:0.05em">Win Rate</div><div style="font-family:var(--mono);font-size:16px;font-weight:600" id="shWR">--</div></div>
-        <div style="text-align:right"><div style="font-size:10px;color:var(--muted-fg);text-transform:uppercase;letter-spacing:0.05em">Shadow P&L</div><div style="font-family:var(--mono);font-size:16px;font-weight:600" id="shPnl">--</div></div>
-      </div>
-    </div>
+    <!-- Second row: signal activity + blockers 24h -->
+    <div class="grid-halves">
 
-    <!-- COMPLETE-SET EDGE -->
-    <div class="card">
-      <div class="card-title">Complete-Set Edge</div>
-      <div style="font-size:10px;color:var(--muted-fg);margin-top:-10px;margin-bottom:12px">Phase 2 feasibility · 24h window</div>
-      <div class="cs-grid">
-        <div class="cs-stat">
-          <div class="cs-label">Live Edge</div>
-          <div class="cs-val" id="csEdgeLive">--</div>
-          <div class="cs-sub">1 − (bid_YES + bid_NO)</div>
+      <article class="card">
+        <div class="card-head">
+          <div class="card-title">Signal Activity (24h)</div>
+          <span class="section-tag" id="kSignals"></span>
         </div>
-        <div class="cs-stat">
-          <div class="cs-label">Frequency</div>
-          <div class="cs-val" id="csFreqPct">--</div>
-          <div class="cs-sub" id="csFreqCount">-- cycles</div>
+        <div class="chart-wrap chart-wrap-md"><canvas id="signalCanvas"></canvas></div>
+      </article>
+
+      <article class="card">
+        <div class="card-head">
+          <div class="card-title">Blockers — last 24h</div>
+          <span id="blocker24hCount" style="font-size:11px;color:var(--text-3);font-family:var(--mono)"></span>
         </div>
-      </div>
-      <div class="cs-note">≥ 10% → Phase 2 viable · &lt; 5% → skip 5m markets</div>
+        <div class="card-sub">Which gate is filtering trades right now. Unbiased — counts every blocked signal_log row.</div>
+        <div id="blocker24hList"></div>
+      </article>
+
     </div>
 
-    <!-- EQUITY CURVE -->
-    <div class="card">
-      <div class="card-title">Equity Curve</div>
-      <div class="chart-wrap" style="height:100px"><canvas id="equityCanvas"></canvas></div>
+    <!-- Third row: full trades table + shadow summary -->
+    <div class="grid-6040">
+
+      <article class="card">
+        <div class="card-title">Recent Trades</div>
+        <table class="trades-table">
+          <thead>
+            <tr>
+              <th>Time</th><th>Market</th><th>Side</th>
+              <th class="num">Entry</th><th class="num">Size</th><th class="num">P&amp;L</th>
+              <th>LLM</th><th class="num">Latency</th><th>Result</th>
+            </tr>
+          </thead>
+          <tbody id="tradeBody"></tbody>
+        </table>
+      </article>
+
+      <article class="card">
+        <div class="card-title">Shadow Trades</div>
+        <div class="shadow-grid">
+          <div class="shadow-stat"><div class="sv" id="shTotal">--</div><div class="sl">Total</div></div>
+          <div class="shadow-stat"><div class="sv" id="shSettled">--</div><div class="sl">Settled</div></div>
+          <div class="shadow-stat"><div class="sv positive" id="shWins">--</div><div class="sl">Wins</div></div>
+          <div class="shadow-stat"><div class="sv negative" id="shLosses">--</div><div class="sl">Losses</div></div>
+        </div>
+        <div class="shadow-footer">
+          <div><div class="sf-label">Win Rate</div><div class="sf-val" id="shWR">--</div></div>
+          <div style="text-align:right"><div class="sf-label">Shadow P&amp;L</div><div class="sf-val" id="shPnl">--</div></div>
+        </div>
+      </article>
+
     </div>
 
-    <!-- VOL & EDGE -->
-    <div class="card">
-      <div class="card-title">Vol & Edge</div>
-      <div class="chart-wrap" style="height:160px"><canvas id="volCanvas"></canvas></div>
+    <!-- Fourth row: complete-set edge + equity curve + vol radar -->
+    <div class="grid-halves">
+
+      <article class="card">
+        <div class="card-head">
+          <div class="card-title">Complete-Set Edge</div>
+          <div id="csEdgeBadge" class="badge badge-dry">loading</div>
+        </div>
+        <div class="cs-hero">
+          <span id="csEdgeVal" class="cs-val">--</span>
+          <span class="cs-caption">cs edge now</span>
+        </div>
+        <div class="cs-stats">
+          <span>24h avg: <strong id="csEdge24hAvg">--</strong></span>
+          <span>≥1%: <strong id="csEdge24hPct">--</strong></span>
+          <span>freq: <strong id="csFreqPct">--</strong> <span style="color:var(--text-4)" id="csFreqCount"></span></span>
+        </div>
+        <div class="cs-note">≥ 10% → Phase 2 viable · &lt; 5% → skip 5m markets</div>
+      </article>
+
+      <article class="card">
+        <div class="card-title">Equity Curve</div>
+        <div class="chart-wrap chart-wrap-sm"><canvas id="equityCanvas"></canvas></div>
+      </article>
+
     </div>
 
-  </div>
+    <div class="grid-halves">
+      <article class="card">
+        <div class="card-title">Vol &amp; Edge</div>
+        <div class="chart-wrap chart-wrap-md"><canvas id="volCanvas"></canvas></div>
+      </article>
+      <!-- Placeholder column keeps the shell symmetric; can be filled later. -->
+      <article class="card" style="opacity:0.5">
+        <div class="card-title">Daily P&amp;L</div>
+        <div class="kpi-val" id="kDailyPnl">--</div>
+        <div class="kpi-sub">today</div>
+      </article>
+    </div>
+
+  </section>
+
+</main>
+
+<!-- Hidden compat shim: these ids are written to by existing JS but no longer
+     have visible homes. Keeping them prevents silent `null` assignments
+     and preserves the pre-redesign data flow. Remove only after their JS
+     writers are removed (see scripts/frontend/js/polling.js). -->
+<div class="dead-ids" aria-hidden="true">
+  <span id="botStatus"></span>
+  <span id="botDot"></span>
+  <span id="clAge"></span>
+  <span id="sigAge"></span>
+  <span id="radarStats"></span>
+  <span id="kScanned"></span>
+  <span id="kScannedSub"></span>
+  <span id="kShadowPnl"></span>
+  <span id="kShadowCount"></span>
+  <span id="kFired"></span>
+  <span id="csEdgeLive"></span>
 </div>
 
 <script src="/static/js/config.js"></script>
 <script src="/static/js/charts.js"></script>
 <script src="/static/js/polling.js"></script>
+<script src="/static/js/mode.js"></script>
 <script src="/static/js/init.js"></script>
 </body>
 </html>

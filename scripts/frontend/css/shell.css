@@ -1,0 +1,167 @@
+/* PolyGuez dashboard — page shell: topbar, tabs, view grid. */
+
+/* ── Topbar ─────────────────────────────────────────────────────── */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 28px;
+  height: 52px;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  background: rgba(2, 6, 23, 0.72);
+  border-bottom: 1px solid var(--card-border);
+}
+
+.logo {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--text-2);
+}
+
+.topbar-center {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: var(--fs-small);
+  color: var(--text-3);
+}
+
+.topbar-price {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.topbar-price .label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.topbar-price .val {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+
+.topbar-delta {
+  font-family: var(--mono);
+  font-size: 11px;
+  padding: 2px 10px;
+  border-radius: 9999px;
+  border: 1px solid var(--card-border);
+  color: var(--text-3);
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.conn-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.conn-dot.on  { background: var(--green); box-shadow: 0 0 0 4px var(--green-ring); animation: pulse-dot 2s ease-in-out infinite; }
+.conn-dot.off { background: var(--red); }
+
+@keyframes pulse-dot {
+  0%, 100% { box-shadow: 0 0 0 4px var(--green-ring); }
+  50%      { box-shadow: 0 0 0 6px rgba(52, 211, 153, 0.1); }
+}
+
+/* ── Mode tabs ──────────────────────────────────────────────────── */
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  padding: 16px 28px 0;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.tab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  border-radius: 10px 10px 0 0;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  color: var(--text-3);
+  text-decoration: none;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.tab:hover {
+  color: var(--text-1);
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.tab.is-active {
+  color: var(--text-1);
+}
+
+.tab.is-active::after {
+  content: '';
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 0;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  box-shadow: 0 0 12px var(--accent-soft);
+}
+
+/* ── Main grid / view container ─────────────────────────────────── */
+
+main.main {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 18px 28px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.view {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.view[hidden] { display: none; }
+
+.grid-hero    { display: grid; grid-template-columns: 3fr 2fr; gap: 20px; }
+.grid-halves  { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.grid-6040    { display: grid; grid-template-columns: 3fr 2fr; gap: 20px; }
+.grid-kpis    { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.grid-kpis-5  { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+
+@media (max-width: 980px) {
+  .grid-hero, .grid-halves, .grid-6040 { grid-template-columns: 1fr; }
+  .grid-kpis, .grid-kpis-5             { grid-template-columns: repeat(2, 1fr); }
+  .topbar-center { display: none; }
+}
+
+/* Hidden compat shim for IDs still referenced by JS but removed from layout. */
+.dead-ids { display: none !important; }

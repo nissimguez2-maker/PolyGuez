@@ -130,17 +130,20 @@ async function initSessionTag() {
     tag = latest.length ? latest[0].session_tag : 'V5';
   }
   SESSION_TAG = tag;
-  const tagEl = document.createElement('span');
-  tagEl.style.cssText = 'font-size:11px;color:var(--text-3);font-family:monospace';
-  tagEl.id = 'sessionTag';
-  tagEl.textContent = SESSION_TAG;
-  const divEl = document.createElement('span');
-  divEl.style.cssText = 'font-size:11px;color:var(--text-3)';
-  divEl.textContent = ' \u00B7 ';
-  divEl.id = 'tagDivider';
-  const topRight = document.querySelector('.topbar-right');
-  topRight.prepend(divEl);
-  topRight.prepend(tagEl);
+  // v5.0: dashboard.html now ships an empty `#sessionTagEl` placeholder in
+  // the topbar; fill it in place instead of creating floating spans. Still
+  // supports old shells by falling back to the previous prepend.
+  const slot = document.getElementById('sessionTagEl');
+  if (slot) {
+    slot.textContent = SESSION_TAG;
+  } else {
+    const tagEl = document.createElement('span');
+    tagEl.id = 'sessionTag';
+    tagEl.className = 'section-tag';
+    tagEl.textContent = SESSION_TAG;
+    const topRight = document.querySelector('.topbar-right');
+    if (topRight) topRight.prepend(tagEl);
+  }
 }
 function tagFilter() { return SESSION_TAG ? `session_tag=eq.${SESSION_TAG}&` : ''; }
 

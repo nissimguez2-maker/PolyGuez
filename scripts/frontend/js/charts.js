@@ -161,24 +161,24 @@ function drawPriceChart() {
     ctx.lineTo(clPts[0].px, TM + plotH);
     ctx.closePath();
     const clGrad = ctx.createLinearGradient(0, TM, 0, TM + plotH);
-    clGrad.addColorStop(0, 'rgba(74, 222, 128, 0.06)');
-    clGrad.addColorStop(1, 'rgba(74, 222, 128, 0)');
+    clGrad.addColorStop(0, 'rgba(52, 211, 153, 0.06)');
+    clGrad.addColorStop(1, 'rgba(52, 211, 153, 0)');
     ctx.fillStyle = clGrad;
     ctx.fill();
     // Line
     ctx.beginPath();
     ctx.moveTo(clPts[0].px, clPts[0].py);
     for (let i = 1; i < clPts.length; i++) ctx.lineTo(clPts[i].px, clPts[i].py);
-    ctx.strokeStyle = '#4ade80';
+    ctx.strokeStyle = '#34d399';
     ctx.lineWidth = 2;
     ctx.stroke();
     // Current Chainlink dot
     const lastCl = clVisible[clVisible.length - 1];
     const clx = x(lastCl.t), cly = y(lastCl.p);
     ctx.beginPath(); ctx.arc(clx, cly, 3, 0, Math.PI * 2);
-    ctx.fillStyle = '#4ade80'; ctx.fill();
+    ctx.fillStyle = '#34d399'; ctx.fill();
     // Chainlink price label (left side)
-    ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#4ade80';
+    ctx.font = 'bold 10px Inter,sans-serif'; ctx.textAlign = 'left'; ctx.fillStyle = '#34d399';
     ctx.fillText('CL $' + lastCl.p.toLocaleString('en-US', {maximumFractionDigits:2}), LM + 4, cly + 14);
   }
 
@@ -206,7 +206,7 @@ function drawPriceChart() {
   ctx.lineTo(lastPt.px, TM + plotH);
   ctx.lineTo(pts[0].px, TM + plotH);
   ctx.closePath();
-  const gradColor = '91, 156, 246'; // blue
+  const gradColor = '56, 189, 248'; // cyan accent (v5.0 Onlook-style)
   const grad = ctx.createLinearGradient(0, TM, 0, TM + plotH);
   grad.addColorStop(0, `rgba(${gradColor}, 0.12)`);
   grad.addColorStop(0.6, `rgba(${gradColor}, 0.03)`);
@@ -227,7 +227,7 @@ function drawPriceChart() {
     for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].px, pts[i].py);
   }
   ctx.lineTo(lastPt.px, lastPt.py);
-  ctx.strokeStyle = '#5b9cf6';
+  ctx.strokeStyle = '#38bdf8';
   ctx.lineWidth = 2;
   ctx.stroke();
 
@@ -236,23 +236,23 @@ function drawPriceChart() {
   const lx = x(last.t), ly = y(last.p);
 
   // Dashed horizontal at current price
-  ctx.strokeStyle = 'rgba(91,156,246,0.2)';
+  ctx.strokeStyle = 'rgba(56,189,248,0.22)';
   ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
   ctx.beginPath(); ctx.moveTo(LM, ly); ctx.lineTo(W - RM, ly); ctx.stroke();
   ctx.setLineDash([]);
 
   // Glow dot
   ctx.beginPath(); ctx.arc(lx, ly, 5, 0, Math.PI * 2);
-  ctx.fillStyle = 'rgba(91,156,246,0.15)'; ctx.fill();
+  ctx.fillStyle = 'rgba(56,189,248,0.16)'; ctx.fill();
   ctx.beginPath(); ctx.arc(lx, ly, 3, 0, Math.PI * 2);
-  ctx.fillStyle = '#5b9cf6'; ctx.fill();
+  ctx.fillStyle = '#38bdf8'; ctx.fill();
 
   // Price badge
   const priceStr = '$' + last.p.toLocaleString('en-US', {minimumFractionDigits:2, maximumFractionDigits:2});
   ctx.font = 'bold 10px Inter,sans-serif';
   const tw = ctx.measureText(priceStr).width;
   const bx = W - RM - tw - 10, by = ly - 9;
-  ctx.fillStyle = '#5b9cf6';
+  ctx.fillStyle = '#38bdf8';
   ctx.beginPath(); ctx.roundRect(bx, by, tw + 10, 18, 4); ctx.fill();
   ctx.fillStyle = '#fff'; ctx.textAlign = 'left';
   ctx.fillText(priceStr, bx + 5, ly + 4);
@@ -283,7 +283,7 @@ function drawPriceChart() {
     const barY = TM + plotH + 2;
     ctx.fillStyle = 'rgba(255,255,255,0.05)';
     ctx.fillRect(LM, barY, plotW, 3);
-    ctx.fillStyle = progress < 0.8 ? '#5b9cf6' : '#f59e0b';
+    ctx.fillStyle = progress < 0.8 ? '#38bdf8' : '#fbbf24';
     ctx.fillRect(LM, barY, plotW * progress, 3);
   }
 }
@@ -313,10 +313,10 @@ function drawSignalChart() {
     ctx.fillStyle = 'rgba(255,255,255,0.05)';
     ctx.fillRect(bx, H - 20 - bh, barW, bh);
 
-    // Fired overlay (blue)
+    // Fired overlay (cyan accent)
     if (d.fired > 0) {
       const fh = (d.fired / maxSig) * (H - 28);
-      ctx.fillStyle = '#5b9cf6';
+      ctx.fillStyle = '#38bdf8';
       ctx.fillRect(bx, H - 20 - fh, barW, fh);
     }
 
@@ -392,12 +392,12 @@ function drawVolRadar() {
   // Green "fire zone" (3% to 20%)
   const fireStart = Math.max(0, (3 / 30) * barWidth);
   const fireEnd = Math.min(barWidth, (20 / 30) * barWidth);
-  ctx.fillStyle = 'rgba(74, 222, 128, 0.12)';
+  ctx.fillStyle = 'rgba(52, 211, 153, 0.12)';
   ctx.fillRect(barX + fireStart, currentY, fireEnd - fireStart, 12);
   // Actual edge bar
   const edgeMin = -10, edgeMax = 20;
   const edgeNorm = Math.max(0, Math.min((termEdge - edgeMin) / (edgeMax - edgeMin), 1));
-  ctx.fillStyle = termEdge >= 3 ? '#4ade80' : '#5b9cf6';
+  ctx.fillStyle = termEdge >= 3 ? '#34d399' : '#38bdf8';
   ctx.fillRect(barX, currentY, edgeNorm * barWidth, 12);
   ctx.fillStyle = '#6b7280';
   ctx.textAlign = 'right';
@@ -405,7 +405,7 @@ function drawVolRadar() {
   currentY += barHeight + barGap;
 
   // Conditions Met (0-15, turns green at 15)
-  drawBar(currentY, 'Conditions', condsMet, condsTotal, condsMet === condsTotal ? '#4ade80' : '#5b9cf6');
+  drawBar(currentY, 'Conditions', condsMet, condsTotal, condsMet === condsTotal ? '#34d399' : '#38bdf8');
 }
 
 // ═══════════════════════ EQUITY CURVE ═══════════════════════
@@ -440,7 +440,7 @@ function drawEquityCurve() {
   ctx.setLineDash([]);
 
   // Line
-  ctx.beginPath(); ctx.strokeStyle = cum >= 0 ? '#4ade80' : '#f87171'; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.strokeStyle = cum >= 0 ? '#34d399' : '#f87171'; ctx.lineWidth = 2;
   pts.forEach((p,i) => { i === 0 ? ctx.moveTo(x(p.t,i), y(p.v)) : ctx.lineTo(x(p.t,i), y(p.v)); });
   ctx.stroke();
 
@@ -448,11 +448,11 @@ function drawEquityCurve() {
   ctx.lineTo(x(pts[pts.length-1].t, pts.length-1), y(0));
   ctx.lineTo(x(pts[0].t, 0), y(0));
   ctx.closePath();
-  ctx.fillStyle = cum >= 0 ? 'rgba(74,222,128,0.08)' : 'rgba(248,113,113,0.08)';
+  ctx.fillStyle = cum >= 0 ? 'rgba(52,211,153,0.08)' : 'rgba(248,113,113,0.08)';
   ctx.fill();
 
   // End label
-  ctx.fillStyle = cum >= 0 ? '#4ade80' : '#f87171';
+  ctx.fillStyle = cum >= 0 ? '#34d399' : '#f87171';
   ctx.font = 'bold 11px Inter,sans-serif'; ctx.textAlign = 'right';
   ctx.fillText(fmtUsd(cum), W - 4, y(cum) - 6);
 }

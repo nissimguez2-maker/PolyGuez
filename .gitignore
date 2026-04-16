@@ -34,3 +34,6 @@ local/
 # OpenClaw analyst artifacts — local to the VPS, never committed.
 reports/polyguez-*.md
 .openclaw/state/brief_slots.json
+
+# Claude Code local dev state
+.claude/
