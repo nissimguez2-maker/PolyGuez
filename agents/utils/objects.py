@@ -293,12 +293,20 @@ class PolyGuezConfig(BaseModel):
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)
     chainlink_onchain_poll_interval: float = Field(default=0.5)
-    chainlink_onchain_rpc_url: str = Field(default="https://polygon.drpc.org")
+    # drpc.org free tier is fine for dry-run but has no SLA and rate limits.
+    # Set CHAINLINK_RPC_URL env var to an Alchemy/QuickNode/Infura Polygon
+    # endpoint before flipping to live mode.
+    chainlink_onchain_rpc_url: str = Field(
+        default_factory=lambda: os.environ.get("CHAINLINK_RPC_URL", "https://polygon.drpc.org"),
+        description="Polygon RPC URL for on-chain Chainlink reads. Override via CHAINLINK_RPC_URL env var.",
+    )
 
     # P2B parsing hardening
     p2b_sanity_min: float = Field(default=10000.0, description="Min plausible BTC price for P2B")
     p2b_sanity_max: float = Field(default=500000.0, description="Max plausible BTC price for P2B")
-    p2b_consecutive_failure_halt: int = Field(default=50, description="Halt after N consecutive P2B parse failures")
+    # Lowered 50 -> 10 per audit: at the 2.5s signal cadence, 50 failures was
+    # 125s of bad shadow entries before halt; 10 caps it at ~25s.
+    p2b_consecutive_failure_halt: int = Field(default=10, description="Halt after N consecutive P2B parse failures")
     min_terminal_edge: float = Field(default=0.03, ge=0.01, le=0.5, description="Min edge at terminal probability for entry")
     conviction_min_delta: float = Field(default=0.5, ge=0.0, le=200.0, description="Min $ delta between Chainlink and P2B for conviction")
     conviction_min_delta_strict: float = Field(default=2.0, ge=0.0, le=500.0, description="Strict delta threshold for fast-moving markets")

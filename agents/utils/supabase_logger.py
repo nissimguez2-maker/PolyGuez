@@ -7,20 +7,63 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-# Shared thread pool for non-blocking Supabase writes
+# Shared thread pool for non-blocking Supabase writes.
+# ThreadPoolExecutor's internal queue is unbounded by default — under a
+# Supabase outage the 2.5s signal cadence can balloon pending submissions
+# until memory is exhausted. `_submit_log()` below checks the queue size
+# and drops (with a periodic warning) once it crosses `_MAX_QUEUE_SIZE`.
 _log_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="supa_log")
+_MAX_QUEUE_SIZE = 500
+_log_drops = 0
 
 _supabase_client = None
 _supabase_init_attempted = False
+# Protects the _client() init path so two threads hitting log_signal /
+# log_trade simultaneously on a cold import don't race to monkey-patch
+# httpx. The double-checked pattern inside _client() uses this lock.
+_supabase_init_lock = threading.Lock()
+
+
+def _submit_log(fn):
+    """Submit a background log task, dropping instead of queuing when full."""
+    global _log_drops
+    try:
+        if _log_executor._work_queue.qsize() >= _MAX_QUEUE_SIZE:
+            _log_drops += 1
+            # Rate-limit the log noise so an outage doesn't spam warnings.
+            if _log_drops == 1 or _log_drops % 100 == 0:
+                logger.warning(
+                    f"Supabase log queue full (size>={_MAX_QUEUE_SIZE}), "
+                    f"dropping writes (total drops: {_log_drops})"
+                )
+            return
+        _log_executor.submit(fn)
+    except Exception as e:
+        # Don't let logger bookkeeping take down the caller.
+        logger.warning(f"Supabase log submit failed: {e}")
 
 
 def _client():
     global _supabase_client, _supabase_init_attempted
+    # Fast path: no lock needed once init has succeeded or failed once.
     if _supabase_client is not None:
         return _supabase_client
     if _supabase_init_attempted:
         return None
-    _supabase_init_attempted = True
+    with _supabase_init_lock:
+        # Re-check inside the lock (double-checked locking): another thread
+        # may have completed the init while we were blocked on acquisition.
+        if _supabase_client is not None:
+            return _supabase_client
+        if _supabase_init_attempted:
+            return None
+        _supabase_init_attempted = True
+        return _init_client_locked()
+
+
+def _init_client_locked():
+    """Must be called with _supabase_init_lock held. Sets _supabase_client on success."""
+    global _supabase_client
     try:
         from supabase import create_client, Client
         url = os.environ.get("SUPABASE_URL", "")
@@ -75,7 +118,7 @@ def log_signal(snapshot: dict, session_tag: str = "V5") -> None:
             client.table("signal_log").insert(snapshot).execute()
         except Exception as e:
             logger.warning(f"Supabase signal log failed: {e}")
-    _log_executor.submit(_insert)
+    _submit_log(_insert)
 
 
 def log_trade(record: dict, session_tag: str = "V5") -> None:
@@ -92,7 +135,7 @@ def log_trade(record: dict, session_tag: str = "V5") -> None:
             client.table("trade_log").insert(record).execute()
         except Exception as e:
             logger.warning(f"Supabase trade log failed: {e}")
-    _log_executor.submit(_insert)
+    _submit_log(_insert)
 
 
 def log_shadow_trade(record: dict, session_tag: str = "v2") -> None:
@@ -107,7 +150,7 @@ def log_shadow_trade(record: dict, session_tag: str = "v2") -> None:
             client.table("shadow_trade_log").insert(record).execute()
         except Exception as e:
             logger.warning(f"Supabase shadow trade log failed: {e}")
-    _log_executor.submit(_insert)
+    _submit_log(_insert)
 
 
 def settle_shadow_trades(

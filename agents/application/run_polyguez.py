@@ -422,6 +422,13 @@ class PolyGuezRunner:
 
         # Position recovery: if last trade is pending, reconstruct position and settle
         await self._recover_pending_position()
+        # Multi-position crash recovery: if the crash left more than one pending
+        # trade in rolling_stats (e.g. traded A then B, crashed while B still
+        # pending), `_recover_pending_position` above only rebuilds `self._position`
+        # for the most recent one. Resolve any OTHER pending trades (via Gamma)
+        # before the first cycle starts, rather than letting them sit pending
+        # until cycle 1 runs `_resolve_pending_settlements`.
+        await self._resolve_pending_settlements()
 
         while not self._killed:
             self._loop_heartbeat_ts = time.time()
