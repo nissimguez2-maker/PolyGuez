@@ -431,6 +431,25 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
     return (verdict, reason, adapter.name, round(elapsed, 2))
 
 
+def _extract_clob_fee(resp) -> float:
+    """Best-effort parse of the fee returned by the CLOB order response.
+
+    The py-clob-client response shape is not strictly documented and has
+    changed between versions; we look for the most common keys and fall
+    back to 0.0 if none is present. Called on both maker and FOK fill paths.
+    """
+    if not isinstance(resp, dict):
+        return 0.0
+    for k in ("fee", "feeAmount", "fee_amount", "makerFee", "takerFee"):
+        v = resp.get(k)
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                continue
+    return 0.0
+
+
 async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=None, seconds_remaining=300.0, net_edge=0.0):
     if mode == "live":
         loop = asyncio.get_event_loop()
@@ -465,7 +484,16 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                                 if isinstance(status, dict) and status.get("status", "").upper() in ("MATCHED", "FILLED"):
                                     filled_price = float(status.get("price", limit_price))
                                     log_event(logger, "maker_order_confirmed_filled", f"[MAKER] Order {order_id} filled at {filled_price:.4f}")
-                                    return {"status": "filled", "price": filled_price, "response": status}
+                                    return {
+                                        "status": "filled",
+                                        "price": filled_price,
+                                        "response": status,
+                                        # MODEL-02: fee + fill type per commit.
+                                        # Maker fills on Polymarket can earn a
+                                        # rebate (negative fee).
+                                        "fee_paid": _extract_clob_fee(status),
+                                        "taker_maker": "maker",
+                                    }
                             except Exception as poll_exc:
                                 log_event(logger, "maker_poll_error", f"[MAKER] Poll error: {poll_exc}", level=30)
                         # Order didn't fill — cancel it
@@ -478,9 +506,12 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                         if seconds_remaining - max_wait < 10:
                             log_event(logger, "maker_expiry_too_close",
                                 f"[MAKER] {seconds_remaining - max_wait:.0f}s remaining after cancel — skipping FOK fallback")
-                            return {"status": "unfilled", "reason": "expiry_too_close"}
-                        return {"status": "unfilled", "reason": "maker_timeout"}
-                    return {"status": "maker_posted", "price": limit_price, "response": resp}
+                            return {"status": "unfilled", "reason": "expiry_too_close",
+                                    "fee_paid": 0.0, "taker_maker": None}
+                        return {"status": "unfilled", "reason": "maker_timeout",
+                                "fee_paid": 0.0, "taker_maker": None}
+                    return {"status": "maker_posted", "price": limit_price, "response": resp,
+                            "fee_paid": 0.0, "taker_maker": "maker"}
             except Exception as exc:
                 log_event(logger, "maker_order_fallback", f"Maker order failed, falling back to FOK: {exc}", level=30)
         # FOK market order fallback — gated in live mode on net_edge floor.
@@ -495,22 +526,39 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                 f"[MAKER] net_edge={net_edge:.4f} below FOK floor {_fok_floor:.4f} — "
                 f"skipping taker fallback",
             )
-            return {"status": "unfilled", "reason": "fok_skipped_low_edge"}
+            return {"status": "unfilled", "reason": "fok_skipped_low_edge",
+                    "fee_paid": 0.0, "taker_maker": None}
         try:
             from py_clob_client.clob_types import MarketOrderArgs, OrderType
             order_args = MarketOrderArgs(token_id=token_id, amount=size_usdc)
             signed = await loop.run_in_executor(None, polymarket_client.client.create_market_order, order_args)
             resp = await loop.run_in_executor(None, lambda: polymarket_client.client.post_order(signed, orderType=OrderType.FOK))
             log_event(logger, "order_executed", f"LIVE order posted", {"response": str(resp)})
-            return {"status": "filled", "response": resp}
+            _fill_price = None
+            if isinstance(resp, dict):
+                try:
+                    _fill_price = float(resp.get("price") or resp.get("filledPrice") or 0.0) or None
+                except (TypeError, ValueError):
+                    _fill_price = None
+            return {
+                "status": "filled",
+                "response": resp,
+                "price": _fill_price,
+                "fee_paid": _extract_clob_fee(resp),
+                "taker_maker": "taker",
+            }
         except Exception as exc:
             log_event(logger, "order_error", f"Execution failed: {exc}", level=40)
-            return {"status": "error", "error": str(exc)}
+            return {"status": "error", "error": str(exc),
+                    "fee_paid": 0.0, "taker_maker": None}
     else:
         tag = "[DRY-RUN]" if mode == "dry-run" else "[PAPER]"
         maker_tag = " [MAKER]" if config and getattr(config, 'use_maker_orders', False) else ""
         log_event(logger, "order_simulated", f"{tag}{maker_tag} Simulated buy {size_usdc} USDC on {token_id}")
-        return {"status": "simulated", "mode": mode}
+        # MODEL-02: always return populated fee_paid + taker_maker so
+        # trade_log rows are non-NULL even in dry-run / paper modes.
+        return {"status": "simulated", "mode": mode,
+                "fee_paid": 0.0, "taker_maker": "simulated"}
 
 
 async def execute_emergency_exit(polymarket_client, position, mode):

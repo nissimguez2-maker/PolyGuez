@@ -126,6 +126,11 @@ class PolyGuezRunner:
         self._last_entry_llm_ms = 0.0
         self._last_entry_order_ms = 0.0
         self._last_entry_total_ms = 0.0
+        # MODEL-02: fee + fill-type fields captured at entry time from the
+        # CLOB executor response, persisted into trade_log at settlement.
+        self._last_entry_fee_paid: float = 0.0
+        self._last_entry_taker_maker: Optional[str] = "simulated"
+        self._last_entry_fill_price: float = 0.0
 
     # -- Public API for dashboard / CLI ------------------------------------
 
@@ -1026,6 +1031,20 @@ class PolyGuezRunner:
         self._last_entry_llm_ms = _llm_ms
         self._last_entry_order_ms = _order_ms
         self._last_entry_total_ms = _total_ms
+        # MODEL-02: capture fee data from the CLOB executor response.
+        # In dry-run the response contains fee_paid=0.0 and taker_maker="simulated".
+        # In live mode the response reflects the actual maker/taker outcome.
+        try:
+            _raw_fee = result.get("fee_paid")
+            self._last_entry_fee_paid = float(_raw_fee) if _raw_fee is not None else 0.0
+        except (TypeError, ValueError):
+            self._last_entry_fee_paid = 0.0
+        self._last_entry_taker_maker = result.get("taker_maker") or "simulated"
+        try:
+            _raw_price = result.get("price")
+            self._last_entry_fill_price = float(_raw_price) if _raw_price is not None else float(entry_price or 0.0)
+        except (TypeError, ValueError):
+            self._last_entry_fill_price = float(entry_price or 0.0)
 
         if result["status"] == "error":
             log_event(logger, "entry_failed", f"Entry failed: {result.get('error', '')}")
@@ -1145,8 +1164,10 @@ class PolyGuezRunner:
                     "mode": self.config.mode,
                     "terminal_edge": getattr(self._current_signal, 'terminal_edge', None) if self._current_signal else None,
                     "net_edge": getattr(self._current_signal, 'net_edge', None) if self._current_signal else None,
-                    "fee_paid": None,
-                    "taker_maker": None,
+                    # MODEL-02: real fee + fill-type from execute_entry.
+                    "fee_paid": self._last_entry_fee_paid,
+                    "taker_maker": self._last_entry_taker_maker,
+                    "fill_price": self._last_entry_fill_price,
                 }, session_tag=self.config.session_tag)
                 # Flush barrier (same pattern as _settle): best-effort, 5s max.
                 try:
@@ -1299,8 +1320,10 @@ class PolyGuezRunner:
                 "mode": self.config.mode,
                 "terminal_edge": getattr(self._current_signal, 'terminal_edge', None) if self._current_signal else None,
                 "net_edge": getattr(self._current_signal, 'net_edge', None) if self._current_signal else None,
-                "fee_paid": None,
-                "taker_maker": None,
+                # MODEL-02: real fee + fill-type from execute_entry.
+                "fee_paid": self._last_entry_fee_paid,
+                "taker_maker": self._last_entry_taker_maker,
+                "fill_price": self._last_entry_fill_price,
             }, session_tag=self.config.session_tag)
             # Flush barrier: ensure the submitted insert has been picked up
             # by a worker before we move on. Best-effort; never let a slow

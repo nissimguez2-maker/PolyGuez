@@ -175,6 +175,101 @@ async def get_stats(secret: str = Query(default="")):
     })
 
 
+def _evaluate_live_gates() -> list[dict]:
+    """MODEL-01: compute the state of each live-mode gate.
+
+    Returns a list of {name, passed, required, value, note} dicts. The
+    programmatic live-mode gate in /api/mode refuses to flip unless every
+    `passed=True`. /api/live-readiness exposes this list as JSON so the
+    dashboard can render a readiness scoreboard.
+
+    Gates:
+      1. CONFIRM string        — checked inline in /api/mode (not here)
+      2. kill_switch_off       — bot is not killed
+      3. trade_count >= 100    — V5 session has accumulated enough trades
+      4. brier <= 0.25         — model calibration is at least random-or-better
+      5. min_net_edge > 0.02   — operator has enabled the net-edge gate
+    """
+    gates: list[dict] = []
+
+    killed = bool(getattr(_runner, "is_killed", False)) if _runner else True
+    gates.append({
+        "name": "kill_switch_off",
+        "passed": not killed,
+        "required": "kill-switch must be off",
+        "value": {"killed": killed},
+    })
+
+    cfg = getattr(_runner, "config", None) if _runner else None
+    session_tag = getattr(cfg, "session_tag", "V5") if cfg else "V5"
+
+    trade_count = None
+    brier_value = None
+    brier_n = None
+    try:
+        # Lazy-import the service-role client used by the bot's own logger
+        # so we reuse the Supabase connection and env vars.
+        from agents.utils.supabase_logger import _client as _supa_client
+        supa = _supa_client()
+        if supa is not None:
+            count_resp = (
+                supa.table("trade_log")
+                .select("id", count="exact")
+                .eq("session_tag", session_tag)
+                .execute()
+            )
+            trade_count = int(count_resp.count or 0)
+            brier_resp = supa.rpc("get_session_brier", {"p_session_tag": session_tag}).execute()
+            if getattr(brier_resp, "data", None):
+                row = brier_resp.data[0]
+                brier_value = float(row.get("brier")) if row.get("brier") is not None else None
+                brier_n = int(row.get("n_trades") or 0)
+    except Exception as exc:
+        gates.append({
+            "name": "supabase_reachable",
+            "passed": False,
+            "required": "Supabase queries succeed",
+            "value": {"error": str(exc)},
+        })
+
+    gates.append({
+        "name": "trade_count_ge_100",
+        "passed": bool(trade_count is not None and trade_count >= 100),
+        "required": f"session {session_tag} trade_count >= 100",
+        "value": {"trade_count": trade_count, "session_tag": session_tag},
+    })
+    gates.append({
+        "name": "brier_le_0_25",
+        "passed": bool(brier_value is not None and brier_value <= 0.25),
+        "required": "Brier score <= 0.25 (model at least as good as random)",
+        "value": {"brier": brier_value, "n_trades": brier_n},
+    })
+
+    min_net_edge = float(getattr(cfg, "min_net_edge", 0.0) or 0.0) if cfg else 0.0
+    gates.append({
+        "name": "min_net_edge_gt_0_02",
+        "passed": min_net_edge > 0.02,
+        "required": "PolyGuezConfig.min_net_edge > 0.02 (net-edge gate enabled)",
+        "value": {"min_net_edge": min_net_edge},
+    })
+    return gates
+
+
+@app.get("/api/live-readiness")
+async def live_readiness(secret: str = Query(default="")):
+    """Scoreboard of every live-mode gate. All must pass before /api/mode
+    will accept `mode=live`. Useful for the dashboard to surface WHY a live
+    flip is not yet allowed."""
+    _check_auth(secret)
+    if _runner is None:
+        return JSONResponse({"error": "Runner not active"}, status_code=503)
+    gates = _evaluate_live_gates()
+    return JSONResponse({
+        "gates": gates,
+        "all_pass": all(g.get("passed") for g in gates),
+    })
+
+
 @app.post("/api/mode")
 async def set_mode(request: Request, secret: str = Query(default="")):
     _check_auth(secret)
@@ -185,16 +280,23 @@ async def set_mode(request: Request, secret: str = Query(default="")):
     confirm = body.get("confirm", "")
 
     if new_mode == "live":
-        if _runner.is_killed:
-            return JSONResponse(
-                {"error": "Cannot switch to live while kill switch is active. Restart the bot."},
-                status_code=400,
-            )
+        # Gate 1 (CONFIRM) is checked inline so we don't run expensive
+        # Supabase queries when the operator didn't even type the string.
         if confirm != "CONFIRM":
             return JSONResponse(
                 {"error": "Type CONFIRM to enable live trading"},
                 status_code=400,
             )
+        # Gates 2..5 — MODEL-01 programmatic live-mode gate. Every gate
+        # must pass; the full scoreboard is surfaced via /api/live-readiness.
+        gates = _evaluate_live_gates()
+        failed = [g for g in gates if not g.get("passed")]
+        if failed:
+            return JSONResponse({
+                "error": "Live-mode gate failed — one or more prerequisites not met.",
+                "failed": failed,
+                "all_gates": gates,
+            }, status_code=400)
 
     if new_mode not in ("dry-run", "paper", "live"):
         return JSONResponse({"error": f"Invalid mode: {new_mode}"}, status_code=400)
