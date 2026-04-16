@@ -385,16 +385,44 @@ class PolyGuezRunner:
                     "Continuing without wallet — CLOB prices will use Gamma outcomePrices, "
                     "balance will be simulated $100")
 
-        # Live mode: verify wallet has funds
+        # Live mode: on-chain wallet reconciliation is mandatory (audit 3.2).
+        # A failed balance read in live mode cannot fall through — we would
+        # start with an unknown on-chain state and phantom balance, exactly
+        # the scenario the audit warned against. Refuse to start instead.
         if self.config.mode == "live" and self._polymarket:
+            loop = asyncio.get_event_loop()
             try:
-                loop = asyncio.get_event_loop()
                 balance = await loop.run_in_executor(None, self._polymarket.get_usdc_balance)
-                log_event(logger, "startup_balance", f"Wallet USDC balance: ${balance:.2f}")
-                if balance < self.config.bet_size_low_balance_normal:
-                    log_event(logger, "startup_low_balance", f"WARNING: Balance ${balance:.2f} below minimum bet size", level=40)
             except Exception as exc:
-                log_event(logger, "startup_balance_error", f"Could not check balance: {exc}", level=40)
+                log_event(
+                    logger,
+                    "startup_balance_halt",
+                    f"LIVE mode: on-chain USDC balance read failed — halting. Error: {exc}",
+                    level=40,
+                )
+                self._killed = True
+                return
+            log_event(logger, "startup_balance", f"Wallet USDC balance: ${balance:.2f}")
+            self._usdc_balance = float(balance)
+            if balance < self.config.bet_size_low_balance_normal:
+                log_event(
+                    logger,
+                    "startup_low_balance_halt",
+                    f"LIVE mode: balance ${balance:.2f} below minimum bet size "
+                    f"${self.config.bet_size_low_balance_normal} — halting.",
+                    level=40,
+                )
+                self._killed = True
+                return
+        elif self.config.mode == "live" and not self._polymarket:
+            log_event(
+                logger,
+                "startup_no_wallet_live_halt",
+                "LIVE mode requested but Polymarket client not initialized — halting.",
+                level=40,
+            )
+            self._killed = True
+            return
 
         # Start BTC price feed
         await self._btc_feed.start()
@@ -967,9 +995,15 @@ class PolyGuezRunner:
                 return False
 
         # Execute — pass seconds_remaining so maker timeout adapts to expiry
+        # and net_edge so execute_entry can gate FOK fallback in live mode.
         _seconds_remaining = max(1.0, 300.0 - signal.elapsed_seconds)
         _t_order_start = asyncio.get_running_loop().time()
-        result = await execute_entry(self._polymarket, token_id, size, self.config.mode, config=self.config, seconds_remaining=_seconds_remaining)
+        result = await execute_entry(
+            self._polymarket, token_id, size, self.config.mode,
+            config=self.config,
+            seconds_remaining=_seconds_remaining,
+            net_edge=getattr(signal, "net_edge", 0.0),
+        )
         _order_ms = (asyncio.get_running_loop().time() - _t_order_start) * 1000
         _total_ms = _llm_ms + _order_ms
         log_event(logger, "hot_path_timing",

@@ -431,7 +431,7 @@ async def get_llm_confirmation(signal_state, rolling_stats, config, price_to_bea
     return (verdict, reason, adapter.name, round(elapsed, 2))
 
 
-async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=None, seconds_remaining=300.0):
+async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=None, seconds_remaining=300.0, net_edge=0.0):
     if mode == "live":
         loop = asyncio.get_event_loop()
         # Maker limit order path — avoid taker fees
@@ -483,7 +483,19 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                     return {"status": "maker_posted", "price": limit_price, "response": resp}
             except Exception as exc:
                 log_event(logger, "maker_order_fallback", f"Maker order failed, falling back to FOK: {exc}", level=30)
-        # FOK market order fallback
+        # FOK market order fallback — gated in live mode on net_edge floor.
+        # Post speed-bump removal (Feb 2026), crossing the spread from a VPS
+        # is a losing race. Only take FOK when net_edge is big enough that
+        # the fee + adverse-selection cost is still clearly profitable.
+        _fok_floor = getattr(config, "live_fok_net_edge_min", 0.10) if config else 0.10
+        if mode == "live" and net_edge < _fok_floor:
+            log_event(
+                logger,
+                "fok_skipped_low_edge",
+                f"[MAKER] net_edge={net_edge:.4f} below FOK floor {_fok_floor:.4f} — "
+                f"skipping taker fallback",
+            )
+            return {"status": "unfilled", "reason": "fok_skipped_low_edge"}
         try:
             from py_clob_client.clob_types import MarketOrderArgs, OrderType
             order_args = MarketOrderArgs(token_id=token_id, amount=size_usdc)
