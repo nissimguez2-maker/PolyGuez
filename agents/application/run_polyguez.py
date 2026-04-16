@@ -936,6 +936,13 @@ class PolyGuezRunner:
                     "entry_side": signal.direction,
                     "yes_price": signal.yes_price,
                     "no_price": signal.no_price,
+                    # MODEL-04: explicit "this was the quote at signal-eval
+                    # time" so post-live slippage analysis can cleanly
+                    # compute realized slippage as
+                    #   fill_price (trade_log) - signal_eval_yes_price
+                    # without ambiguity about which yes_price is which.
+                    "signal_eval_yes_price": signal.yes_price,
+                    "signal_eval_no_price": signal.no_price,
                     "spread": signal.spread,
                     "conditions_met": sum(_v2_conds),
                     "all_conditions_met": signal.all_conditions_met,
