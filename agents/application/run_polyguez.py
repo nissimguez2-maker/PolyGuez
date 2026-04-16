@@ -494,12 +494,20 @@ class PolyGuezRunner:
             self._usdc_balance, self.config
         )
 
-        # Check if balance allows trading (must cover smallest possible bet)
+        # Check if balance allows trading (must cover smallest possible bet).
+        # In live/paper we early-return to avoid hammering the market-discovery
+        # API at 2.5s cadence when we can't trade anyway. In dry-run we FALL
+        # THROUGH so signal_log keeps getting written — losing observational
+        # data because a simulated balance drained is the wrong tradeoff.
+        # The downstream `balance_ok` gate in the signal evaluator blocks
+        # entry regardless, so no trade is ever attempted below min_bet.
         min_bet = self.config.bet_size_low_balance_normal
         if self._usdc_balance < min_bet:
             log_event(logger, "balance_halt", f"Balance ${self._usdc_balance:.2f} < min bet ${min_bet}")
-            await asyncio.sleep(30)
-            return
+            if self.config.mode != "dry-run":
+                await asyncio.sleep(30)
+                return
+            # Dry-run: fall through to signal eval + log_signal.
 
         # Discover active 5-min BTC market
         self._current_market = await self._discover_market()
