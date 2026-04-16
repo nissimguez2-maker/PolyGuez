@@ -1,0 +1,158 @@
+# PolyGuez — System Reference
+
+> Stable facts about PolyGuez. Hand-edited. Updated only on PRs that change config,
+> infra, architecture, or standing rules. Auto-refreshed live numbers live in
+> [`CONTEXT.md`](CONTEXT.md). Claude behavioural rules live in
+> [`CLAUDE.md`](CLAUDE.md).
+
+---
+
+## Owner
+
+Nessim — non-developer, finance background, based in Israel. Communication style:
+short, direct, fix-don't-explain, lead with action. Does not use their phone for
+PolyGuez work. Goal: passive income from algo trading, target $60–70/day when live.
+
+---
+
+## What PolyGuez does
+
+Trades Polymarket's 5-minute BTC binary markets ("Will BTC close Up or Down vs
+opening price within this window?").
+
+Strategy: compare the real-time Chainlink oracle BTC price to the market's
+price-to-beat (P2B) strike, compute a terminal-probability edge via a logistic
+model `P = 1 / (1 + e^(-k·Δ))` with time-adjusted steepness, and fire a trade
+when edge, price, spread, depth, and CLOB consensus gates all pass.
+
+Execution: maker GTD limit orders via py-clob-client. In live mode, FOK
+market-order fallback is gated on `net_edge >= live_fok_net_edge_min` (0.10
+default). Dry-run exercises all paths.
+
+All signals and trades log to Supabase for post-hoc calibration.
+
+---
+
+## Current session: **V5 (clean era)** — started 2026-04-15
+
+V5 is the canonical research session. All rows carry `era = 'V5'`. Pre-V5 data
+was deleted from Supabase on 2026-04-16 (see
+`supabase/migrations/2026_04_18_cleanse_pre_v5.sql`). The
+`rolling_stats.reset_token = 'V5-CLEAN'` forces clean boot on every restart.
+
+**V5 goals:**
+- Accumulate ≥100 clean dry-run trades to support calibration.
+- Refit logistic `k` on live V5 data. Current value `k = 0.035` is a prior;
+  MLE on 88K shadows suggests true `k ≈ 0.007–0.010`. **Do not go live until
+  refitted.**
+- Implement a programmatic live-mode gate (trade count + Brier score + net-edge
+  threshold). Currently the gate is a markdown rule only.
+- Flip to live only after that gate passes.
+
+---
+
+## Current config (defaults in `agents/utils/objects.py::PolyGuezConfig`)
+
+| Param | Value | Notes |
+|---|---|---|
+| `mode` | `dry-run` | Live requires `CONFIRM` in dashboard + (pending) programmatic gate |
+| `session_tag` | `V5` | From env `SESSION_TAG` |
+| `k` (logistic steepness) | `0.035` | ⚠️ Overcalibrated — MLE suggests 0.007–0.010. Do not go live at this value; refit on V5 live data first. Hardcoded today in `polyguez_strategy.py:52`; MODEL-06 moves it to config. |
+| `bet_size_normal` / `strong` | $8 / $10 | `low_balance` variants $3 / $5 |
+| `max_capital_fraction` | 0.20 | Per-trade cap as fraction of balance |
+| `max_daily_loss` | $20 | Tiered: 50% size at $10, 25% at $15, stop at $20 (bypassed in dry-run) |
+| `min_edge` / `min_terminal_edge` | 0.03 / 0.03 | Gross-edge floor — switch to `net_edge` gate before live (MODEL-05) |
+| `min_entry_token_price` / `max` | 0.35 / 0.50 | Entry price band |
+| `max_spread` | 0.03 | |
+| `min_clob_consensus` | 0.30 | |
+| `min_clob_depth` | $50 | Min liquidity at best ask |
+| `taker_fee_coefficient` | 0.072 | Used for `net_edge` logging; not yet a gate |
+| `live_fok_net_edge_min` | 0.10 | FOK taker-fallback gate in live mode only |
+| `use_maker_orders` / `maker_price_offset` | True / 0.005 | GTD + post_only default |
+| `chainlink_onchain_rpc_url` | `polygon.drpc.org` or `$CHAINLINK_RPC_URL` | Free RPC fine for dry-run; set dedicated Alchemy/QuickNode URL before live |
+| `p2b_consecutive_failure_halt` | 10 | At 2.5s cadence ≈ 25s of bad shadow entries before halt |
+| `blocked_hours_utc` | `[0, 3]` | Thin-liquidity windows |
+| `llm_enabled` | `False` | Phase 0 — LLM disabled |
+
+---
+
+## Infrastructure
+
+| Piece | Where | Notes |
+|---|---|---|
+| Bot runtime | Railway — project `stunning-perfection` | `Procfile: web: python scripts/python/cli.py run-polyguez --dashboard-port ${PORT:-8080}`. Auto-deploys on push to `main`. |
+| Bot URL | `https://polyguez-production.up.railway.app` | `/health` is unauthenticated; dashboard gated by `DASHBOARD_SECRET`. |
+| Supabase | project `rapmxqnxsobvxqtfnwqh`, region ap-south-1 (Mumbai) | Tables: `signal_log`, `trade_log`, `shadow_trade_log`, `rolling_stats`, `session_tag_current`. Archive tables emptied 2026-04-16. |
+| Dashboard | Same Railway service, FastAPI on `$PORT` | Auth via `DASHBOARD_SECRET` query param. Anon Supabase reads restricted to `mode='dry-run'`. Balance served via authenticated `/api/stats`. |
+| Operator runtime | Hetzner VPS `178.104.196.211` (Ubuntu 24.04) | OpenClaw agents running as user `thiago`. Telegram bot polls from VPS. UFW allows port 22 only. |
+| GitHub | `nissimguez2-maker/PolyGuez` (public) | Push to `main` → Railway redeploy + CONTEXT.md auto-refresh. |
+| VPS auto-pull | Cron `*/15 * * * *` as `thiago` | Pulls via dedicated deploy key (`~thiago/.ssh/github_polyguez`). |
+| Agent-memory backup | Daily cron 02:00 UTC on VPS | `/root/backups/openclaw-agents-YYYYMMDD.tgz`, 7-day retention. Off-site backup not yet configured. |
+| Wallet | Polygon mainnet, USDC-e `0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174` | CTF Exchange `0x4bfb41d5b3570defd03c39a9a4d8de6bd8b8982e`, Neg Risk `0xC5d563A36AE78145C45a50134d48A1215220f80a` |
+
+---
+
+## Standing rules (do not violate without explicit confirmation from Nessim)
+
+- **Mode stays `dry-run`** until the programmatic gate passes: ≥100 V5 trades +
+  Brier < 0.25 + `net_edge` gate enabled + `CONFIRM` typed.
+- **Do not change `k`** without refitting on live V5 data. Current value is
+  known-wrong (MLE says 4–5× too steep).
+- **Do not loosen** the entry-price band, spread gate, consensus gate, or
+  `min_terminal_edge` without calibrated outcome data.
+- **Do not go live** if any P0 item in the "Open work" list below is unmerged.
+- **Net edge, not gross:** the entry gate must use `net_edge` before any real
+  capital is at risk.
+- **Communication:** short, action-first. Never make Nessim open a terminal.
+  Fix, don't explain. No emojis. No "let me know if…" boilerplate.
+
+---
+
+## Key files
+
+| What | File |
+|---|---|
+| Main event loop | `agents/application/run_polyguez.py` |
+| Signal logic + `execute_entry` | `agents/strategies/polyguez_strategy.py` |
+| Market discovery / P2B parsing | `agents/strategies/market_discovery.py` |
+| BTC feed (Binance WS + RTDS + REST) | `agents/strategies/btc_feed.py` |
+| Chainlink oracle | `agents/connectors/chainlink_feed.py` |
+| CLOB execution | `agents/polymarket/polymarket.py` |
+| Config + state dataclasses | `agents/utils/objects.py` |
+| Supabase logger | `agents/utils/supabase_logger.py` |
+| Dashboard backend (FastAPI) | `scripts/python/server.py` |
+| Dashboard frontend | `scripts/frontend/` |
+| CLI entrypoint | `scripts/python/cli.py` |
+| Schema | `supabase/schema.sql` + `supabase/migrations/` |
+| Live state (auto-refreshed) | [`CONTEXT.md`](CONTEXT.md) |
+| VPS hardening runbook | [`docs/VPS_HARDENING.md`](docs/VPS_HARDENING.md) |
+
+---
+
+## Open work (as of 2026-04-18, not done — track here until closed)
+
+**Pre-live blockers (must land before `mode=live`):**
+
+- [ ] **SEC-02** — `/api/trades?mode=live` authenticated proxy (dashboard shows zero live trades without it)
+- [ ] **COR-01** — Fix trade-log race (position cleared before `log_trade` submitted)
+- [ ] **COR-02** — Fix pending-eviction capital leak (was the root cause of the $2.59 drain incident)
+- [ ] **COR-03** — Fix recovery double-settle window
+- [ ] **MODEL-01** — Programmatic live-mode gate (trade count + Brier + net_edge threshold)
+- [ ] **MODEL-02** — Wire `fee_paid` / `taker_maker` from CLOB executor back to `trade_log` (columns exist, always NULL today)
+- [ ] **MODEL-03** — Brier-score SQL view + RPC function (prerequisite for MODEL-01)
+- [ ] **MODEL-05** — Flip entry gate to `net_edge` (hold for calibration data)
+- [ ] **MODEL-06** — Refit `k` on V5 live data (post-100 live trades)
+- [ ] **INFRA** — Set `CHAINLINK_RPC_URL` to a dedicated Polygon RPC in Railway env
+
+**Hardening (strongly recommended, not strict blockers):**
+
+- [ ] **COR-04..09** — Background-task done-callbacks, thread-safe counter, atomic balance+PnL, CLOB-WS stale-price guard, `reset_token` mismatch alert, position-state lock
+- [ ] **SEC-03** — Migrate Telegram bot token in `openclaw.json` to env-var SecretRef
+- [ ] **INFRA** — Install Uptime Kuma on VPS; Telegram alert on Railway outage
+- [ ] **OC-01/02** — Verify CONTEXT.md fetch + input-validation rule in all 5 agent SOULs
+- [ ] **OC-04** — Off-site backup of agent memories (currently on-VPS only)
+
+**Schema hygiene (low priority, post-live):**
+
+- [ ] **ARCH-01** — Regenerate canonical `supabase/schema.sql` from prod dump
+- [ ] **ARCH-03** — Add `era` column to `shadow_trade_log`
