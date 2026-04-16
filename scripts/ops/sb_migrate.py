@@ -85,28 +85,75 @@ def main() -> int:
         print("No *.sql files in supabase/migrations/; nothing to do.")
         return 0
 
+    # Connect early so dry-run can also show what's pending vs applied.
+    try:
+        conn = _connect()
+        conn.autocommit = True
+        cur = conn.cursor()
+    except Exception as exc:
+        print(f"sb_migrate connection failed: {exc}", file=sys.stderr)
+        write_ops_log("sb_migrate", "error", {"reason": "connect_failed", "error": str(exc)})
+        return 1
+
+    # Ensure tracking table exists (defensive — the seeding migration should
+    # have created it, but we self-heal if someone deploys a fresh DB).
+    cur.execute(
+        "CREATE TABLE IF NOT EXISTS _sb_migrate_applied ("
+        "  filename TEXT PRIMARY KEY,"
+        "  applied_at TIMESTAMPTZ NOT NULL DEFAULT now(),"
+        "  applied_by TEXT NOT NULL DEFAULT current_user"
+        ")"
+    )
+
+    cur.execute("SELECT filename FROM _sb_migrate_applied")
+    already_applied = {row[0] for row in cur.fetchall()}
+
+    pending = [p for p in migration_files if p.name not in already_applied]
+    skipped = [p.name for p in migration_files if p.name in already_applied]
+
     if args.dry_run:
-        print("Would apply in order:")
-        for p in migration_files:
-            print(f"  - {p.name}")
-        write_ops_log("sb_migrate", "dry_run", {"files": [p.name for p in migration_files]})
+        print(f"Already applied ({len(skipped)}):")
+        for name in skipped:
+            print(f"  - {name}")
+        print(f"\nWould apply in order ({len(pending)}):")
+        for p in pending:
+            print(f"  + {p.name}")
+        write_ops_log("sb_migrate", "dry_run", {
+            "pending": [p.name for p in pending],
+            "already_applied": skipped,
+        })
+        cur.close()
+        conn.close()
         return 0
 
     if args.confirm != "CONFIRM_SCHEMA":
         write_ops_log("sb_migrate", "error", {"reason": "missing_confirm"})
         print("Refusing to apply without --confirm CONFIRM_SCHEMA", file=sys.stderr)
+        cur.close()
+        conn.close()
         return 1
+
+    if not pending:
+        write_ops_log("sb_migrate", "ok", {
+            "applied": [],
+            "skipped": skipped,
+            "note": "all migrations already applied",
+        })
+        print(f"All {len(skipped)} migration(s) already applied; nothing to do.")
+        cur.close()
+        conn.close()
+        return 0
 
     applied: list[str] = []
     try:
-        conn = _connect()
-        conn.autocommit = True
-        cur = conn.cursor()
-
-        for path in migration_files:
+        for path in pending:
             sql = path.read_text(encoding="utf-8")
             try:
                 cur.execute(sql)
+                cur.execute(
+                    "INSERT INTO _sb_migrate_applied (filename) VALUES (%s)",
+                    (path.name,),
+                )
                 applied.append(path.name)
                 print(f"applied: {path.name}")
             except Exception as exc:
@@ -120,11 +167,19 @@ def main() -> int:
         cur.close()
         conn.close()
 
-        write_ops_log("sb_migrate", "ok", {"applied": applied})
-        print(f"\nDone. Applied {len(applied)} migration(s).")
+        write_ops_log("sb_migrate", "ok", {
+            "applied": applied,
+            "skipped": skipped,
+        })
+        print(f"\nDone. Applied {len(applied)} new migration(s); skipped {len(skipped)} already-applied.")
         return 0
 
     except Exception as exc:
+        try:
+            cur.close()
+            conn.close()
+        except Exception:
+            pass
         print(f"sb_migrate failed: {exc}", file=sys.stderr)
         return 1
 
