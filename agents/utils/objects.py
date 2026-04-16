@@ -241,6 +241,12 @@ class PolyGuezConfig(BaseModel):
     # (not yet a hard entry gate — see docs/k_recalibration_2026_04_16.md).
     taker_fee_coefficient: float = Field(default=0.072, ge=0.0, le=0.2,
         description="Polymarket taker fee coefficient. Used to compute net_edge for calibration logging.")
+    # MODEL-01 Gate 5: the programmatic live-mode gate refuses to flip unless
+    # `min_net_edge > 0.02`, i.e. the operator has explicitly enabled the
+    # net-edge gate. Default 0.0 = inactive (entries still gated on gross
+    # `min_terminal_edge`). Wired into the gate check in scripts/python/server.py.
+    min_net_edge: float = Field(default=0.0, ge=0.0, le=0.5,
+        description="Minimum net_edge required for live-mode entry. 0.0 = gate inactive. Must be >0.02 before live flip.")
     # Post-Feb-2026 speed-bump removal: the taker path is a latency race we
     # lose from a Hetzner VPS. In live mode we never cross the spread unless
     # net_edge is large enough to cover fees + spread cost and then some.
