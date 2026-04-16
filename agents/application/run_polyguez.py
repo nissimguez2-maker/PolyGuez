@@ -839,6 +839,9 @@ class PolyGuezRunner:
                     "strike_delta": signal.strike_delta,
                     "terminal_probability": signal.terminal_probability,
                     "terminal_edge": signal.terminal_edge,
+                    # Fee-adjusted edge (log-only per audit Phase 1.1). Gate
+                    # still uses terminal_edge until k-recal Phase 4 lands.
+                    "net_edge": getattr(signal, "net_edge", None),
                     "entry_side": signal.direction,
                     "yes_price": signal.yes_price,
                     "no_price": signal.no_price,
@@ -1082,6 +1085,13 @@ class PolyGuezRunner:
                     "order_submit_ms": round(self._last_entry_order_ms, 1),
                     "total_latency_ms": round(self._last_entry_total_ms, 1),
                     "mode": self.config.mode,
+                    # Audit Phase 1.1 / 1.6 schema catch-up: log fee + edge
+                    # context on every trade. fee_paid / taker_maker stay
+                    # NULL until real fills arrive from the CLOB executor.
+                    "terminal_edge": getattr(self._current_signal, 'terminal_edge', None) if self._current_signal else None,
+                    "net_edge": getattr(self._current_signal, 'net_edge', None) if self._current_signal else None,
+                    "fee_paid": None,
+                    "taker_maker": None,
                 }, session_tag=self.config.session_tag)
                 if self.config.mode == "dry-run":
                     self._rolling_stats.simulated_balance = round(
@@ -1207,6 +1217,10 @@ class PolyGuezRunner:
                 "order_submit_ms": round(self._last_entry_order_ms, 1),
                 "total_latency_ms": round(self._last_entry_total_ms, 1),
                 "mode": self.config.mode,
+                "terminal_edge": getattr(self._current_signal, 'terminal_edge', None) if self._current_signal else None,
+                "net_edge": getattr(self._current_signal, 'net_edge', None) if self._current_signal else None,
+                "fee_paid": None,
+                "taker_maker": None,
             }, session_tag=self.config.session_tag)
 
         if outcome_str == "pending":
