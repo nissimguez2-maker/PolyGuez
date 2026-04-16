@@ -498,6 +498,17 @@ class RollingStats(BaseModel):
     reset_token: str = Field(default="", description="Set to a unique value to force local file to yield to Supabase on next startup")
     pending_settlements: List[PendingSettlement] = Field(default_factory=list)
 
+    def apply_pnl(self, pnl: float, mode: str) -> None:
+        """COR-05: single atomic PnL application. Both `daily_pnl` and
+        `simulated_balance` update together so the invariant
+        `balance_delta == daily_pnl_delta across restarts` is preserved —
+        previously the two were separate assignments and a crash between
+        them left the fields inconsistent.
+        """
+        self.daily_pnl = round(self.daily_pnl + pnl, 6)
+        if mode == "dry-run":
+            self.simulated_balance = round(self.simulated_balance + pnl, 6)
+
     @property
     def last_n_trades(self) -> List[TradeRecord]:
         return self.trades[-30:] if self.trades else []
