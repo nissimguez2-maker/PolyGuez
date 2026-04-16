@@ -1,11 +1,86 @@
 from __future__ import annotations
+import json
 import os
 import logging
 import threading
+import time
+import urllib.parse
+import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Write-failure counter + Telegram alert (audit 1.5 / Phase 1.5).
+#
+# Every log_* function routes through `_submit_log`. When the underlying
+# insert succeeds we call `_on_write_success()`; on exception we call
+# `_on_write_failure()`, which increments a consecutive-failure counter and
+# — once the counter crosses `SUPABASE_FAILURE_ALERT_THRESHOLD` (default 3)
+# — emits a Telegram message. Alerts are rate-limited to one per 10 minutes
+# so a sustained outage doesn't fan out into a notification storm.
+#
+# Telegram delivery is best-effort: if TELEGRAM_BOT_TOKEN or
+# TELEGRAM_ALERT_CHAT_ID are unset the alert is downgraded to a log line
+# and trading continues unaffected — the logger is not on the critical path.
+# ---------------------------------------------------------------------------
+_consecutive_write_failures = 0
+_last_alert_ts = 0.0
+_ALERT_COOLDOWN_SECONDS = 600
+_alert_state_lock = threading.Lock()
+
+
+def _on_write_success() -> None:
+    global _consecutive_write_failures
+    # Single-threaded assignment; no need to hold the lock for the zero case.
+    _consecutive_write_failures = 0
+
+
+def _on_write_failure(exc: Exception, source: str) -> None:
+    global _consecutive_write_failures, _last_alert_ts
+    with _alert_state_lock:
+        _consecutive_write_failures += 1
+        try:
+            threshold = int(os.environ.get("SUPABASE_FAILURE_ALERT_THRESHOLD", "3"))
+        except ValueError:
+            threshold = 3
+        if _consecutive_write_failures < threshold:
+            return
+        now = time.time()
+        if now - _last_alert_ts < _ALERT_COOLDOWN_SECONDS:
+            return
+        _last_alert_ts = now
+        count = _consecutive_write_failures
+    # Release lock before the (potentially slow) Telegram send.
+    _send_telegram_alert(
+        f"[PolyGuez] Supabase writes failing ({count} consecutive). "
+        f"Last: {source}: {exc!r}"
+    )
+
+
+def _send_telegram_alert(message: str) -> None:
+    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.environ.get("TELEGRAM_ALERT_CHAT_ID", "")
+    if not token or not chat_id:
+        # Alert would have fired but no delivery channel configured. Log it
+        # at WARNING so a human scanning Railway logs still sees it.
+        logger.warning(f"[ALERT-LOG] {message}")
+        return
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        data = urllib.parse.urlencode({
+            "chat_id": chat_id,
+            "text": message,
+            "disable_web_page_preview": "true",
+        }).encode()
+        req = urllib.request.Request(url, data=data, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            if resp.status >= 400:
+                logger.warning(f"Telegram alert non-2xx: {resp.status}")
+    except Exception as e:
+        # Never let the alerter take down the logger worker.
+        logger.warning(f"Telegram alert delivery failed: {e}")
 
 # Shared thread pool for non-blocking Supabase writes.
 # ThreadPoolExecutor's internal queue is unbounded by default — under a
@@ -116,8 +191,10 @@ def log_signal(snapshot: dict, session_tag: str = "V5") -> None:
             if not client:
                 return
             client.table("signal_log").insert(snapshot).execute()
+            _on_write_success()
         except Exception as e:
             logger.warning(f"Supabase signal log failed: {e}")
+            _on_write_failure(e, "signal_log")
     _submit_log(_insert)
 
 
@@ -133,8 +210,10 @@ def log_trade(record: dict, session_tag: str = "V5") -> None:
             if not client:
                 return
             client.table("trade_log").insert(record).execute()
+            _on_write_success()
         except Exception as e:
             logger.warning(f"Supabase trade log failed: {e}")
+            _on_write_failure(e, "trade_log")
     _submit_log(_insert)
 
 
@@ -148,8 +227,10 @@ def log_shadow_trade(record: dict, session_tag: str = "v2") -> None:
             if not client:
                 return
             client.table("shadow_trade_log").insert(record).execute()
+            _on_write_success()
         except Exception as e:
             logger.warning(f"Supabase shadow trade log failed: {e}")
+            _on_write_failure(e, "shadow_trade_log")
     _submit_log(_insert)
 
 
