@@ -30,3 +30,7 @@ local_db*
 logs/
 data/trade_history.json
 local/
+
+# OpenClaw analyst artifacts — local to the VPS, never committed.
+reports/polyguez-*.md
+.openclaw/state/brief_slots.json

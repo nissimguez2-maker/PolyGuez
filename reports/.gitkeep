@@ -1,0 +1,3 @@
+# Kept so the directory exists after the VPS pulls the repo.
+# Actual daily reports (`polyguez-YYYY-MM-DD.md`) are written here by the
+# OpenClaw main agent at 23:00 IDT and are NOT committed to git.
