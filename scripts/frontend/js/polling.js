@@ -128,38 +128,9 @@ async function pollFast() {
     botEl.textContent = bs.label;
     Object.assign(botEl.style, {background:bs.bg, color:bs.color, borderColor:bs.border});
 
-    // Update radar stats div with key metrics
-    const radarStats = $('radarStats');
-    if (radarStats) {
-      const realVol = (s.sigma_realized || 0) * 100;
-      const implVol = (s.implied_vol || 0) * 100;
-      const ivRvRatio = realVol > 0 ? implVol / realVol : 0;
-      const termEdge = (s.terminal_edge || 0) * 100;
-      const condsMet = s.conditions_met || 0;
-      const strikeDelta = s.strike_delta || 0;
-      
-      // Status indicator
-      let statusText = '';
-      if (s.all_conditions_met && termEdge >= 3) {
-        statusText = '🟢 READY TO FIRE';
-      } else if (termEdge < 0) {
-        statusText = '🔴 Edge negative';
-      } else if (condsMet < 15) {
-        statusText = '🟡 ' + (15 - condsMet) + ' blocking';
-      } else {
-        statusText = '🟡 Waiting edge';
-      }
-      
-      radarStats.innerHTML = `
-        <div><strong>Realized Vol:</strong> ${realVol.toFixed(1)}%</div>
-        <div><strong>Implied Vol:</strong> ${implVol > 0 ? implVol.toFixed(1) + '%' : 'N/A'}</div>
-        <div><strong>IV/RV Ratio:</strong> <span style="color:${ivRvRatio > 1.2 ? '#12B76A' : '#64748B'}">${ivRvRatio.toFixed(2)}</span></div>
-        <div><strong>Terminal Edge:</strong> ${termEdge.toFixed(1)}%</div>
-        <div><strong>Strike Delta:</strong> $${strikeDelta.toFixed(2)}</div>
-        <div><strong>Conditions:</strong> ${condsMet}/15</div>
-        <div style="margin-top:4px; padding-top:4px; border-top:1px solid #E2E8F0;"><strong>Status:</strong> ${statusText}</div>
-      `;
-    }
+    // (Vol & Edge radar is drawn in drawVolRadar from the latestSignal
+    // canvas on the Analytics view. The legacy `#radarStats` text panel
+    // was removed in v5.0; its fields are now shown inside the chart.)
   }
 
   // FIX-4: track poll time for relative counter
@@ -240,47 +211,84 @@ async function pollSlow() {
     $('kWL').textContent = t.wins + ' wins \u00B7 ' + (t.wins + t.losses) + ' closed';
   }
 
-  // ── Trade table ──
-  const tbody = $('tradeBody');
-  // FIX-8: expandable trade rows with LLM reason on click
-  tbody.innerHTML = trades.slice(0, 8).map(t => {
-    const side = t.side === 'up' ? '▲ UP' : '▼ DOWN';
-    const sideColor = t.side === 'up' ? 'var(--green)' : 'var(--red)';
-    const pnlClass = t.pnl >= 0 ? 'positive' : 'negative';
-    const pill = t.outcome === 'win' ? '<span class="pill pill-win">WIN</span>'
-      : t.outcome === 'loss' ? '<span class="pill pill-loss">LOSS</span>'
-      : '<span class="pill" style="background:#F2F4F7;color:var(--text-2)">OPEN</span>';
+  // ── Trade table (Analytics: full, expandable; Live: compact top-5) ──
+  const sideCell = (side) => {
+    const up = side === 'up';
+    return `<td class="${up ? 'side-up' : 'side-down'}">${up ? '▲ UP' : '▼ DOWN'}</td>`;
+  };
+  const pnlCell = (pnl) => {
+    const cls = pnl >= 0 ? 'positive' : 'negative';
+    return `<td class="num ${cls}" style="font-weight:600">${fmtUsd(pnl)}</td>`;
+  };
+  const resultCell = (outcome) => {
+    if (outcome === 'win') return '<td><span class="pill pill-win">WIN</span></td>';
+    if (outcome === 'loss') return '<td><span class="pill pill-loss">LOSS</span></td>';
+    return '<td><span class="pill">OPEN</span></td>';
+  };
+  const llmCell = (v) => {
+    if (!v || v === '--') return '<td>--</td>';
+    const vl = v.toUpperCase();
+    if (vl === 'GO')    return '<td><span class="llm-go">GO</span></td>';
+    if (vl === 'SKIP')  return '<td><span class="llm-skip">SKIP</span></td>';
+    if (vl === 'ABORT') return '<td><span class="llm-abort">ABORT</span></td>';
+    return `<td>${v}</td>`;
+  };
+  const latencyCell = (t) => {
+    if (t.total_latency_ms == null) return '<td class="num" style="color:var(--text-3)">--</td>';
+    const ms = Math.round(t.total_latency_ms);
+    const color = ms < 400 ? 'var(--green)' : ms < 1000 ? 'var(--amber)' : 'var(--red)';
+    return `<td class="num" style="font-size:11px;font-weight:600;color:${color}">${ms}ms</td>`;
+  };
+  const shortQ = (t) => {
     const q = t.market_question || '';
-    const short = q.length > 30 ? q.slice(0,30)+'…' : q;
-    return `<tr style="cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'table-row':'none'">
-      <td>${fmtTimeFull(t.ts)}</td>
-      <td title="${q}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</td>
-      <td style="color:${sideColor};font-weight:600">${side}</td>
-      <td>${fmt(t.entry_price, 3)}</td>
-      <td>$${fmt(t.size_usdc, 0)}</td>
-      <td class="${pnlClass}" style="font-weight:600">${fmtUsd(t.pnl)}</td>
-      <td>${(function(v){if(!v||v==='--')return '--';const vl=v.toUpperCase();if(vl==='GO')return '<span class="llm-go">GO</span>';if(vl==='SKIP')return '<span class="llm-skip">SKIP</span>';if(vl==='ABORT')return '<span class="llm-abort">ABORT</span>';return v;})(t.llm_verdict)}</td>
-      <td>${(function(t){
-        if (t.total_latency_ms != null) {
-          const ms = Math.round(t.total_latency_ms);
-          const color = ms < 400 ? 'var(--green)' : ms < 1000 ? 'var(--amber)' : 'var(--red)';
-          return `<span style="font-size:10px;font-weight:600;color:${color}">${ms}ms</span>`;
-        }
-        return '<span style="color:var(--text-3)">--</span>';
-      })(t)}</td>
-      <td>${pill}</td>
-    </tr>
-    <tr style="display:none">
-      <td colspan="9" style="padding:8px 12px;background:#FAFBFC;font-size:11px;color:var(--text-2);border-bottom:1px solid var(--border)">
-        <strong>Provider:</strong> ${t.llm_provider||'--'} &nbsp;·&nbsp;
-        <strong>Edge:</strong> ${t.terminal_edge != null ? (t.terminal_edge*100).toFixed(1)+'%' : '--'} &nbsp;·&nbsp;
-        <strong>Duration:</strong> ${t.duration_seconds != null ? t.duration_seconds.toFixed(0)+'s' : '--'} &nbsp;·&nbsp;
-        <strong>LLM:</strong> ${t.llm_response_ms != null ? Math.round(t.llm_response_ms)+'ms' : '--'} &nbsp;·&nbsp;
-        <strong>Order:</strong> ${t.order_submit_ms != null ? Math.round(t.order_submit_ms)+'ms' : '--'}<br>
-        <em style="color:var(--text-1);margin-top:4px;display:block">${t.llm_reason||'No reason recorded'}</em>
-      </td>
-    </tr>`;
-  }).join('');
+    return { full: q, short: q.length > 30 ? q.slice(0, 30) + '…' : q };
+  };
+
+  // Analytics: full 9-col with expandable LLM-reason row.
+  const tbody = $('tradeBody');
+  if (tbody) {
+    tbody.innerHTML = trades.slice(0, 8).map(t => {
+      const { full, short } = shortQ(t);
+      return `<tr style="cursor:pointer" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'table-row':'none'">
+        <td>${fmtTimeFull(t.ts)}</td>
+        <td title="${full}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</td>
+        ${sideCell(t.side)}
+        <td class="num">${fmt(t.entry_price, 3)}</td>
+        <td class="num">$${fmt(t.size_usdc, 0)}</td>
+        ${pnlCell(t.pnl)}
+        ${llmCell(t.llm_verdict)}
+        ${latencyCell(t)}
+        ${resultCell(t.outcome)}
+      </tr>
+      <tr style="display:none">
+        <td colspan="9" style="padding:10px 14px;background:rgba(148,163,184,0.04);font-size:11px;color:var(--text-3);border-bottom:1px solid var(--card-border)">
+          <strong>Provider:</strong> ${t.llm_provider||'--'} &nbsp;·&nbsp;
+          <strong>Edge:</strong> ${t.terminal_edge != null ? (t.terminal_edge*100).toFixed(1)+'%' : '--'} &nbsp;·&nbsp;
+          <strong>Duration:</strong> ${t.duration_seconds != null ? t.duration_seconds.toFixed(0)+'s' : '--'} &nbsp;·&nbsp;
+          <strong>LLM:</strong> ${t.llm_response_ms != null ? Math.round(t.llm_response_ms)+'ms' : '--'} &nbsp;·&nbsp;
+          <strong>Order:</strong> ${t.order_submit_ms != null ? Math.round(t.order_submit_ms)+'ms' : '--'}<br>
+          <em style="color:var(--text-1);margin-top:4px;display:block">${t.llm_reason||'No reason recorded'}</em>
+        </td>
+      </tr>`;
+    }).join('');
+  }
+
+  // Live: compact 7-col, top 5 rows, no expand.
+  const tbodyLive = $('tradeBodyLive');
+  if (tbodyLive) {
+    tbodyLive.innerHTML = trades.slice(0, 5).map(t => {
+      const { full, short } = shortQ(t);
+      return `<tr>
+        <td>${fmtTimeFull(t.ts)}</td>
+        <td title="${full}" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${short}</td>
+        ${sideCell(t.side)}
+        <td class="num">${fmt(t.entry_price, 3)}</td>
+        <td class="num">$${fmt(t.size_usdc, 0)}</td>
+        ${pnlCell(t.pnl)}
+        ${resultCell(t.outcome)}
+      </tr>`;
+    }).join('');
+  }
 
   drawEquityCurve();
 
@@ -320,6 +328,13 @@ async function pollSlow() {
     $('kShadowWR').textContent = shWR + '%';
     $('kShadowWR').className = 'val ' + (sh.wins > sh.losses ? 'positive' : 'negative');
     $('kShadowWL').textContent = sh.settled > 0 ? sh.wins + ' wins \u00B7 ' + sh.settled + ' closed' : '--';
+    // v5.0: populate the scoreboard footer Win Rate too (was only writing
+    // to the KPI-row element in the old dashboard — `#shWR` stayed '--').
+    const shWREl = $('shWR');
+    if (shWREl) {
+      shWREl.textContent = shWR + '%';
+      shWREl.className = 'sf-val ' + (sh.wins > sh.losses ? 'positive' : 'negative');
+    }
   }
 
   // Complete-set edge 24h frequency
