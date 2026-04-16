@@ -9,6 +9,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import aiohttp
 import websockets
@@ -104,6 +105,10 @@ class PolyGuezRunner:
         self._p2b_consecutive_failures = 0
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
+        # LATENCY-TASK-2: distance (seconds) between the Chainlink sample
+        # used as P2B and the market's eventStartTime, or None if the
+        # cycle was skipped for P2B quality. Logged to signal_log per cycle.
+        self._p2b_offset_seconds: Optional[float] = None
 
         # Provider context cache (refreshed by background task)
         self._provider_context_cache = {"fetched_at": 0.0, "data": ""}
@@ -591,56 +596,69 @@ class PolyGuezRunner:
         })
 
         # P2B = Chainlink price at eventStartTime
+        # LATENCY-TASK-2: The buffer-anchored path is the only trustworthy
+        # source of P2B. The old code fell back to "current Chainlink" when
+        # the buffer had nothing near eventStartTime — that produced a
+        # strike that wasn't anchored to event start and silently degraded
+        # edge quality. We now skip the cycle instead, and also halt after
+        # `p2b_consecutive_failure_halt` in a row (same halt path as the
+        # existing "no Chainlink at all" branch).
         event_start_dt = MarketDiscovery.get_event_start_time(self._current_market)
+        self._p2b_offset_seconds = None  # LATENCY-TASK-2 observability
         if event_start_dt:
             event_start_ts = event_start_dt.timestamp()
             cl_price, cl_ts, cl_offset = self._btc_feed.get_chainlink_price_at(event_start_ts)
+            max_offset = self.config.max_p2b_chainlink_offset_seconds
 
-            if cl_price is not None and cl_offset < 30.0:
-                # We have a Chainlink price within 30s of eventStartTime
+            if cl_price is not None and cl_price > 0 and cl_offset is not None and cl_offset <= max_offset:
                 self._price_to_beat = cl_price
                 self._p2b_source = "chainlink_buffer"
                 self._p2b_consecutive_failures = 0
+                self._p2b_offset_seconds = round(cl_offset, 2)
                 log_event(logger, "price_to_beat",
                     f"P2B from Chainlink buffer: ${cl_price:.2f} (offset: {cl_offset:.1f}s from eventStartTime)",
-                    {"source": "chainlink_buffer", "offset_seconds": round(cl_offset, 1)})
+                    {"source": "chainlink_buffer",
+                     "offset_seconds": round(cl_offset, 2),
+                     "max_offset": max_offset})
 
-                # Cross-check buffer P2B against current Chainlink
+                # Cross-check buffer P2B against current Chainlink.
+                # Tolerance is still flat USD today; sigma-scaling is a
+                # candidate follow-up (see LATENCY-TASK-2 notes in PR).
                 current_cl, _ = self._btc_feed.get_chainlink_price()
                 if current_cl and current_cl > 0:
                     divergence = abs(self._price_to_beat - current_cl)
-                    # Tight tolerance if offset < 5s, wider if older
                     tolerance = 50.0 if cl_offset < 5.0 else 150.0
                     self._p2b_cross_check_passed = divergence <= tolerance
-                    self._p2b_cross_check_divergence = divergence
+                    self._p2b_cross_check_divergence = round(divergence, 2)
                     log_event(logger, "p2b_cross_check",
                         f"Cross-check: passed={self._p2b_cross_check_passed}, divergence=${divergence:.2f}, tolerance=${tolerance:.0f} (buffer offset={cl_offset:.1f}s)")
                 else:
                     self._p2b_cross_check_passed = True
                     self._p2b_cross_check_divergence = 0.0
             else:
-                # Buffer doesn't have a price near eventStartTime — fall back to current Chainlink
-                current_cl, _ = self._btc_feed.get_chainlink_price()
-                if current_cl and current_cl > 0:
-                    self._price_to_beat = current_cl
-                    self._p2b_source = "chainlink_current"
-                    self._p2b_consecutive_failures = 0
-                    elapsed_since_start = (datetime.now(timezone.utc) - event_start_dt).total_seconds()
-                    log_event(logger, "price_to_beat_fallback",
-                        f"P2B fallback to current Chainlink: ${current_cl:.2f} (market started {elapsed_since_start:.0f}s ago, buffer offset: {cl_offset:.1f}s)",
-                        {"source": "chainlink_current", "elapsed_since_start": round(elapsed_since_start, 1)},
-                        level=30)
-                    self._p2b_cross_check_passed = True
-                    self._p2b_cross_check_divergence = 0.0
+                # LATENCY-TASK-2: refuse to fabricate P2B from "current"
+                # Chainlink. Log why and skip the cycle. Halts after N in
+                # a row, same policy as the "no Chainlink at all" branch.
+                if cl_price is None or cl_price <= 0:
+                    reason = "no_buffer_sample"
+                    offset_str = "n/a"
                 else:
-                    log_event(logger, "p2b_no_chainlink", "No Chainlink price available for P2B", level=30)
-                    self._p2b_consecutive_failures += 1
-                    self._rolling_stats.p2b_skips += 1
-                    self._current_market = None
-                    if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
-                        self._killed = True
-                        self._kill_timestamp = datetime.now(timezone.utc).isoformat()
-                    return
+                    reason = "offset_too_large"
+                    offset_str = f"{cl_offset:.1f}s"
+                log_event(logger, "p2b_offset_too_large",
+                    f"P2B Chainlink offset={offset_str} > threshold={max_offset:.1f}s "
+                    f"(reason={reason}); skipping cycle",
+                    {"reason": reason,
+                     "offset_seconds": round(cl_offset, 2) if cl_offset is not None else None,
+                     "threshold_seconds": max_offset},
+                    level=30)
+                self._p2b_consecutive_failures += 1
+                self._rolling_stats.p2b_skips += 1
+                self._current_market = None
+                if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
+                    self._killed = True
+                    self._kill_timestamp = datetime.now(timezone.utc).isoformat()
+                return
         else:
             log_event(logger, "p2b_no_start_time", "No eventStartTime in market dict", level=30)
             self._p2b_consecutive_failures += 1
@@ -740,6 +758,7 @@ class PolyGuezRunner:
         self._p2b_source = "none"
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
+        self._p2b_offset_seconds = None  # LATENCY-TASK-2 reset
         log_event(logger, "cycle_complete", f"Market cycle complete: {old_question}. Looking for next market...")
 
     # -- Sub-loops ---------------------------------------------------------
@@ -823,6 +842,18 @@ class PolyGuezRunner:
 
             # Update depth_ok on the signal using real depth
             signal.depth_ok = True if depth < 0 else depth >= self.config.min_clob_depth
+
+            # LATENCY-TASK-2: mirror this cycle's P2B quality onto the
+            # signal so evaluate_entry_signal's all_conditions_met check
+            # can block when the strike wasn't cleanly anchored. In
+            # practice this is belt-and-suspenders — _cycle already skips
+            # when P2B derivation fails — but it keeps the invariant
+            # explicit inside evaluate_entry_signal and makes the
+            # block reason visible in signal_log.
+            signal.p2b_ok = (
+                self._p2b_source == "chainlink_buffer"
+                and (self._p2b_cross_check_passed is not False)
+            )
             self._current_signal = signal
 
             _size_multiplier = get_daily_loss_size_multiplier(self._rolling_stats, self.config, self._usdc_balance)
@@ -902,6 +933,7 @@ class PolyGuezRunner:
                 _blocking = []
                 if not signal.price_feed_ok: _blocking.append("price_feed")
                 if not getattr(signal, 'chainlink_fresh_ok', True): _blocking.append("chainlink_stale")
+                if not getattr(signal, 'p2b_ok', True): _blocking.append("p2b_stale")  # LATENCY-TASK-2
                 if not signal.terminal_edge_ok: _blocking.append("terminal_edge")
                 if not signal.delta_magnitude_ok: _blocking.append("delta_magnitude")
                 if not signal.edge_ok: _blocking.append("edge")
