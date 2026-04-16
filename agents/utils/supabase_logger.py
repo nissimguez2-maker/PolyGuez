@@ -199,16 +199,42 @@ def log_signal(snapshot: dict, session_tag: str = "V5") -> None:
 
 
 def log_trade(record: dict, session_tag: str = "V5") -> None:
-    """Fire-and-forget in background thread — never blocks the main loop."""
+    """Fire-and-forget trade_log insert. COR-01 idempotency: if a row with this
+    `signal_id` already exists in trade_log (e.g. because a crash-restart re-
+    settled the same trade, or _recover_pending_position double-called
+    `_settle`), the insert is skipped rather than creating a duplicate row.
+
+    The check is skipped when `signal_id` is empty/None — pre-signal_id rows
+    and legacy emergency-exit records keep the old write-through behaviour
+    rather than silently dropping.
+    """
     record["ts"] = datetime.now(timezone.utc).isoformat()
     record["session_tag"] = session_tag
     # era column added by migration 2026-04-15 — every trade_log row must carry it.
     record["era"] = session_tag
+    signal_id = record.get("signal_id")
     def _insert():
         try:
             client = _client()
             if not client:
                 return
+            if signal_id:
+                existing = (
+                    client.table("trade_log")
+                    .select("id")
+                    .eq("signal_id", signal_id)
+                    .limit(1)
+                    .execute()
+                )
+                if getattr(existing, "data", None):
+                    logger.warning(
+                        "Supabase trade_log: signal_id=%s already exists "
+                        "(id=%s); skipping duplicate insert.",
+                        signal_id,
+                        existing.data[0].get("id"),
+                    )
+                    _on_write_success()
+                    return
             client.table("trade_log").insert(record).execute()
             _on_write_success()
         except Exception as e:

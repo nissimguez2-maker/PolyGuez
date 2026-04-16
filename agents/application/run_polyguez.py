@@ -35,7 +35,14 @@ from agents.strategies.polyguez_strategy import (
     settle_with_retry,
 )
 from agents.utils.logger import get_logger, log_event
-from agents.utils.supabase_logger import log_signal, log_trade, log_shadow_trade, settle_shadow_trades
+from agents.utils.supabase_logger import (
+    log_signal,
+    log_trade,
+    log_shadow_trade,
+    settle_shadow_trades,
+    _log_executor,
+    _send_telegram_alert,
+)
 from agents.utils.vol_tracker import RealizedVolTracker, implied_vol as compute_implied_vol
 from agents.utils.objects import (
     DashboardSnapshot,
@@ -82,6 +89,12 @@ class PolyGuezRunner:
         self._last_llm_time = 0.0
         self._killed = False
         self._kill_timestamp = None
+        # COR-03: in-process idempotency guard for _settle() / emergency-exit.
+        # Populated when we finalize a trade (win/loss/emergency-exit) for a
+        # market so that a redundant settle-call in the same process is a
+        # no-op. Cross-restart protection is separately provided by the
+        # unconditional save_rolling_stats() at the end of _settle().
+        self._settled_market_ids: set = set()
         self._loop_heartbeat_ts = 0.0  # monotonic seconds; updated each main-loop tick for health check
         self._usdc_balance = 0.0
         self._gamma_ok = False
@@ -1102,9 +1115,20 @@ class PolyGuezRunner:
                         duration = (datetime.now(timezone.utc) - datetime.fromisoformat(entry_time)).total_seconds()
                     except (ValueError, TypeError):
                         pass
+                # COR-01: emergency-exit path — same ordering as _settle.
+                # Submit Supabase log BEFORE clearing self._position so a
+                # crash in this window does not lose the exit record.
+                emergency_market_id = self._position.market_id
+                if emergency_market_id in self._settled_market_ids:
+                    logger.warning(
+                        f"[EMERGENCY-EXIT] market_id={emergency_market_id} already "
+                        "settled in this process — skipping duplicate."
+                    )
+                    self._position = None
+                    return
                 log_trade({
                     "signal_id": getattr(self._current_signal, 'signal_id', '') if self._current_signal else '',
-                    "market_id": self._position.market_id,
+                    "market_id": emergency_market_id,
                     "market_question": self._current_market.get("question", "") if self._current_market else "",
                     "side": "up" if self._position.side == "YES" else "down",
                     "entry_price": self._position.entry_price,
@@ -1114,23 +1138,28 @@ class PolyGuezRunner:
                     "llm_verdict": self._last_llm_verdict,
                     "llm_reason": self._last_llm_reason,
                     "llm_provider": self._last_llm_provider,
-                    "outcome": "loss",
+                    "outcome": "emergency-exit",
                     "llm_response_ms": round(self._last_entry_llm_ms, 1),
                     "order_submit_ms": round(self._last_entry_order_ms, 1),
                     "total_latency_ms": round(self._last_entry_total_ms, 1),
                     "mode": self.config.mode,
-                    # Audit Phase 1.1 / 1.6 schema catch-up: log fee + edge
-                    # context on every trade. fee_paid / taker_maker stay
-                    # NULL until real fills arrive from the CLOB executor.
                     "terminal_edge": getattr(self._current_signal, 'terminal_edge', None) if self._current_signal else None,
                     "net_edge": getattr(self._current_signal, 'net_edge', None) if self._current_signal else None,
                     "fee_paid": None,
                     "taker_maker": None,
                 }, session_tag=self.config.session_tag)
+                # Flush barrier (same pattern as _settle): best-effort, 5s max.
+                try:
+                    _log_executor.submit(lambda: None).result(timeout=5.0)
+                except Exception:
+                    pass
                 if self.config.mode == "dry-run":
                     self._rolling_stats.simulated_balance = round(
                         self._rolling_stats.simulated_balance + pnl, 4
                     )
+                # COR-03: persist unconditionally before mutating position.
+                save_rolling_stats(self._rolling_stats)
+                self._settled_market_ids.add(emergency_market_id)
                 self._position = None
                 self._apply_cooldown()
                 return
@@ -1212,6 +1241,18 @@ class PolyGuezRunner:
             llm_provider=self._last_llm_provider,
             outcome=outcome_str,
         )
+        # COR-03: in-process idempotency. If we already finalized this market
+        # in this process, any further settle call is a no-op. On a genuine
+        # duplicate the caller's self._position should be cleared too so the
+        # cycle doesn't loop on a phantom position.
+        if market_id in self._settled_market_ids and outcome_str != "pending":
+            logger.warning(
+                f"[SETTLE] market_id={market_id} already settled in this process — "
+                "skipping duplicate. Clearing position."
+            )
+            self._position = None
+            return
+
         self._rolling_stats.trades.append(record)
         if outcome_str != "pending":
             self._rolling_stats.daily_pnl += pnl
@@ -1232,7 +1273,12 @@ class PolyGuezRunner:
             "daily_pnl": self._rolling_stats.daily_pnl,
         })
 
-        # Supabase trade log (fire-and-forget)
+        # COR-01: submit the Supabase trade-log row BEFORE clearing
+        # self._position. Previously the ordering was
+        # `self._position = None → log_trade` and a crash in that window
+        # lost the record (bot reports settled, Supabase has no row).
+        # We also drain the executor queue synchronously so the write is
+        # at least queued on a worker before we mutate further state.
         if outcome_str in ("win", "loss"):
             log_trade({
                 "signal_id": getattr(self._current_signal, 'signal_id', '') if self._current_signal else '',
@@ -1256,13 +1302,33 @@ class PolyGuezRunner:
                 "fee_paid": None,
                 "taker_maker": None,
             }, session_tag=self.config.session_tag)
+            # Flush barrier: ensure the submitted insert has been picked up
+            # by a worker before we move on. Best-effort; never let a slow
+            # Supabase backend stall the main loop indefinitely.
+            try:
+                _log_executor.submit(lambda: None).result(timeout=5.0)
+            except Exception:
+                pass
 
         if outcome_str == "pending":
             pending_count = len([t for t in self._rolling_stats.trades if t.outcome == "pending"])
             log_event(logger, "pending_settlement_queued",
                 f"Market {market_id} queued for re-settlement ({pending_count} pending)")
-            save_rolling_stats(self._rolling_stats)
 
+        # COR-03: persist rolling_stats UNCONDITIONALLY after every settle
+        # call. Previously this only ran on the pending outcome path,
+        # leaving a double-settle window for win/loss outcomes: a crash
+        # between the pnl update and the next save would leave the trade
+        # still flagged pending on disk, and recovery would settle it again.
+        save_rolling_stats(self._rolling_stats)
+
+        if outcome_str != "pending":
+            self._settled_market_ids.add(market_id)
+
+        # COR-01: position cleared LAST, after log is queued AND rolling_stats
+        # is persisted. A crash at this point has already written both sources
+        # of truth; the worst that happens is the caller sees no position on
+        # the next iteration, which is the desired end-state anyway.
         self._position = None
         if outcome_str != "pending":
             self._apply_cooldown()
@@ -1312,7 +1378,46 @@ class PolyGuezRunner:
         for trade in stale:
             trade.outcome = "expired"
             trade.reason = "pending > 2h — evicted"
+            evicted_size = float(trade.size_usdc or 0.0)
             log_event(logger, "pending_evicted", f"Evicted stale pending: {trade.market_id}")
+            # COR-02: on eviction, either refund capital (dry-run) or halt
+            # (live). Previously we just marked outcome=expired, leaving the
+            # entry's deducted size_usdc unaccounted for. In dry-run this
+            # silently drained the simulated balance (root cause of the 2026-
+            # 04-16 $2.59 incident). In live mode the on-chain state is
+            # unknown, so refunding blind is unsafe; we halt and require
+            # operator reconciliation.
+            if self.config.mode == "dry-run":
+                self._rolling_stats.simulated_balance = round(
+                    self._rolling_stats.simulated_balance + evicted_size, 4
+                )
+                log_event(
+                    logger,
+                    "pending_eviction_refund",
+                    f"[EVICT] Refunded ${evicted_size:.2f} to simulated_balance "
+                    f"for expired {trade.market_id} "
+                    f"(balance now ${self._rolling_stats.simulated_balance:.2f})",
+                )
+            elif self.config.mode == "live":
+                self._killed = True
+                log_event(
+                    logger,
+                    "pending_eviction_live_halt",
+                    f"LIVE HALT: position {trade.market_id} pending >2h with unknown "
+                    f"on-chain outcome; manual reconciliation required before restart.",
+                    level=40,
+                )
+                try:
+                    _send_telegram_alert(
+                        f"LIVE HALT: PolyGuez position {trade.market_id} pending >2h "
+                        f"with unknown outcome. Manual reconciliation required before restart."
+                    )
+                except Exception as _alert_exc:
+                    log_event(
+                        logger,
+                        "pending_eviction_alert_failed",
+                        f"Telegram alert on live-eviction failed: {_alert_exc}",
+                    )
         
         # BUG-3 fix: rebuild pending list after eviction so evicted trades aren't re-queried
         pending_trades = [t for t in self._rolling_stats.trades if t.outcome == "pending"]
