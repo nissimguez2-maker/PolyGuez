@@ -119,6 +119,11 @@ class PolyGuezRunner:
         self._clob_ws_connected = False
         self._clob_ws_reconnect_count = 0
         self._clob_ws_ping_task = None
+        # COR-06: CLOB WS stale-price guard. Set False on disconnect /
+        # reconnect start so the main cycle refuses to read the stale zero
+        # prices during the reconnect window. Flipped True on the first
+        # successful book/price message with both YES and NO populated.
+        self._clob_ws_prices_valid: bool = False
         self._clob_http_session = None
         self._heartbeat_task = None
 
@@ -338,6 +343,46 @@ class PolyGuezRunner:
                     f"Heartbeat failed: {e}", level=30)
             await asyncio.sleep(5)
 
+    def _spawn(self, coro, name: str) -> asyncio.Task:
+        """COR-04: asyncio.create_task + fatal-crash done-callback.
+
+        Wraps every long-lived background task (provider cache, CLOB WS,
+        heartbeat, CLOB WS ping, etc.) so an unhandled exception flips
+        `self._killed = True` and emits a Telegram alert instead of
+        silently stopping the task while `/health` still reports green.
+        """
+        task = asyncio.create_task(coro, name=name)
+
+        def _on_done(t: asyncio.Task) -> None:
+            if t.cancelled():
+                return
+            try:
+                exc = t.exception()
+            except asyncio.CancelledError:
+                return
+            if exc is None:
+                return
+            try:
+                log_event(
+                    logger,
+                    "background_task_fatal",
+                    f"Background task '{name}' crashed: {type(exc).__name__}: {exc}",
+                    level=50,
+                )
+            except Exception:
+                pass
+            try:
+                _send_telegram_alert(
+                    f"[PolyGuez] background task '{name}' crashed: {exc!r}. "
+                    f"Bot is halting (`_killed=True`)."
+                )
+            except Exception:
+                pass
+            self._killed = True
+
+        task.add_done_callback(_on_done)
+        return task
+
     # -- Main loop ---------------------------------------------------------
 
     async def run(self):
@@ -447,17 +492,17 @@ class PolyGuezRunner:
 
         # Start provider context cache refresh loop
         if self.config.data_providers:
-            self._provider_cache_task = asyncio.create_task(self._provider_cache_loop())
+            self._provider_cache_task = self._spawn(self._provider_cache_loop(), "provider_cache_loop")
 
         # Start CLOB WebSocket feed (if enabled)
         if self.config.clob_ws_enabled:
-            self._clob_ws_task = asyncio.create_task(self._clob_ws_loop())
+            self._clob_ws_task = self._spawn(self._clob_ws_loop(), "clob_ws_loop")
             log_event(logger, "clob_ws_task_created", "[CLOB/WS] Task created")
         else:
             log_event(logger, "clob_ws_disabled", "[CLOB/WS] Disabled — using REST polling")
 
         # Start heartbeat loop to keep maker orders alive
-        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
+        self._heartbeat_task = self._spawn(self._heartbeat_loop(), "heartbeat_loop")
         log_event(logger, "heartbeat_started", "Heartbeat loop started (5s interval)")
 
         # CLOB REST session
@@ -1124,7 +1169,12 @@ class PolyGuezRunner:
                     llm_provider=self._last_llm_provider,
                 )
                 self._rolling_stats.trades.append(record)
-                self._rolling_stats.daily_pnl += pnl
+                # COR-05: `daily_pnl += pnl` + `simulated_balance = ...`
+                # used to be on separate lines here (pnl recorded, balance
+                # updated only on the dry-run path after the log_trade flush).
+                # `apply_pnl` now ties them into one call placed AFTER the
+                # log_trade/flush below, so a crash between them can't leave
+                # the invariant broken. See the call below near save_rolling_stats.
 
                 # Supabase trade log (fire-and-forget)
                 entry_time = self._position.entry_time or ""
@@ -1174,10 +1224,11 @@ class PolyGuezRunner:
                     _log_executor.submit(lambda: None).result(timeout=5.0)
                 except Exception:
                     pass
-                if self.config.mode == "dry-run":
-                    self._rolling_stats.simulated_balance = round(
-                        self._rolling_stats.simulated_balance + pnl, 4
-                    )
+                # COR-05: atomic PnL + balance update (replaces the old
+                # two-liner). `apply_pnl` updates daily_pnl always and
+                # simulated_balance only in dry-run — same net effect as
+                # the previous code, but one assignment instead of two.
+                self._rolling_stats.apply_pnl(pnl, self.config.mode)
                 # COR-03: persist unconditionally before mutating position.
                 save_rolling_stats(self._rolling_stats)
                 self._settled_market_ids.add(emergency_market_id)
@@ -1276,12 +1327,12 @@ class PolyGuezRunner:
 
         self._rolling_stats.trades.append(record)
         if outcome_str != "pending":
-            self._rolling_stats.daily_pnl += pnl
-            # Update simulated balance for dry-run tracking
+            # COR-05: atomic PnL + balance update. Updates daily_pnl always
+            # and simulated_balance only in dry-run; a crash between those
+            # two assignments used to leave the invariant broken across
+            # restarts.
+            self._rolling_stats.apply_pnl(pnl, self.config.mode)
             if self.config.mode == "dry-run":
-                self._rolling_stats.simulated_balance = round(
-                    self._rolling_stats.simulated_balance + pnl, 4
-                )
                 log_event(logger, "simulated_balance_update",
                     f"Dry-run balance: ${self._rolling_stats.simulated_balance:.2f} (P&L: {pnl:+.4f})")
 
@@ -1477,10 +1528,10 @@ class PolyGuezRunner:
                     trade.exit_price = 0.0
                 trade.pnl = pnl
                 trade.reason = "resolved-from-pending"
-                self._rolling_stats.daily_pnl += pnl
-                if self.config.mode == "dry-run":
-                    self._rolling_stats.simulated_balance = round(
-                        self._rolling_stats.simulated_balance + pnl, 4)
+                # COR-05: atomic PnL + balance update on pending-settlement
+                # resolution — same fix as the _settle and emergency-exit
+                # paths above.
+                self._rolling_stats.apply_pnl(pnl, self.config.mode)
                 log_event(logger, "pending_resolved",
                     f"Pending settlement resolved: {trade.market_id} → {trade.outcome} PnL=${pnl:+.4f}")
                 resolved_count += 1
@@ -1515,12 +1566,17 @@ class PolyGuezRunner:
                     timeout=10.0,
                 )
                 self._clob_ws_connected = True
+                # COR-06: the just-reconnected socket hasn't delivered a
+                # book message yet, so prices are stale. The flag flips back
+                # to True in `_handle_clob_ws_msg` once both YES and NO
+                # prices are populated.
+                self._clob_ws_prices_valid = False
                 log_event(logger, "clob_ws_connected", "[CLOB/WS] Connected")
 
                 # Start application-level ping keep-alive
                 if self._clob_ws_ping_task:
                     self._clob_ws_ping_task.cancel()
-                self._clob_ws_ping_task = asyncio.create_task(self._clob_ws_ping_loop())
+                self._clob_ws_ping_task = self._spawn(self._clob_ws_ping_loop(), "clob_ws_ping_loop")
 
                 # Re-subscribe if we already have tokens
                 yes_tok, no_tok = self._clob_ws_tokens
@@ -1554,6 +1610,10 @@ class PolyGuezRunner:
                 raise
             except Exception as exc:
                 self._clob_ws_connected = False
+                # COR-06: invalidate cached prices on disconnect so the
+                # main cycle refuses to consume stale zero/old values
+                # until the socket is back and has delivered a fresh book.
+                self._clob_ws_prices_valid = False
                 log_event(logger, "clob_ws_error",
                           f"[CLOB/WS] Error: {type(exc).__name__}: {exc}", level=30)
             # Cancel ping task on disconnect
@@ -1562,6 +1622,7 @@ class PolyGuezRunner:
                 self._clob_ws_ping_task = None
             # Exponential backoff on reconnect (cap 30s)
             self._clob_ws_connected = False
+            self._clob_ws_prices_valid = False
             delay = min(2 ** self._clob_ws_reconnect_count, 30)
             self._clob_ws_reconnect_count += 1
             log_event(logger, "clob_ws_backoff", f"[CLOB/WS] Reconnecting in {delay}s (attempt {self._clob_ws_reconnect_count})")
@@ -1591,6 +1652,12 @@ class PolyGuezRunner:
                 elif market == no_tok:
                     self._clob_ws_no = mid
                 if self._clob_ws_yes > 0 and self._clob_ws_no > 0:
+                    # COR-06: we now have a fresh book for BOTH legs, so
+                    # main-cycle reads are safe again.
+                    if not self._clob_ws_prices_valid:
+                        log_event(logger, "clob_ws_prices_valid",
+                                  "[CLOB/WS] First fresh book post-connect — prices now valid")
+                    self._clob_ws_prices_valid = True
                     log_event(logger, "clob_ws_book",
                               f"[CLOB/WS] UP={self._clob_ws_yes:.4f} DOWN={self._clob_ws_no:.4f}")
 
@@ -1611,6 +1678,10 @@ class PolyGuezRunner:
                 elif market == no_tok:
                     self._clob_ws_no = price
                 if self._clob_ws_yes > 0 and self._clob_ws_no > 0:
+                    if not self._clob_ws_prices_valid:
+                        log_event(logger, "clob_ws_prices_valid",
+                                  "[CLOB/WS] First fresh price post-connect — prices now valid")
+                    self._clob_ws_prices_valid = True
                     log_event(logger, "clob_ws_price",
                               f"[CLOB/WS] UP={self._clob_ws_yes:.4f} DOWN={self._clob_ws_no:.4f}")
 
@@ -1685,9 +1756,16 @@ class PolyGuezRunner:
 
     async def _poll_clob(self, yes_token, no_token):
         """Get CLOB prices: prefer WS cache, fall back to REST, then Gamma."""
-        # Try WS cache first (fresh if message within 30s)
+        # COR-06: ws_fresh now additionally requires `_clob_ws_prices_valid`.
+        # Between a disconnect and the first post-reconnect book message,
+        # the cached yes/no prices may be stale (or the disconnect set them
+        # to zero) — the flag guarantees we only trust the cache once a
+        # fresh book has arrived. Functionally equivalent to the existing
+        # "`> 0`" checks for the common case, plus explicit protection
+        # against any future code path that leaves stale non-zero prices.
         ws_fresh = (
             self._clob_ws_connected
+            and self._clob_ws_prices_valid
             and self._clob_ws_last_msg > 0
             and time.time() - self._clob_ws_last_msg < 30.0
             and self._clob_ws_yes > 0
@@ -1705,6 +1783,9 @@ class PolyGuezRunner:
             age = time.time() - self._clob_ws_last_msg
             if age > 30.0:
                 log_event(logger, "clob_ws_stale", f"CLOB WS data is {age:.0f}s old — falling back to REST")
+        elif self._clob_ws_connected and not self._clob_ws_prices_valid:
+            log_event(logger, "clob_ws_stale_skip",
+                f"[CLOB/WS] connected but prices not yet valid post-reconnect — falling back to REST")
 
         return await self._poll_clob_rest(yes_token, no_token)
 

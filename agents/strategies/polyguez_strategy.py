@@ -704,7 +704,28 @@ def load_rolling_stats():
                     supa_stats = RollingStats.model_validate(supa_data)
                     # PRIORITY 1: Supabase has a reset_token the local file doesn't — deliberate reset
                     if supa_reset_token and supa_reset_token != file_reset_token:
-                        logger.info(f"[STATS] Supabase reset_token mismatch ({supa_reset_token}) — using Supabase clean state")
+                        # COR-08: previously logged at INFO, which hid an
+                        # event that overwrites local state. An operator
+                        # who wiped Supabase by accident would not notice
+                        # their local rolling_stats got replaced. Now
+                        # logged at WARNING plus a Telegram alert so the
+                        # overwrite is visible in Railway logs and phone
+                        # notifications. Best-effort — the loader must
+                        # never raise on the alert path.
+                        logger.warning(
+                            "[STATS] Supabase reset_token mismatch "
+                            f"(supabase={supa_reset_token!r} local={file_reset_token!r}) — "
+                            "using Supabase clean state. Verify this is intentional."
+                        )
+                        try:
+                            from agents.utils.supabase_logger import _send_telegram_alert
+                            _send_telegram_alert(
+                                "[PolyGuez] rolling_stats reset_token mismatch detected. "
+                                f"Supabase={supa_reset_token}, local={file_reset_token}. "
+                                "Using Supabase state — verify this is intentional."
+                            )
+                        except Exception as _alert_exc:
+                            logger.warning(f"[STATS] Telegram alert on reset_token mismatch failed: {_alert_exc}")
                         return supa_stats
                     # PRIORITY 2: Supabase updated_at is newer than the local file's mtime
                     # (handles trade-count-decreasing archival). We compare Supabase's ISO

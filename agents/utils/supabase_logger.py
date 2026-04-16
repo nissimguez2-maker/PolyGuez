@@ -32,9 +32,14 @@ _alert_state_lock = threading.Lock()
 
 
 def _on_write_success() -> None:
+    """COR-07: zeroing the counter was previously unguarded. Under the
+    bounded-but-parallel worker pool, a concurrent `_on_write_failure`
+    could read/increment an intermediate value and misfire the alert.
+    Holding the same lock as `_on_write_failure` makes this visibly safe.
+    """
     global _consecutive_write_failures
-    # Single-threaded assignment; no need to hold the lock for the zero case.
-    _consecutive_write_failures = 0
+    with _alert_state_lock:
+        _consecutive_write_failures = 0
 
 
 def _on_write_failure(exc: Exception, source: str) -> None:
