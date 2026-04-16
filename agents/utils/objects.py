@@ -234,6 +234,13 @@ class PolyGuezConfig(BaseModel):
     bet_size_low_balance_strong: float = Field(default=5.0, ge=0.5, le=50.0, description="Strong bet when balance < low_balance_threshold")
     use_maker_orders: bool = Field(default=True, description="Use limit orders as maker to avoid taker fees")
     maker_price_offset: float = Field(default=0.005, ge=0.001, le=0.05, description="Place limit price this much below best ask")
+    # Polymarket's base taker fee coefficient. Effective fee drag on an entry
+    # at probability p is `taker_fee_coefficient * p * (1-p)` — worst at p=0.5
+    # (1.8% of notional) and near-zero at the tails. Used to compute
+    # SignalState.net_edge, which is currently logged for calibration only
+    # (not yet a hard entry gate — see docs/k_recalibration_2026_04_16.md).
+    taker_fee_coefficient: float = Field(default=0.072, ge=0.0, le=0.2,
+        description="Polymarket taker fee coefficient. Used to compute net_edge for calibration logging.")
     strong_edge_threshold: float = Field(default=0.25, ge=0.01, le=0.5, description="Edge threshold for strong signal")
     strong_depth_threshold: float = Field(default=40000.0, ge=0.0, description="Depth threshold for strong signal")
     low_balance_threshold: float = Field(default=40.0, ge=1.0, le=500.0, description="Balance below which low-balance sizing applies")
@@ -293,12 +300,20 @@ class PolyGuezConfig(BaseModel):
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)
     chainlink_onchain_poll_interval: float = Field(default=0.5)
-    chainlink_onchain_rpc_url: str = Field(default="https://polygon.drpc.org")
+    # drpc.org free tier is fine for dry-run but has no SLA and rate limits.
+    # Set CHAINLINK_RPC_URL env var to an Alchemy/QuickNode/Infura Polygon
+    # endpoint before flipping to live mode.
+    chainlink_onchain_rpc_url: str = Field(
+        default_factory=lambda: os.environ.get("CHAINLINK_RPC_URL", "https://polygon.drpc.org"),
+        description="Polygon RPC URL for on-chain Chainlink reads. Override via CHAINLINK_RPC_URL env var.",
+    )
 
     # P2B parsing hardening
     p2b_sanity_min: float = Field(default=10000.0, description="Min plausible BTC price for P2B")
     p2b_sanity_max: float = Field(default=500000.0, description="Max plausible BTC price for P2B")
-    p2b_consecutive_failure_halt: int = Field(default=50, description="Halt after N consecutive P2B parse failures")
+    # Lowered 50 -> 10 per audit: at the 2.5s signal cadence, 50 failures was
+    # 125s of bad shadow entries before halt; 10 caps it at ~25s.
+    p2b_consecutive_failure_halt: int = Field(default=10, description="Halt after N consecutive P2B parse failures")
     min_terminal_edge: float = Field(default=0.03, ge=0.01, le=0.5, description="Min edge at terminal probability for entry")
     conviction_min_delta: float = Field(default=0.5, ge=0.0, le=200.0, description="Min $ delta between Chainlink and P2B for conviction")
     conviction_min_delta_strict: float = Field(default=2.0, ge=0.0, le=500.0, description="Strict delta threshold for fast-moving markets")
@@ -402,6 +417,10 @@ class SignalState(BaseModel):
     strike_delta: float = 0.0
     terminal_probability: float = 0.0
     terminal_edge: float = 0.0
+    # Fee-adjusted edge: terminal_edge - taker_fee_coefficient * p * (1-p).
+    # Logged to signal_log for post-hoc calibration of live-realistic
+    # profitability. Not yet an entry gate (audit Phase 1.1 log-only variant).
+    net_edge: float = 0.0
     terminal_edge_ok: bool = False
     delta_magnitude_ok: bool = False
     time_of_day_ok: bool = True

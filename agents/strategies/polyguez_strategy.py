@@ -74,6 +74,12 @@ def evaluate_entry_signal(
     estimated_fv = selected_side_probability
     terminal_edge = selected_side_probability - token_price
     edge = estimated_fv - token_price
+    # Fee-adjusted edge: subtract the expected Polymarket fee drag at this
+    # token price. Logged for calibration; NOT (yet) used to gate entries —
+    # see CLAUDE.md rule on not changing signal gates without calibrated
+    # outcome data, and docs/k_recalibration_2026_04_16.md Phase 1.
+    _fee_coef = getattr(config, "taker_fee_coefficient", 0.072)
+    net_edge = terminal_edge - _fee_coef * token_price * (1.0 - token_price)
 
     if elapsed_seconds <= config.early_window_seconds:
         required_edge = config.min_edge * config.early_edge_multiplier
@@ -212,6 +218,7 @@ def evaluate_entry_signal(
         strike_delta=strike_delta,
         terminal_probability=selected_side_probability,
         terminal_edge=terminal_edge,
+        net_edge=net_edge,
         terminal_edge_ok=terminal_edge_ok,
         delta_magnitude_ok=delta_magnitude_ok,
         time_of_day_ok=time_of_day_ok,

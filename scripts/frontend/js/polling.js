@@ -189,24 +189,30 @@ async function pollFast() {
 }
 
 async function pollSlow() {
-  // ── Balance (from rolling_stats) ──
-  const rs = await sq('rolling_stats', 'id=eq.singleton&select=data');
-  if (rs.length && rs[0].data) {
-    const bal = rs[0].data.simulated_balance;
-    if (bal != null) {
-      $('kBalance').textContent = '$' + Number(bal).toFixed(2);
-      const isDryBal = $('modeBadge') && $('modeBadge').textContent.includes('DRY');
-      $('kBalance').className = 'val ' + (isDryBal ? '' : (bal >= 100 ? 'positive' : 'negative'));
+  // ── Balance (from authenticated /api/stats) ──
+  // Moved off Supabase anon: the rolling_stats row exposed strategy state
+  // (reset_token, win_rate, etc.) to anyone with the anon JWT. /api/stats
+  // returns only the safe subset, gated by the dashboard secret.
+  try {
+    const params = new URLSearchParams(location.search);
+    const secret = params.get('secret') || '';
+    const r = await fetch(`/api/stats?secret=${encodeURIComponent(secret)}`);
+    if (r.ok) {
+      const stats = await r.json();
+      const bal = stats.simulated_balance;
+      if (bal != null) {
+        $('kBalance').textContent = '$' + Number(bal).toFixed(2);
+        const isDryBal = $('modeBadge') && $('modeBadge').textContent.includes('DRY');
+        $('kBalance').className = 'val ' + (isDryBal ? '' : (bal >= 100 ? 'positive' : 'negative'));
+      }
+      if (stats.updated_at) {
+        const ageSeconds = Math.floor((Date.now() - new Date(stats.updated_at).getTime()) / 1000);
+        const ageTxt = ageSeconds < 60 ? `${ageSeconds}s ago` : `${Math.floor(ageSeconds/60)}m ago`;
+        const balSub = $('kBalance').parentElement.querySelector('.sub');
+        if (balSub) balSub.textContent = `simulated USDC · ${ageTxt}`;
+      }
     }
-    // FIX-10: show balance age from rolling_stats updated_at
-    const updatedAt = rs[0].data.updated_at;
-    if (updatedAt) {
-      const ageSeconds = Math.floor((Date.now() - new Date(updatedAt).getTime()) / 1000);
-      const ageTxt = ageSeconds < 60 ? `${ageSeconds}s ago` : `${Math.floor(ageSeconds/60)}m ago`;
-      const balSub = $('kBalance').parentElement.querySelector('.sub');
-      if (balSub) balSub.textContent = `simulated USDC · ${ageTxt}`;
-    }
-  }
+  } catch (e) { /* balance card just shows last value */ }
 
   // ── Trades (direct, small table) ──
   const trades = await sq('trade_log', `${tagFilter()}order=ts.desc&limit=20`);

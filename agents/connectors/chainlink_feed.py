@@ -62,8 +62,23 @@ class ChainlinkOnChainFeed:
         try:
             self._init_contract()
             round_data = self._contract.functions.latestRoundData().call()
+            round_id = round_data[0]
             answer = round_data[1]
             updated_at = round_data[3]
+            answered_in_round = round_data[4]
+            # Chainlink best-practice guard: if answeredInRound < roundId the
+            # aggregator started a new round that hasn't finished yet and the
+            # `answer` we just read is from a prior, now-superseded round.
+            # Rare at Polygon's ~2s block time but possible during network
+            # congestion — treat as a read failure so the caller falls back
+            # to RTDS / primary feed.
+            if answered_in_round < round_id:
+                log_event(
+                    logger,
+                    "chainlink_stale_round",
+                    f"Round incomplete: answered_in_round={answered_in_round} < round_id={round_id}",
+                )
+                return (None, None)
             price = answer / (10 ** self._decimals)
             return (price, updated_at)
         except Exception as exc:
