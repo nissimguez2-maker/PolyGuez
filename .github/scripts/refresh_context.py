@@ -147,6 +147,8 @@ def build_block(url: str, key: str) -> str:
         "",
         f"**Refreshed at:** {now} (UTC) — commit `{last_sha}` by {last_author}",
         "",
+        "For stable system docs see [`SYSTEM.md`](SYSTEM.md).",
+        "",
         "### Recent commits (last 7 days)",
         "",
         recent_commits(),
