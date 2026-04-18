@@ -9,6 +9,7 @@ import os
 import threading
 import time
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import aiohttp
 import websockets
@@ -68,6 +69,19 @@ class PolyGuezRunner:
         self.config = config or PolyGuezConfig()
         self._config_lock = asyncio.Lock()
 
+        # LATENCY-TASK-5: live-mode LLM fallback enforcement. "go" means
+        # "fire the trade anyway when the LLM times out" — safe in
+        # dry-run (we just record what would have happened) but unsafe
+        # in live mode, where it bypasses the guardrail we pay the LLM
+        # latency tax for. Force the safer default and log loudly if an
+        # operator has tried to configure "go".
+        if self.config.mode == "live" and self.config.llm_timeout_fallback == "go":
+            logger.critical(
+                "LATENCY-TASK-5: llm_timeout_fallback='go' is unsafe in live mode; "
+                "forcing 'no-go' for this run. Set reduce-size in config if you want a middle path."
+            )
+            self.config.llm_timeout_fallback = "no-go"
+
         # Existing repo components
         self._polymarket = None  # Lazy init — needs wallet key
         self._gamma = GammaMarketClient()
@@ -104,6 +118,10 @@ class PolyGuezRunner:
         self._p2b_consecutive_failures = 0
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
+        # LATENCY-TASK-2: distance (seconds) between the Chainlink sample
+        # used as P2B and the market's eventStartTime, or None if the
+        # cycle was skipped for P2B quality. Logged to signal_log per cycle.
+        self._p2b_offset_seconds: Optional[float] = None
 
         # Provider context cache (refreshed by background task)
         self._provider_context_cache = {"fetched_at": 0.0, "data": ""}
@@ -126,6 +144,16 @@ class PolyGuezRunner:
         self._clob_ws_prices_valid: bool = False
         self._clob_http_session = None
         self._heartbeat_task = None
+        # LATENCY-TASK-4: monotonic timestamp of the last successful CLOB
+        # heartbeat post. Zero means "never sent successfully". Consumed
+        # by _entry_window to refuse entries when the session is about
+        # to be cancelled by Polymarket's 10s heartbeat timeout.
+        self._last_heartbeat_sent_ts: float = 0.0
+        # LATENCY-TASK-4: startup grace window for the heartbeat gate.
+        # The heartbeat task tick-ones ~5s after runner start; the first
+        # few _entry_window evaluations shouldn't fail on "never sent"
+        # before the task has had a chance to post.
+        self._runner_start_ts: float = time.time()
 
         # Hot-path timing (set per entry, read at settle)
         self._last_entry_llm_ms = 0.0
@@ -338,6 +366,10 @@ class PolyGuezRunner:
                         )
                         if isinstance(resp, dict):
                             heartbeat_id = resp.get("heartbeat_id", heartbeat_id)
+                        # LATENCY-TASK-4: record the successful post so
+                        # _entry_window can see how long ago the last
+                        # heartbeat went out.
+                        self._last_heartbeat_sent_ts = time.time()
             except Exception as e:
                 log_event(logger, "heartbeat_error",
                     f"Heartbeat failed: {e}", level=30)
@@ -591,56 +623,69 @@ class PolyGuezRunner:
         })
 
         # P2B = Chainlink price at eventStartTime
+        # LATENCY-TASK-2: The buffer-anchored path is the only trustworthy
+        # source of P2B. The old code fell back to "current Chainlink" when
+        # the buffer had nothing near eventStartTime — that produced a
+        # strike that wasn't anchored to event start and silently degraded
+        # edge quality. We now skip the cycle instead, and also halt after
+        # `p2b_consecutive_failure_halt` in a row (same halt path as the
+        # existing "no Chainlink at all" branch).
         event_start_dt = MarketDiscovery.get_event_start_time(self._current_market)
+        self._p2b_offset_seconds = None  # LATENCY-TASK-2 observability
         if event_start_dt:
             event_start_ts = event_start_dt.timestamp()
             cl_price, cl_ts, cl_offset = self._btc_feed.get_chainlink_price_at(event_start_ts)
+            max_offset = self.config.max_p2b_chainlink_offset_seconds
 
-            if cl_price is not None and cl_offset < 30.0:
-                # We have a Chainlink price within 30s of eventStartTime
+            if cl_price is not None and cl_price > 0 and cl_offset is not None and cl_offset <= max_offset:
                 self._price_to_beat = cl_price
                 self._p2b_source = "chainlink_buffer"
                 self._p2b_consecutive_failures = 0
+                self._p2b_offset_seconds = round(cl_offset, 2)
                 log_event(logger, "price_to_beat",
                     f"P2B from Chainlink buffer: ${cl_price:.2f} (offset: {cl_offset:.1f}s from eventStartTime)",
-                    {"source": "chainlink_buffer", "offset_seconds": round(cl_offset, 1)})
+                    {"source": "chainlink_buffer",
+                     "offset_seconds": round(cl_offset, 2),
+                     "max_offset": max_offset})
 
-                # Cross-check buffer P2B against current Chainlink
+                # Cross-check buffer P2B against current Chainlink.
+                # Tolerance is still flat USD today; sigma-scaling is a
+                # candidate follow-up (see LATENCY-TASK-2 notes in PR).
                 current_cl, _ = self._btc_feed.get_chainlink_price()
                 if current_cl and current_cl > 0:
                     divergence = abs(self._price_to_beat - current_cl)
-                    # Tight tolerance if offset < 5s, wider if older
                     tolerance = 50.0 if cl_offset < 5.0 else 150.0
                     self._p2b_cross_check_passed = divergence <= tolerance
-                    self._p2b_cross_check_divergence = divergence
+                    self._p2b_cross_check_divergence = round(divergence, 2)
                     log_event(logger, "p2b_cross_check",
                         f"Cross-check: passed={self._p2b_cross_check_passed}, divergence=${divergence:.2f}, tolerance=${tolerance:.0f} (buffer offset={cl_offset:.1f}s)")
                 else:
                     self._p2b_cross_check_passed = True
                     self._p2b_cross_check_divergence = 0.0
             else:
-                # Buffer doesn't have a price near eventStartTime — fall back to current Chainlink
-                current_cl, _ = self._btc_feed.get_chainlink_price()
-                if current_cl and current_cl > 0:
-                    self._price_to_beat = current_cl
-                    self._p2b_source = "chainlink_current"
-                    self._p2b_consecutive_failures = 0
-                    elapsed_since_start = (datetime.now(timezone.utc) - event_start_dt).total_seconds()
-                    log_event(logger, "price_to_beat_fallback",
-                        f"P2B fallback to current Chainlink: ${current_cl:.2f} (market started {elapsed_since_start:.0f}s ago, buffer offset: {cl_offset:.1f}s)",
-                        {"source": "chainlink_current", "elapsed_since_start": round(elapsed_since_start, 1)},
-                        level=30)
-                    self._p2b_cross_check_passed = True
-                    self._p2b_cross_check_divergence = 0.0
+                # LATENCY-TASK-2: refuse to fabricate P2B from "current"
+                # Chainlink. Log why and skip the cycle. Halts after N in
+                # a row, same policy as the "no Chainlink at all" branch.
+                if cl_price is None or cl_price <= 0:
+                    reason = "no_buffer_sample"
+                    offset_str = "n/a"
                 else:
-                    log_event(logger, "p2b_no_chainlink", "No Chainlink price available for P2B", level=30)
-                    self._p2b_consecutive_failures += 1
-                    self._rolling_stats.p2b_skips += 1
-                    self._current_market = None
-                    if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
-                        self._killed = True
-                        self._kill_timestamp = datetime.now(timezone.utc).isoformat()
-                    return
+                    reason = "offset_too_large"
+                    offset_str = f"{cl_offset:.1f}s"
+                log_event(logger, "p2b_offset_too_large",
+                    f"P2B Chainlink offset={offset_str} > threshold={max_offset:.1f}s "
+                    f"(reason={reason}); skipping cycle",
+                    {"reason": reason,
+                     "offset_seconds": round(cl_offset, 2) if cl_offset is not None else None,
+                     "threshold_seconds": max_offset},
+                    level=30)
+                self._p2b_consecutive_failures += 1
+                self._rolling_stats.p2b_skips += 1
+                self._current_market = None
+                if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
+                    self._killed = True
+                    self._kill_timestamp = datetime.now(timezone.utc).isoformat()
+                return
         else:
             log_event(logger, "p2b_no_start_time", "No eventStartTime in market dict", level=30)
             self._p2b_consecutive_failures += 1
@@ -693,6 +738,12 @@ class PolyGuezRunner:
                         market_id,
                         btc_close_price=cl_close,
                         strike=self._price_to_beat,
+                        # LATENCY-TASK-7: offset between the Chainlink
+                        # tick used as settlement price and expiry.
+                        # None = fell back to live chainlink (unknown
+                        # offset); preserved so the downstream filter
+                        # can distinguish both cases.
+                        cl_close_offset_seconds=cl_close_offset,
                     )
                     offset_str = f"offset={cl_close_offset:.1f}s" if cl_close_offset is not None else "offset=live"
                     log_event(logger, "shadow_settled_btc_feed",
@@ -740,6 +791,7 @@ class PolyGuezRunner:
         self._p2b_source = "none"
         self._p2b_cross_check_passed = None
         self._p2b_cross_check_divergence = None
+        self._p2b_offset_seconds = None  # LATENCY-TASK-2 reset
         log_event(logger, "cycle_complete", f"Market cycle complete: {old_question}. Looking for next market...")
 
     # -- Sub-loops ---------------------------------------------------------
@@ -795,6 +847,33 @@ class PolyGuezRunner:
                 await asyncio.sleep(self.config.clob_poll_interval)
                 continue
 
+            # LATENCY-TASK-3: granular feed freshness gate. Ages past the
+            # per-source thresholds flip price_feed_ok to False via the
+            # combined flag below, and the specific reasons get logged to
+            # signal_log so we can answer "which feed was stale?" after
+            # the fact. RTDS is optional — only flagged when it has ever
+            # delivered a sample (age >= 0) but is now stale.
+            _binance_age = self._btc_feed.binance_msg_age
+            _rtds_age = self._btc_feed.rtds_msg_age
+            _feed_lag_reasons = []
+            if _binance_age < 0 or _binance_age > self.config.max_binance_age_seconds:
+                _feed_lag_reasons.append("binance_stale")
+            if _rtds_age >= 0 and _rtds_age > self.config.max_rtds_age_seconds:
+                _feed_lag_reasons.append("rtds_stale")
+            if (
+                cl_price is None
+                or cl_age is None
+                or cl_age < 0
+                or cl_age > self.config.max_chainlink_age_seconds
+            ):
+                _feed_lag_reasons.append("chainlink_stale")
+            _feed_lag_ok = not _feed_lag_reasons
+            _feed_lag_ms = round(max(
+                _binance_age if _binance_age >= 0 else 0.0,
+                _rtds_age if _rtds_age >= 0 else 0.0,
+            ) * 1000.0, 1)
+            _price_feed_healthy = self._btc_feed.price_feed_ok and _feed_lag_ok
+
             # Evaluate signal first with depth=-1 (skip gate) to get delta direction
             signal = evaluate_entry_signal(
                 btc_velocity=btc_velocity,
@@ -813,7 +892,7 @@ class PolyGuezRunner:
                 binance_chainlink_gap=self._btc_feed.get_binance_chainlink_gap(),
                 clob_depth=-1.0,  # Sentinel: skip depth gate in first pass
                 price_to_beat=self._price_to_beat,
-                price_feed_ok=self._btc_feed.price_feed_ok,
+                price_feed_ok=_price_feed_healthy,
             )
 
             # Fetch depth using signal's delta-based direction (not velocity direction)
@@ -823,6 +902,55 @@ class PolyGuezRunner:
 
             # Update depth_ok on the signal using real depth
             signal.depth_ok = True if depth < 0 else depth >= self.config.min_clob_depth
+
+            # LATENCY-TASK-2: mirror this cycle's P2B quality onto the
+            # signal so evaluate_entry_signal's all_conditions_met check
+            # can block when the strike wasn't cleanly anchored. In
+            # practice this is belt-and-suspenders — _cycle already skips
+            # when P2B derivation fails — but it keeps the invariant
+            # explicit inside evaluate_entry_signal and makes the
+            # block reason visible in signal_log.
+            signal.p2b_ok = (
+                self._p2b_source == "chainlink_buffer"
+                and (self._p2b_cross_check_passed is not False)
+            )
+
+            # LATENCY-TASK-4: CLOB WS freshness + heartbeat health.
+            # clob_msg_age measures seconds since the last CLOB WS
+            # message; above clob_ws_stale_threshold we consider the
+            # quotes we just evaluated against untrustworthy. The
+            # heartbeat gate blocks entries when Polymarket is about to
+            # cancel our maker orders for inactivity (~10s timeout).
+            _now = time.time()
+            if self._clob_ws_last_msg > 0:
+                _clob_msg_age = _now - self._clob_ws_last_msg
+            else:
+                _clob_msg_age = -1.0  # never received
+            signal.clob_fresh_ok = (
+                self.config.clob_ws_enabled is False
+                or (_clob_msg_age >= 0 and _clob_msg_age <= self.config.clob_ws_stale_threshold)
+            )
+            if self._last_heartbeat_sent_ts > 0:
+                _heartbeat_age = _now - self._last_heartbeat_sent_ts
+            else:
+                _heartbeat_age = -1.0
+            # Heartbeat never sent = treat as stale ONLY if we're past the
+            # startup grace period (first 15s of runner life). That grace
+            # avoids gating the first-cycle scan on a task that hasn't
+            # tick-one'd yet.
+            if self._last_heartbeat_sent_ts <= 0 and (_now - self._runner_start_ts) < 15.0:
+                signal.heartbeat_ok = True
+            else:
+                signal.heartbeat_ok = (
+                    _heartbeat_age >= 0
+                    and _heartbeat_age <= self.config.heartbeat_stale_threshold
+                )
+            # Downstream _clob_ok drives the dashboard connection dot;
+            # keep it coherent with the hard gate so operators see the
+            # same view as the runner.
+            if not signal.heartbeat_ok:
+                self._clob_ok = False
+
             self._current_signal = signal
 
             _size_multiplier = get_daily_loss_size_multiplier(self._rolling_stats, self.config, self._usdc_balance)
@@ -898,10 +1026,21 @@ class PolyGuezRunner:
             _log_interval = getattr(self.config, 'signal_log_interval', 2.5)
             _log_this_signal = (int(elapsed * 10) % int(_log_interval * 10) == 0) or signal.all_conditions_met or trade_fired
             if _log_this_signal:
-                # Build blocking conditions string for this signal
+                # Build blocking conditions string for this signal.
+                # LATENCY-TASK-3: prefer granular feed-lag reasons
+                # (binance_stale / rtds_stale / chainlink_stale) over the
+                # single coarse "price_feed" reason when a specific feed
+                # tripped a threshold.
                 _blocking = []
-                if not signal.price_feed_ok: _blocking.append("price_feed")
-                if not getattr(signal, 'chainlink_fresh_ok', True): _blocking.append("chainlink_stale")
+                if _feed_lag_reasons:
+                    _blocking.extend(_feed_lag_reasons)
+                elif not signal.price_feed_ok:
+                    _blocking.append("price_feed")
+                if not getattr(signal, 'chainlink_fresh_ok', True) and "chainlink_stale" not in _blocking:
+                    _blocking.append("chainlink_stale")
+                if not getattr(signal, 'p2b_ok', True): _blocking.append("p2b_stale")  # LATENCY-TASK-2
+                if not getattr(signal, 'clob_fresh_ok', True): _blocking.append("clob_stale")  # LATENCY-TASK-4
+                if not getattr(signal, 'heartbeat_ok', True): _blocking.append("heartbeat_stale")  # LATENCY-TASK-4
                 if not signal.terminal_edge_ok: _blocking.append("terminal_edge")
                 if not signal.delta_magnitude_ok: _blocking.append("delta_magnitude")
                 if not signal.edge_ok: _blocking.append("edge")
@@ -925,11 +1064,37 @@ class PolyGuezRunner:
                     "btc_price": self._btc_feed.get_price() or 0.0,
                     "chainlink_price": cl_price,
                     "chainlink_age_seconds": round(cl_age, 1),
+                    # LATENCY-TASK-3: worst-case BTC-feed lag in ms for
+                    # post-hoc PnL-vs-latency analysis. Max of the two
+                    # primary BTC feeds (Binance WS, RTDS). Chainlink
+                    # age has its own column above.
+                    "feed_lag_ms": _feed_lag_ms,
+                    # LATENCY-TASK-4: CLOB WS message age in ms at the
+                    # moment this signal was evaluated. Negative age
+                    # encodes "never received" and is logged as None.
+                    "clob_msg_age_ms": (
+                        round(_clob_msg_age * 1000.0, 1) if _clob_msg_age >= 0 else None
+                    ),
+                    # LATENCY-TASK-1: whether MarketDiscovery's alignment
+                    # predicate accepted the current market. Always True
+                    # under the new path because misaligned candidates
+                    # never reach this point — logging it anyway gives
+                    # a dead-man's switch if the invariant ever regresses.
+                    "alignment_ok": bool(self._current_market.get("_alignment_ok", True)) if self._current_market else None,
+                    # LATENCY-TASK-2: P2B anchoring quality.
+                    "p2b_ok": bool(getattr(signal, "p2b_ok", True)),
+                    "p2b_offset_seconds": self._p2b_offset_seconds,
                     "blocking_conditions": ",".join(_blocking) if _blocking else "",
                     "in_trade": self._position is not None,
                     "strike_delta": signal.strike_delta,
                     "terminal_probability": signal.terminal_probability,
                     "terminal_edge": signal.terminal_edge,
+                    # LATENCY-TASK-6: the effective fair-value edge
+                    # threshold this signal was judged against, so we
+                    # can answer "was the gate set high enough at that
+                    # point in the window?" without re-deriving from
+                    # elapsed_seconds + config.
+                    "required_edge": getattr(signal, "required_edge", None),
                     # Fee-adjusted edge (log-only per audit Phase 1.1). Gate
                     # still uses terminal_edge until k-recal Phase 4 lands.
                     "net_edge": getattr(signal, "net_edge", None),
@@ -1044,6 +1209,47 @@ class PolyGuezRunner:
             log_event(logger, "trade_skipped", f"Skipped: LLM NO-GO — {reason}")
             return False
 
+        # LATENCY-TASK-5: hard LLM latency cutoff. When the operator has
+        # configured max_llm_ms, an LLM call that breached it is treated
+        # as a timeout regardless of what the call returned — the
+        # downstream order submission would be firing on a verdict that
+        # was computed against a market snapshot this stale. Also logs a
+        # shadow trade so the outcome is still captured for analysis.
+        _max_llm_ms = self.config.max_llm_ms
+        if _max_llm_ms is not None and _llm_ms > _max_llm_ms:
+            log_event(logger, "hot_path_stale",
+                f"LLM latency {_llm_ms:.0f}ms > max_llm_ms={_max_llm_ms:.0f}ms — treating as timeout (no trade)",
+                {"llm_ms": round(_llm_ms, 1), "max_llm_ms": _max_llm_ms,
+                 "verdict_raw": verdict, "signal_id": signal.signal_id},
+                level=40)
+            # Shadow-log so we still get outcome data for this would-be trade.
+            try:
+                _shadow_entry_price = signal.yes_price if signal.direction == "up" else signal.no_price
+                _shadow_size = calculate_position_size(
+                    self._usdc_balance, self.config,
+                    edge=signal.edge, depth=getattr(self, "_current_depth", 0.0),
+                )
+                log_shadow_trade({
+                    "market_id": market_id,
+                    "market_question": self._current_market.get("question", "") if self._current_market else "",
+                    "direction": signal.direction,
+                    "entry_price": _shadow_entry_price,
+                    "size_usdc": _shadow_size,
+                    "edge": round(signal.edge, 4),
+                    "terminal_edge": round(signal.terminal_edge, 4),
+                    "terminal_probability": round(signal.terminal_probability, 4),
+                    "strike_delta": round(signal.strike_delta, 2),
+                    "chainlink_price": round(signal.chainlink_price, 2),
+                    "btc_price": round(signal.btc_price, 2),
+                    "elapsed_seconds": round(signal.elapsed_seconds, 1),
+                    "conditions_met": 0,
+                    "conditions_total": 0,
+                    "blocking_conditions": "hot_path_stale",
+                }, session_tag=self.config.session_tag)
+            except Exception:
+                pass
+            return False
+
         # Determine position size (fixed tiers)
         depth = getattr(self, '_current_depth', 0.0)
         size = calculate_position_size(self._usdc_balance, self.config, edge=signal.edge, depth=depth)
@@ -1076,13 +1282,29 @@ class PolyGuezRunner:
         )
         _order_ms = (asyncio.get_running_loop().time() - _t_order_start) * 1000
         _total_ms = _llm_ms + _order_ms
+        # LATENCY-TASK-5: classify every entry into a coarse bucket so
+        # downstream analysis can join PnL against latency without
+        # bucketing by hand. Buckets mirror the task spec.
+        if _total_ms < 200:
+            _latency_bucket = "<200"
+        elif _total_ms < 500:
+            _latency_bucket = "200-500"
+        elif _total_ms < 1000:
+            _latency_bucket = "500-1000"
+        else:
+            _latency_bucket = ">1000"
+        _hot_path_stale = _total_ms > self.config.max_total_hot_path_ms
         log_event(logger, "hot_path_timing",
-            f"LLM={_llm_ms:.0f}ms order={_order_ms:.0f}ms total={_total_ms:.0f}ms")
+            f"LLM={_llm_ms:.0f}ms order={_order_ms:.0f}ms total={_total_ms:.0f}ms bucket={_latency_bucket}"
+            + (" [HOT_PATH_STALE]" if _hot_path_stale else ""),
+            level=40 if _hot_path_stale else 20)
 
         # Store timing for log_trade at settlement
         self._last_entry_llm_ms = _llm_ms
         self._last_entry_order_ms = _order_ms
         self._last_entry_total_ms = _total_ms
+        self._last_entry_latency_bucket = _latency_bucket
+        self._last_entry_hot_path_stale = _hot_path_stale
         # MODEL-02: capture fee data from the CLOB executor response.
         # In dry-run the response contains fee_paid=0.0 and taker_maker="simulated".
         # In live mode the response reflects the actual maker/taker outcome.
@@ -1218,6 +1440,10 @@ class PolyGuezRunner:
                     "llm_response_ms": round(self._last_entry_llm_ms, 1),
                     "order_submit_ms": round(self._last_entry_order_ms, 1),
                     "total_latency_ms": round(self._last_entry_total_ms, 1),
+                    # LATENCY-TASK-5: coarse bucket + hot-path-stale flag so
+                    # post-hoc PnL vs. latency joins are cheap in SQL.
+                    "latency_bucket": getattr(self, "_last_entry_latency_bucket", None),
+                    "hot_path_stale": getattr(self, "_last_entry_hot_path_stale", False),
                     "mode": self.config.mode,
                     "terminal_edge": getattr(self._current_signal, 'terminal_edge', None) if self._current_signal else None,
                     "net_edge": getattr(self._current_signal, 'net_edge', None) if self._current_signal else None,
@@ -1375,6 +1601,10 @@ class PolyGuezRunner:
                 "llm_response_ms": round(self._last_entry_llm_ms, 1),
                 "order_submit_ms": round(self._last_entry_order_ms, 1),
                 "total_latency_ms": round(self._last_entry_total_ms, 1),
+                # LATENCY-TASK-5: coarse bucket + hot-path-stale flag so
+                # post-hoc PnL vs. latency joins are cheap in SQL.
+                "latency_bucket": getattr(self, "_last_entry_latency_bucket", None),
+                "hot_path_stale": getattr(self, "_last_entry_hot_path_stale", False),
                 "mode": self.config.mode,
                 "terminal_edge": getattr(self._current_signal, 'terminal_edge', None) if self._current_signal else None,
                 "net_edge": getattr(self._current_signal, 'net_edge', None) if self._current_signal else None,

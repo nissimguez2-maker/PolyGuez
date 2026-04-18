@@ -309,6 +309,54 @@ class PolyGuezConfig(BaseModel):
     btc_buffer_min_seconds: float = Field(default=10.0)
     price_feed_stale_threshold: float = Field(default=10.0, ge=2.0, le=60.0, description="Seconds before price feed is considered stale")
     clob_ws_enabled: bool = Field(default=True, description="Enable CLOB WebSocket for real-time YES/NO prices")
+    # LATENCY-TASK-3: per-feed hard-stop age thresholds. Previously ages
+    # were logged but not gated; we now refuse to trade when any required
+    # feed is older than its threshold. RTDS is optional — the check is
+    # only applied once it has ever delivered a sample (age >= 0).
+    max_binance_age_seconds: float = Field(default=2.0, ge=0.1, le=30.0,
+        description="Max seconds since the last Binance WS tick before we refuse to trade.")
+    max_rtds_age_seconds: float = Field(default=1.0, ge=0.1, le=30.0,
+        description="Max seconds since the last RTDS message before we refuse to trade. Only applied if RTDS has ever delivered.")
+    max_chainlink_age_seconds: float = Field(default=10.0, ge=0.5, le=60.0,
+        description="Max seconds since the last Chainlink update before we refuse to trade.")
+    # LATENCY-TASK-4: CLOB WS freshness + heartbeat health gates.
+    # `clob_ws_stale_threshold` — seconds since the last CLOB WS message
+    # past which we treat YES/NO quotes as stale and block entry. 3s is a
+    # reasonable floor for a busy 5-min market; the existing REST
+    # fallback in _poll_clob kicks in long before this threshold.
+    clob_ws_stale_threshold: float = Field(default=3.0, ge=0.5, le=30.0,
+        description="Max seconds since the last CLOB WS message before quotes are treated as stale.")
+    # `heartbeat_stale_threshold` — Polymarket cancels open maker orders
+    # after ~10s without a heartbeat. We block entries at 8s so a
+    # borderline-dead session never fires a trade whose order will be
+    # cancelled before it fills.
+    heartbeat_stale_threshold: float = Field(default=8.0, ge=2.0, le=30.0,
+        description="Max seconds since the last successful CLOB heartbeat before we refuse to trade.")
+    # LATENCY-TASK-5: hot-path (LLM + order) latency gating.
+    # `max_llm_ms` is an OPT-IN hard cutoff — when set, an LLM call that
+    # exceeds this is treated as a timeout no-go regardless of
+    # `llm_timeout_fallback`. None (default) = rely on `llm_timeout`.
+    max_llm_ms: Optional[float] = Field(default=None, ge=100.0, le=60000.0,
+        description="Hard LLM latency cutoff in ms. If exceeded, the signal is treated as a no-go. None = disabled (uses llm_timeout).")
+    # `max_total_hot_path_ms` bounds the LLM+order round-trip. Trades
+    # placed while the total already exceeds this are flagged
+    # `hot_path_stale` in the trade log for calibration. Currently this
+    # is an observability gate only (the order has already gone out by
+    # the time we measure it); a pre-order gate would require splitting
+    # execute_entry's submit-vs-fill timings.
+    max_total_hot_path_ms: float = Field(default=8000.0, ge=500.0, le=60000.0,
+        description="Hot-path latency soft cutoff in ms. Trades above this are flagged hot_path_stale for post-hoc analysis.")
+    # LATENCY-TASK-6: time-to-expiry scaled edge requirement.
+    # "step" keeps the existing early/mid/late multiplier behaviour.
+    # "linear" interpolates required edge from `edge_scaling_base` (at
+    # full 300s remaining) to `edge_scaling_close` (at 0s remaining),
+    # and applies the same interpolation to the terminal-edge gate.
+    edge_scaling_mode: str = Field(default="step",
+        description="How required_edge scales with time: 'step' (legacy early/mid/late) or 'linear' (interpolated).")
+    edge_scaling_base: float = Field(default=0.03, ge=0.0, le=0.5,
+        description="Linear mode: required edge at window start (remaining=300s).")
+    edge_scaling_close: float = Field(default=0.075, ge=0.0, le=0.5,
+        description="Linear mode: required edge at window close (remaining=0s). Must be >= edge_scaling_base.")
 
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)
@@ -327,6 +375,14 @@ class PolyGuezConfig(BaseModel):
     # Lowered 50 -> 10 per audit: at the 2.5s signal cadence, 50 failures was
     # 125s of bad shadow entries before halt; 10 caps it at ~25s.
     p2b_consecutive_failure_halt: int = Field(default=10, description="Halt after N consecutive P2B parse failures")
+    # LATENCY-TASK-2: Max allowable distance in seconds between the Chainlink
+    # sample used as Price-to-Beat and the market's eventStartTime. Previous
+    # code accepted up to 30 s (10% of a 5-min window) and silently fell back
+    # to "current Chainlink" when the buffer had nothing closer — both modes
+    # produced a P2B that didn't anchor to event start. At 10 s the bot skips
+    # any cycle whose buffer can't anchor the strike tightly enough.
+    max_p2b_chainlink_offset_seconds: float = Field(default=10.0, ge=0.5, le=60.0,
+        description="Max seconds between Chainlink buffer sample and eventStartTime for P2B to be trusted")
     min_terminal_edge: float = Field(default=0.03, ge=0.01, le=0.5, description="Min edge at terminal probability for entry")
     conviction_min_delta: float = Field(default=0.5, ge=0.0, le=200.0, description="Min $ delta between Chainlink and P2B for conviction")
     conviction_min_delta_strict: float = Field(default=2.0, ge=0.0, le=500.0, description="Strict delta threshold for fast-moving markets")
@@ -439,6 +495,21 @@ class SignalState(BaseModel):
     time_of_day_ok: bool = True
     entry_price_ok: bool = True
     direction_ok: bool = True
+    # LATENCY-TASK-2: Hard gate for P2B quality. Set to False when the
+    # Chainlink sample used to anchor the strike is more than
+    # `max_p2b_chainlink_offset_seconds` away from eventStartTime or
+    # the cross-check against current Chainlink diverges beyond the
+    # tolerance. Default True so legacy callers that don't set it keep
+    # their existing behaviour.
+    p2b_ok: bool = True
+    # LATENCY-TASK-4: CLOB WS freshness + heartbeat gates.
+    # `clob_fresh_ok=False` → last WS message older than
+    # `clob_ws_stale_threshold`. `heartbeat_ok=False` → last successful
+    # heartbeat older than `heartbeat_stale_threshold`. Either flips
+    # all_conditions_met to False so we never enter on stale venue state
+    # or with a session Polymarket is about to cancel.
+    clob_fresh_ok: bool = True
+    heartbeat_ok: bool = True
 
     @property
     def all_conditions_met(self) -> bool:
@@ -447,6 +518,9 @@ class SignalState(BaseModel):
             # Feed health gates
             self.price_feed_ok,          # At least one price source alive
             self.chainlink_fresh_ok,     # Chainlink not stale near expiry
+            self.p2b_ok,                 # LATENCY-TASK-2: strike anchored to event start
+            self.clob_fresh_ok,          # LATENCY-TASK-4: CLOB WS message not stale
+            self.heartbeat_ok,           # LATENCY-TASK-4: CLOB heartbeat alive
             # V2 core gates (velocity_ok and oracle_gap_ok removed — nearly always True, adding noise)
             self.terminal_edge_ok,       # Terminal probability edge above minimum
             self.delta_magnitude_ok,     # Strike delta large enough for conviction

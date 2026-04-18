@@ -73,6 +73,16 @@ was deleted from Supabase on 2026-04-16 (see
 | `p2b_consecutive_failure_halt` | 10 | At 2.5s cadence ≈ 25s of bad shadow entries before halt |
 | `blocked_hours_utc` | `[0, 3]` | Thin-liquidity windows |
 | `llm_enabled` | `False` | Phase 0 — LLM disabled |
+| `max_p2b_chainlink_offset_seconds` | `10.0` | LATENCY-2. Max buffer→eventStart offset for P2B; over = cycle skipped. |
+| `max_binance_age_seconds` | `2.0` | LATENCY-3. Hard gate on Binance WS staleness. |
+| `max_rtds_age_seconds` | `1.0` | LATENCY-3. Applied only once RTDS has ever delivered. |
+| `max_chainlink_age_seconds` | `10.0` | LATENCY-3. General Chainlink staleness gate. |
+| `clob_ws_stale_threshold` | `3.0` | LATENCY-4. CLOB WS message-age cutoff. |
+| `heartbeat_stale_threshold` | `8.0` | LATENCY-4. Blocks entry before Polymarket's ~10s heartbeat cancel. |
+| `max_llm_ms` | `None` | LATENCY-5. Opt-in hard cutoff (ms); over = no-go, bypasses `llm_timeout_fallback`. |
+| `max_total_hot_path_ms` | `8000.0` | LATENCY-5. Trades above this flip `hot_path_stale` on the log row (observability). |
+| `edge_scaling_mode` | `"step"` | LATENCY-6. Legacy early/mid/late tiers. Flip to `"linear"` to interpolate. |
+| `edge_scaling_base` / `edge_scaling_close` | `0.03 / 0.075` | LATENCY-6. Linear-mode thresholds at window start / close. |
 
 ---
 

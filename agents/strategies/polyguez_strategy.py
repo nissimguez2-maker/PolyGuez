@@ -23,6 +23,25 @@ logger = get_logger("polyguez.strategy")
 _prompter = Prompter()
 
 
+def _linear_edge_for_remaining(remaining_seconds, base, close, window=300.0):
+    """LATENCY-TASK-6: linearly interpolate the required edge.
+
+    `base` is the edge required at the start of the window
+    (remaining == window). `close` is the edge required at expiry
+    (remaining == 0). When remaining falls in between, we interpolate
+    so late entries must clear a strictly higher bar. Degrades
+    gracefully: if base >= close, returns max(base, close) — the
+    step config is still a valid linear config.
+    """
+    if window <= 0:
+        return max(base, close)
+    r = max(0.0, min(float(remaining_seconds), float(window)))
+    # `frac_elapsed` is 0 at window start, 1 at close. We interpolate
+    # from `base` toward `close` as frac_elapsed increases.
+    frac_elapsed = 1.0 - (r / window)
+    return base + (close - base) * frac_elapsed
+
+
 def evaluate_entry_signal(
     btc_velocity, btc_price, yes_price, no_price, spread,
     elapsed_seconds, usdc_balance, config, rolling_stats,
@@ -81,12 +100,35 @@ def evaluate_entry_signal(
     _fee_coef = getattr(config, "taker_fee_coefficient", 0.072)
     net_edge = terminal_edge - _fee_coef * token_price * (1.0 - token_price)
 
-    if elapsed_seconds <= config.early_window_seconds:
-        required_edge = config.min_edge * config.early_edge_multiplier
-    elif elapsed_seconds <= config.mid_window_seconds:
-        required_edge = config.min_edge * config.mid_edge_multiplier
+    # LATENCY-TASK-6: edge requirement scales with time-to-expiry. "step"
+    # (legacy) uses three coarse buckets; "linear" interpolates from
+    # edge_scaling_base (at window start) to edge_scaling_close (at
+    # window close), and applies the same interpolation to the
+    # terminal-edge gate below. Step mode is the default for backwards
+    # compatibility.
+    _edge_mode = getattr(config, "edge_scaling_mode", "step")
+    min_terminal_edge_eff = config.min_terminal_edge
+    if _edge_mode == "linear":
+        required_edge = _linear_edge_for_remaining(
+            seconds_remaining,
+            base=config.edge_scaling_base,
+            close=config.edge_scaling_close,
+        )
+        # Mirror the same interpolation onto the terminal-edge gate so
+        # late-window entries also need a strictly larger terminal edge.
+        min_terminal_edge_eff = _linear_edge_for_remaining(
+            seconds_remaining,
+            base=config.min_terminal_edge,
+            close=max(config.min_terminal_edge,
+                      config.edge_scaling_close * (config.min_terminal_edge / max(config.edge_scaling_base, 1e-9))),
+        )
     else:
-        required_edge = config.min_edge * config.late_edge_multiplier
+        if elapsed_seconds <= config.early_window_seconds:
+            required_edge = config.min_edge * config.early_edge_multiplier
+        elif elapsed_seconds <= config.mid_window_seconds:
+            required_edge = config.min_edge * config.mid_edge_multiplier
+        else:
+            required_edge = config.min_edge * config.late_edge_multiplier
 
     effective_velocity_threshold = config.velocity_threshold
     effective_required_edge = required_edge
@@ -123,7 +165,9 @@ def evaluate_entry_signal(
     clob_mispricing_ok = edge > 0 and token_price < estimated_fv
     # depth < 0 means unmeasurable (no wallet / API error) — skip gate
     depth_ok = True if clob_depth < 0 else clob_depth >= config.min_clob_depth
-    terminal_edge_ok = terminal_edge > config.min_terminal_edge
+    # LATENCY-TASK-6: terminal-edge gate uses the time-scaled threshold
+    # when linear mode is on; otherwise identical to the legacy check.
+    terminal_edge_ok = terminal_edge > min_terminal_edge_eff
 
     # Use strict delta threshold in fast-moving markets
     fast_market = abs(btc_velocity) > config.velocity_threshold * 3

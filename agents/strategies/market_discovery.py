@@ -35,29 +35,93 @@ class MarketDiscovery:
 
     # -- Primary discovery: deterministic slug via /events -------------------
 
-    def find_active_btc_5min_market(self, config):
-        """Return the first active 5-min BTC market dict, or None.
+    # LATENCY-TASK-1: Skew allowances for the window-alignment predicate.
+    # `MAX_START_SKEW` = how many seconds after `now` we still treat the
+    # market as "already started" (covers clock drift between us and
+    # Polymarket's event clock). `MAX_END_SKEW` = how many seconds past
+    # `endDate` we still treat the market as in-progress (cushion for
+    # `endDate` fields that land slightly before the true expiry).
+    MAX_START_SKEW = 5.0
+    MAX_END_SKEW = 10.0
 
-        Constructs the deterministic slug btc-updown-5m-{window_ts} and
-        queries the Gamma /events endpoint directly.  Tries current window,
-        then ±1 window as fallback for timing skew.
+    @staticmethod
+    def _is_window_aligned(event_start, end, now, max_start_skew=MAX_START_SKEW, max_end_skew=MAX_END_SKEW):
+        """Return True if `now` falls inside the market's live entry window.
+
+        We allow a small cushion on both ends:
+          * `event_start <= now + max_start_skew` → we haven't jumped into the
+            next pre-listed window.
+          * `now <= end + max_end_skew` → we haven't drifted past expiry.
+
+        Missing `event_start` or `end` returns False so callers fall back to
+        the broad search path rather than trading an unverified market.
+        """
+        if event_start is None or end is None or now is None:
+            return False
+        try:
+            start_ts = event_start.timestamp() if hasattr(event_start, "timestamp") else float(event_start)
+            end_ts = end.timestamp() if hasattr(end, "timestamp") else float(end)
+            now_ts = now.timestamp() if hasattr(now, "timestamp") else float(now)
+        except (TypeError, ValueError):
+            return False
+        return (start_ts <= now_ts + max_start_skew) and (now_ts <= end_ts + max_end_skew)
+
+    def find_active_btc_5min_market(self, config):
+        """Return the first active 5-min BTC market dict whose live entry
+        window actually contains `now`, or None.
+
+        LATENCY-TASK-1: Candidate preference is previous → current → next.
+        Previous covers the ~10 s tail when Polymarket's endDate lags
+        the true expiry; current is the normal hit; next is only selected
+        when Polymarket has advanced its event clock ahead of ours. Every
+        selected market is checked against `_is_window_aligned` so we
+        never trade the next window thinking it's the current one.
         """
         now_ts = int(time.time())
         current_window = now_ts - (now_ts % _WINDOW_SECONDS)
 
-        # Try current window, then next window (may already be created),
-        # then previous window (may still be open)
         candidates = [
-            current_window,
-            current_window + _WINDOW_SECONDS,
-            current_window - _WINDOW_SECONDS,
+            current_window - _WINDOW_SECONDS,  # previous (fading tail)
+            current_window,                    # current (the happy path)
+            current_window + _WINDOW_SECONDS,  # next (only if pre-listed and now live)
         ]
 
+        now_dt = datetime.now(timezone.utc)
         for window_ts in candidates:
             slug = f"btc-updown-5m-{window_ts}"
             market = self._query_event_by_slug(slug)
-            if market and not market.get("closed"):
-                return market
+            if not market or market.get("closed"):
+                continue
+
+            event_start_dt = MarketDiscovery.get_event_start_time(market)
+            end_dt = MarketDiscovery.get_market_expiry(market)
+            aligned = MarketDiscovery._is_window_aligned(event_start_dt, end_dt, now_dt)
+            market["_alignment_ok"] = aligned
+            market["_alignment_now_ts"] = now_dt.isoformat()
+            market["_alignment_event_start"] = event_start_dt.isoformat() if event_start_dt else None
+            market["_alignment_end_date"] = end_dt.isoformat() if end_dt else None
+
+            if not aligned:
+                log_event(logger, "market_alignment_failed",
+                    f"Skipping misaligned market (window={window_ts}): {market.get('question','')}",
+                    {
+                        "now": market["_alignment_now_ts"],
+                        "event_start": market["_alignment_event_start"],
+                        "end_date": market["_alignment_end_date"],
+                        "slug": slug,
+                    },
+                    level=30)
+                continue
+
+            log_event(logger, "market_aligned",
+                f"Selected aligned market: {market.get('question','')}",
+                {
+                    "now": market["_alignment_now_ts"],
+                    "event_start": market["_alignment_event_start"],
+                    "end_date": market["_alignment_end_date"],
+                    "window_ts": window_ts,
+                })
+            return market
 
         # Fallback: broad search for any active btc-updown-5m market
         return self._fallback_search(config)
@@ -119,7 +183,12 @@ class MarketDiscovery:
         return None
 
     def _fallback_search(self, config):
-        """Broad search: GET /markets with active filters, match by slug prefix."""
+        """Broad search: GET /markets with active filters, match by slug prefix.
+
+        LATENCY-TASK-1: Every candidate from the broad search is still
+        filtered through `_is_window_aligned` — we never return a
+        fallback market whose live window doesn't actually contain now.
+        """
         try:
             markets = self._gamma.get_markets(
                 querystring_params={
@@ -132,6 +201,7 @@ class MarketDiscovery:
             log_event(logger, "market_discovery_error", f"Gamma API fallback error: {exc}")
             return None
 
+        now_dt = datetime.now(timezone.utc)
         for m in markets:
             slug = m.get("slug", "") or ""
             event_slug = ""
@@ -142,12 +212,24 @@ class MarketDiscovery:
 
             # Match btc-updown-5m prefix in slug or event slug
             if "btc-updown-5m" in slug or "btc-updown-5m" in event_slug:
-                if m.get("enableOrderBook") or m.get("acceptingOrders"):
-                    log_event(logger, "market_discovered_fallback", f"Fallback found: {m.get('question', '')}", {
-                        "market_id": m.get("id"),
-                        "slug": slug,
-                    })
-                    return m
+                if not (m.get("enableOrderBook") or m.get("acceptingOrders")):
+                    continue
+                event_start_dt = MarketDiscovery.get_event_start_time(m)
+                end_dt = MarketDiscovery.get_market_expiry(m)
+                aligned = MarketDiscovery._is_window_aligned(event_start_dt, end_dt, now_dt)
+                m["_alignment_ok"] = aligned
+                m["_alignment_now_ts"] = now_dt.isoformat()
+                m["_alignment_event_start"] = event_start_dt.isoformat() if event_start_dt else None
+                m["_alignment_end_date"] = end_dt.isoformat() if end_dt else None
+                if not aligned:
+                    log_event(logger, "market_alignment_failed_fallback",
+                        f"Fallback match misaligned — skipping: {m.get('question','')}",
+                        {"slug": slug, "event_slug": event_slug}, level=30)
+                    continue
+                log_event(logger, "market_discovered_fallback",
+                    f"Fallback found: {m.get('question', '')}",
+                    {"market_id": m.get("id"), "slug": slug})
+                return m
 
         return None
 
