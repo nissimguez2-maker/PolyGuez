@@ -132,6 +132,8 @@ async def supabase_status():
 
     gamma_ok = getattr(_runner, "_gamma_ok", None) if _runner else None
     discovery_misses = getattr(_runner, "_discovery_misses", None) if _runner else None
+    usdc_balance = getattr(_runner, "_usdc_balance", None) if _runner else None
+    sim_balance = getattr(getattr(_runner, "_rolling_stats", None), "simulated_balance", None) if _runner else None
 
     return JSONResponse({
         "client_initialised": client_ok,
@@ -148,6 +150,8 @@ async def supabase_status():
         "p2b_consecutive_failures": p2b_consecutive,
         "gamma_ok": gamma_ok,
         "discovery_misses": discovery_misses,
+        "usdc_balance": usdc_balance,
+        "sim_balance": sim_balance,
     })
 
 
