@@ -156,28 +156,41 @@ async def supabase_status():
 
 @app.get("/api/debug-gamma")
 async def debug_gamma():
-    """Test whether Railway can reach gamma-api.polymarket.com."""
+    """Test whether Railway can reach gamma-api.polymarket.com with real slugs."""
     import httpx as _httpx
     import time as _time
-    url = "https://gamma-api.polymarket.com/events?slug=btc-updown-5m-test"
-    t0 = _time.time()
-    try:
-        resp = _httpx.get(url, timeout=10.0, headers={"User-Agent": "PolyGuez/1.0"})
-        elapsed = round(_time.time() - t0, 2)
-        return JSONResponse({
-            "reachable": True,
-            "status_code": resp.status_code,
-            "elapsed_seconds": elapsed,
-            "body_preview": resp.text[:200],
-        })
-    except Exception as exc:
-        elapsed = round(_time.time() - t0, 2)
-        return JSONResponse({
-            "reachable": False,
-            "error_type": type(exc).__name__,
-            "error": str(exc),
-            "elapsed_seconds": elapsed,
-        })
+    results = []
+    now_ts = int(_time.time())
+    current_window = now_ts - (now_ts % 300)
+    slugs = [
+        f"btc-updown-5m-{current_window - 300}",
+        f"btc-updown-5m-{current_window}",
+        f"btc-updown-5m-{current_window + 300}",
+    ]
+    for slug in slugs:
+        url = f"https://gamma-api.polymarket.com/events?slug={slug}"
+        t0 = _time.time()
+        try:
+            resp = _httpx.get(url, timeout=10.0, headers={"User-Agent": "PolyGuez/1.0"})
+            elapsed = round(_time.time() - t0, 2)
+            data = resp.json() if resp.status_code == 200 else None
+            market_count = len(data) if isinstance(data, list) else 0
+            results.append({
+                "slug": slug,
+                "status_code": resp.status_code,
+                "elapsed_seconds": elapsed,
+                "event_count": market_count,
+                "body_preview": resp.text[:120] if resp.status_code != 200 else None,
+            })
+        except Exception as exc:
+            elapsed = round(_time.time() - t0, 2)
+            results.append({
+                "slug": slug,
+                "error_type": type(exc).__name__,
+                "error": str(exc)[:200],
+                "elapsed_seconds": elapsed,
+            })
+    return JSONResponse({"window_ts": current_window, "slugs_tested": results})
 
 
 # -- HTML dashboard --------------------------------------------------------
