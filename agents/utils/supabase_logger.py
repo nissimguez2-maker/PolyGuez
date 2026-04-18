@@ -183,6 +183,68 @@ def _init_client_locked():
         return None
 
 
+def supabase_startup_check() -> bool:
+    """Synchronous Supabase connectivity test — call once at bot startup.
+
+    Unlike the write-failure alerter (which needs 3 consecutive failures +
+    10-minute cooldown), this fires a Telegram alert immediately so a bad
+    SUPABASE_SERVICE_KEY on Railway surfaces within seconds of the first
+    deploy that has the problem.
+
+    Test sequence:
+      1. Env vars present?
+      2. Client initialises?
+      3. service_role key works? (upsert + delete a probe row on rolling_stats;
+         anon key has no INSERT policy → PostgREST 403, definitive failure)
+
+    Returns True if everything is healthy, False otherwise.
+    """
+    url = os.environ.get("SUPABASE_URL", "")
+    key = os.environ.get("SUPABASE_SERVICE_KEY", "")
+    missing = [n for n, v in [("SUPABASE_URL", url), ("SUPABASE_SERVICE_KEY", key)] if not v]
+    if missing:
+        msg = (
+            f"[PolyGuez STARTUP] Supabase disabled — {', '.join(missing)} not set on Railway. "
+            "Writes will be silent. Fix: Railway Variables → add the missing key(s)."
+        )
+        logger.error(msg)
+        _send_telegram_alert(msg)
+        return False
+
+    client = _client()
+    if not client:
+        msg = (
+            "[PolyGuez STARTUP] Supabase client init failed. "
+            "Check SUPABASE_URL and SUPABASE_SERVICE_KEY on Railway."
+        )
+        logger.error(msg)
+        _send_telegram_alert(msg)
+        return False
+
+    try:
+        # Write a probe row then immediately delete it. rolling_stats has
+        # no anon INSERT policy — a wrong/anon key raises PostgREST 403 here,
+        # making this a definitive service_role verification without querying
+        # user data.
+        client.table("rolling_stats").upsert(
+            {"id": "_startup_probe", "data": {"probe": True}},
+            on_conflict="id",
+        ).execute()
+        client.table("rolling_stats").delete().eq("id", "_startup_probe").execute()
+        logger.info("[STARTUP] Supabase OK — service_role key verified (write+delete probe passed)")
+        return True
+    except Exception as exc:
+        msg = (
+            f"[PolyGuez STARTUP] Supabase write probe FAILED: {exc!r}. "
+            "SUPABASE_SERVICE_KEY is likely wrong (anon key?) or rotated. "
+            "Fix: Supabase Dashboard > Settings > API > service_role key → "
+            "paste into Railway Variables as SUPABASE_SERVICE_KEY, then redeploy."
+        )
+        logger.error(msg)
+        _send_telegram_alert(msg)
+        return False
+
+
 def log_signal(snapshot: dict, session_tag: str = "V5") -> None:
     """Fire-and-forget in background thread — never blocks the main loop."""
     snapshot["ts"] = datetime.now(timezone.utc).isoformat()

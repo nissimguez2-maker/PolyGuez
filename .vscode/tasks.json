@@ -119,6 +119,19 @@
       "problemMatcher": []
     },
     {
+      "label": "PolyGuez — Deploy: Check Railway Env Vars",
+      "type": "shell",
+      "command": "python3 scripts/ops/fix_railway_env.py",
+      "group": "build",
+      "detail": "List Railway service variables and flag missing/wrong ones (SUPABASE_SERVICE_KEY, TELEGRAM, etc). Requires RAILWAY_TOKEN/PROJECT_ID/SERVICE_ID in .env.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "PolyGuez — Deploy: Railway",
       "type": "shell",
       "command": "python3 scripts/ops/deploy_prod.py --confirm CONFIRM_DEPLOY",

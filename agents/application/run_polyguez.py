@@ -2263,6 +2263,9 @@ def start_runner(mode="dry-run", live=False):
     }
     config = config.model_copy(update=env_overrides)
 
+    from agents.utils.supabase_logger import supabase_startup_check
+    supabase_startup_check()
+
     runner = PolyGuezRunner(config=config)
     asyncio.run(runner.run())
     return runner
