@@ -346,6 +346,17 @@ class PolyGuezConfig(BaseModel):
     # execute_entry's submit-vs-fill timings.
     max_total_hot_path_ms: float = Field(default=8000.0, ge=500.0, le=60000.0,
         description="Hot-path latency soft cutoff in ms. Trades above this are flagged hot_path_stale for post-hoc analysis.")
+    # LATENCY-TASK-6: time-to-expiry scaled edge requirement.
+    # "step" keeps the existing early/mid/late multiplier behaviour.
+    # "linear" interpolates required edge from `edge_scaling_base` (at
+    # full 300s remaining) to `edge_scaling_close` (at 0s remaining),
+    # and applies the same interpolation to the terminal-edge gate.
+    edge_scaling_mode: str = Field(default="step",
+        description="How required_edge scales with time: 'step' (legacy early/mid/late) or 'linear' (interpolated).")
+    edge_scaling_base: float = Field(default=0.03, ge=0.0, le=0.5,
+        description="Linear mode: required edge at window start (remaining=300s).")
+    edge_scaling_close: float = Field(default=0.075, ge=0.0, le=0.5,
+        description="Linear mode: required edge at window close (remaining=0s). Must be >= edge_scaling_base.")
 
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)

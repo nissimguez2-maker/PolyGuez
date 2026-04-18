@@ -1074,6 +1074,12 @@ class PolyGuezRunner:
                     "strike_delta": signal.strike_delta,
                     "terminal_probability": signal.terminal_probability,
                     "terminal_edge": signal.terminal_edge,
+                    # LATENCY-TASK-6: the effective fair-value edge
+                    # threshold this signal was judged against, so we
+                    # can answer "was the gate set high enough at that
+                    # point in the window?" without re-deriving from
+                    # elapsed_seconds + config.
+                    "required_edge": getattr(signal, "required_edge", None),
                     # Fee-adjusted edge (log-only per audit Phase 1.1). Gate
                     # still uses terminal_edge until k-recal Phase 4 lands.
                     "net_edge": getattr(signal, "net_edge", None),
