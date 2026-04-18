@@ -97,6 +97,31 @@ async def health():
     return JSONResponse(payload, status_code=200 if healthy else 503)
 
 
+# -- Supabase diagnostics (no auth — read-only internal state) ------------
+
+@app.get("/api/supabase-status")
+async def supabase_status():
+    """Expose Supabase write-failure state for remote diagnosis without Railway log access."""
+    import time as _time
+    from agents.utils import supabase_logger as _sb
+    client_ok = _sb._supabase_client is not None
+    failed_at = _sb._supabase_init_failed_at
+    failures = _sb._consecutive_write_failures
+    drops = _sb._log_drops
+    age_since_fail = round(_time.time() - failed_at, 1) if failed_at else None
+    url_set = bool(os.environ.get("SUPABASE_URL"))
+    key_set = bool(os.environ.get("SUPABASE_SERVICE_KEY"))
+    return JSONResponse({
+        "client_initialised": client_ok,
+        "init_attempted": _sb._supabase_init_attempted,
+        "init_failed_at_age_seconds": age_since_fail,
+        "consecutive_write_failures": failures,
+        "log_queue_drops": drops,
+        "supabase_url_set": url_set,
+        "supabase_key_set": key_set,
+    })
+
+
 # -- HTML dashboard --------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
