@@ -306,8 +306,6 @@ class PolyGuezConfig(BaseModel):
     llm_model_groq: str = Field(default="llama-3.3-70b-versatile")
     data_providers: List[str] = Field(default=["news", "tavily"])
     data_provider_timeout: float = Field(default=3.0)
-    market_slug_pattern: str = Field(default="btc-updown-5m")
-    market_question_pattern: str = Field(default="Bitcoin Up or Down")
     clob_poll_interval: float = Field(default=0.1)
     signal_log_interval: float = Field(default=2.5, ge=1.0, le=30.0, description="Seconds between signal_log writes to Supabase (lower = more data, more rows)")
     mode: str = Field(default="dry-run")
@@ -500,6 +498,9 @@ class SignalState(BaseModel):
     # profitability. Not yet an entry gate (audit Phase 1.1 log-only variant).
     net_edge: float = 0.0
     terminal_edge_ok: bool = False
+    # MODEL-05: fee-adjusted edge gate. True when min_net_edge == 0.0 (gate
+    # inactive) or when net_edge >= min_net_edge (gate active and passing).
+    net_edge_ok: bool = True
     delta_magnitude_ok: bool = False
     time_of_day_ok: bool = True
     entry_price_ok: bool = True
@@ -532,6 +533,7 @@ class SignalState(BaseModel):
             self.heartbeat_ok,           # LATENCY-TASK-4: CLOB heartbeat alive
             # V2 core gates (velocity_ok and oracle_gap_ok removed — nearly always True, adding noise)
             self.terminal_edge_ok,       # Terminal probability edge above minimum
+            self.net_edge_ok,            # MODEL-05: fee-adjusted edge gate
             self.delta_magnitude_ok,     # Strike delta large enough for conviction
             self.time_of_day_ok,         # Not in blocked UTC hours
             self.entry_price_ok,         # Token price in sweet spot

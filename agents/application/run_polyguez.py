@@ -165,6 +165,11 @@ class PolyGuezRunner:
         # of seconds, so a 4s cache is safe and eliminates ~9 of every 10
         # get_order_book HTTP calls.
         self._depth_cache: dict = {}  # token_id → {"depth": float, "ts": float}
+        # Market discovery result cache. A given 5-min BTC market is valid for
+        # up to 300s, so re-querying Gamma on every cycle is wasteful. Cache
+        # for 60s — short enough to catch the window boundary, long enough to
+        # skip ~12 Gamma calls per market window on normal cycles.
+        self._market_cache: dict = {"market": None, "ts": 0.0}
 
         # Hot-path timing (set per entry, read at settle)
         self._last_entry_llm_ms = 0.0
@@ -1994,14 +1999,24 @@ class PolyGuezRunner:
     # -- Helpers -----------------------------------------------------------
 
     async def _discover_market(self):
-        """Find active 5-min BTC market via Gamma API."""
+        """Find active 5-min BTC market via Gamma API.
+
+        Results are cached for 60s. A market is valid for a full 300s window
+        so this eliminates ~12 Gamma calls per window under normal conditions.
+        Cache is invalidated when the market changes (different market_id).
+        """
+        cached = self._market_cache
+        if cached["market"] and (time.time() - cached["ts"]) < 60.0:
+            return cached["market"]
         try:
             market = await self._discovery.find_active_btc_5min_market_async(self.config)
             if market:
                 self._gamma_ok = True
+                self._market_cache = {"market": market, "ts": time.time()}
                 log_event(logger, "market_found", f"Found: {market.get('question', 'unknown')}")
             else:
                 self._gamma_ok = True  # API worked, just no market right now
+                self._market_cache = {"market": None, "ts": 0.0}  # don't cache None
                 log_event(logger, "market_none", "No active BTC 5-min market found in current/adjacent windows")
             return market
         except Exception as exc:

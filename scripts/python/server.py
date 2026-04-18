@@ -248,10 +248,34 @@ async def kill_switch(secret: str = Query(default="")):
 
 
 @app.get("/api/trades")
-async def get_trades(secret: str = Query(default="")):
+async def get_trades(secret: str = Query(default=""), mode: str = Query(default="")):
+    """Return trades from rolling_stats (default) or live Supabase trade_log (?mode=live).
+
+    SEC-02: ?mode=live queries trade_log WHERE session_tag = current session so
+    the dashboard shows real-time trade data even after a process restart that
+    clears the in-memory rolling_stats.trades list.
+    """
     _check_auth(secret)
     if _runner is None:
         return JSONResponse({"error": "Runner not active"}, status_code=503)
+    if mode == "live":
+        try:
+            from agents.utils.supabase_logger import _client
+            client = _client()
+            if not client:
+                return JSONResponse({"error": "Supabase client unavailable"}, status_code=503)
+            session = _runner.config.session_tag if _runner else "V5"
+            result = (
+                client.table("trade_log")
+                .select("*")
+                .eq("session_tag", session)
+                .order("ts", desc=True)
+                .limit(200)
+                .execute()
+            )
+            return JSONResponse(result.data or [])
+        except Exception as exc:
+            return JSONResponse({"error": str(exc)}, status_code=500)
     trades = [json.loads(t.model_dump_json()) for t in _runner._rolling_stats.trades]
     return JSONResponse(trades)
 

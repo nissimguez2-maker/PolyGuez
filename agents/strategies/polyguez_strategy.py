@@ -173,6 +173,10 @@ def evaluate_entry_signal(
     # LATENCY-TASK-6: terminal-edge gate uses the time-scaled threshold
     # when linear mode is on; otherwise identical to the legacy check.
     terminal_edge_ok = terminal_edge > min_terminal_edge_eff
+    # MODEL-05: fee-adjusted edge gate. Active only when operator sets
+    # min_net_edge > 0.0 in config (default 0.0 = gate inactive).
+    _min_net = getattr(config, "min_net_edge", 0.0)
+    net_edge_ok = (net_edge >= _min_net) if _min_net > 0.0 else True
 
     # Use strict delta threshold in fast-moving markets
     fast_market = abs(btc_velocity) > config.velocity_threshold * 3
@@ -215,6 +219,7 @@ def evaluate_entry_signal(
         (price_feed_ok, "price_feed_stale"),
         (chainlink_fresh_ok, f"stale_chainlink={chainlink_age:.0f}s_near_expiry"),
         (terminal_edge_ok, f"terminal_edge={terminal_edge:.4f}<{config.min_terminal_edge}"),
+        (net_edge_ok, f"net_edge={net_edge:.4f}<{_min_net}"),
         (delta_magnitude_ok, f"delta={abs(strike_delta):.1f}<{active_delta_threshold}({'strict' if fast_market else 'normal'})"),
         (time_of_day_ok, f"blocked_hour_utc={current_hour_utc}"),
         (entry_price_ok, f"entry_price={entry_token_price:.3f}_outside_{config.min_entry_token_price}-{config.max_entry_token_price}"),
@@ -269,6 +274,7 @@ def evaluate_entry_signal(
         terminal_edge=terminal_edge,
         net_edge=net_edge,
         terminal_edge_ok=terminal_edge_ok,
+        net_edge_ok=net_edge_ok,
         delta_magnitude_ok=delta_magnitude_ok,
         time_of_day_ok=time_of_day_ok,
         entry_price_ok=entry_price_ok,
