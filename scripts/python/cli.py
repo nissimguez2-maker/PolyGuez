@@ -101,6 +101,9 @@ def run_polyguez(
         dashboard_secret=os.getenv("DASHBOARD_SECRET", ""),
     )
 
+    from agents.utils.supabase_logger import supabase_startup_check
+    supabase_startup_check()
+
     runner = PolyGuezRunner(config=config)
 
     if dashboard:
