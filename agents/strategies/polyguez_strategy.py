@@ -669,6 +669,8 @@ def save_rolling_stats(stats):
                 rows = [{"ts": t.timestamp, "data": t.model_dump()} for t in overflow]
                 client.table("trade_archive").insert(rows).execute()
                 logger.info(f"[STATS] Archived {len(overflow)} trades to Supabase")
+            else:
+                logger.warning(f"[STATS] Trade archive skipped — Supabase client unavailable ({len(overflow)} trades lost from Supabase)")
         except Exception as exc:
             logger.warning(f"[STATS] Trade archive failed: {exc}")
 
@@ -677,8 +679,13 @@ def save_rolling_stats(stats):
         f.write(stats.model_dump_json(indent=2))
     # Upsert to Supabase as durable backup + verify
     try:
-        from agents.utils.supabase_logger import _client
+        from agents.utils.supabase_logger import _client, _on_write_failure
         client = _client()
+        if not client:
+            _on_write_failure(
+                RuntimeError("Supabase client unavailable"),
+                "rolling_stats:client_none",
+            )
         if client:
             stats_data = stats.model_dump()
             written_at = datetime.now(timezone.utc).isoformat()

@@ -98,6 +98,8 @@ _log_drops = 0
 
 _supabase_client = None
 _supabase_init_attempted = False
+_supabase_init_failed_at = 0.0   # monotonic; 0 = never failed
+_SUPABASE_REINIT_INTERVAL = 120.0  # retry a failed init after 2 minutes
 # Protects the _client() init path so two threads hitting log_signal /
 # log_trade simultaneously on a cold import don't race to monkey-patch
 # httpx. The double-checked pattern inside _client() uses this lock.
@@ -124,19 +126,25 @@ def _submit_log(fn):
 
 
 def _client():
-    global _supabase_client, _supabase_init_attempted
-    # Fast path: no lock needed once init has succeeded or failed once.
+    global _supabase_client, _supabase_init_attempted, _supabase_init_failed_at
+    # Fast path: init succeeded — return the live client.
     if _supabase_client is not None:
         return _supabase_client
+    # Fast path: init failed recently — don't hammer create_client().
+    # After _SUPABASE_REINIT_INTERVAL we'll try again (handles container
+    # startup races where env vars aren't injected yet on the first call).
     if _supabase_init_attempted:
-        return None
+        if time.time() - _supabase_init_failed_at < _SUPABASE_REINIT_INTERVAL:
+            return None
+        # Cooldown elapsed — reset and retry.
+        _supabase_init_attempted = False
     with _supabase_init_lock:
-        # Re-check inside the lock (double-checked locking): another thread
-        # may have completed the init while we were blocked on acquisition.
         if _supabase_client is not None:
             return _supabase_client
         if _supabase_init_attempted:
-            return None
+            if time.time() - _supabase_init_failed_at < _SUPABASE_REINIT_INTERVAL:
+                return None
+            _supabase_init_attempted = False
         _supabase_init_attempted = True
         return _init_client_locked()
 
@@ -179,7 +187,15 @@ def _init_client_locked():
             httpx.AsyncClient.__init__ = _orig_async_init
         return _supabase_client
     except Exception as e:
-        logger.warning(f"Supabase client init failed: {e}")
+        global _supabase_init_failed_at
+        _supabase_init_failed_at = time.time()
+        msg = (
+            f"[PolyGuez] Supabase client init FAILED: {e!r}. "
+            "All writes are dead. Will retry in 2 min. "
+            "Check Railway logs for root cause."
+        )
+        logger.error(msg)
+        _send_telegram_alert(msg)
         return None
 
 
