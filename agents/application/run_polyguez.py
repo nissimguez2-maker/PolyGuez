@@ -738,6 +738,12 @@ class PolyGuezRunner:
                         market_id,
                         btc_close_price=cl_close,
                         strike=self._price_to_beat,
+                        # LATENCY-TASK-7: offset between the Chainlink
+                        # tick used as settlement price and expiry.
+                        # None = fell back to live chainlink (unknown
+                        # offset); preserved so the downstream filter
+                        # can distinguish both cases.
+                        cl_close_offset_seconds=cl_close_offset,
                     )
                     offset_str = f"offset={cl_close_offset:.1f}s" if cl_close_offset is not None else "offset=live"
                     log_event(logger, "shadow_settled_btc_feed",
@@ -1069,6 +1075,15 @@ class PolyGuezRunner:
                     "clob_msg_age_ms": (
                         round(_clob_msg_age * 1000.0, 1) if _clob_msg_age >= 0 else None
                     ),
+                    # LATENCY-TASK-1: whether MarketDiscovery's alignment
+                    # predicate accepted the current market. Always True
+                    # under the new path because misaligned candidates
+                    # never reach this point — logging it anyway gives
+                    # a dead-man's switch if the invariant ever regresses.
+                    "alignment_ok": bool(self._current_market.get("_alignment_ok", True)) if self._current_market else None,
+                    # LATENCY-TASK-2: P2B anchoring quality.
+                    "p2b_ok": bool(getattr(signal, "p2b_ok", True)),
+                    "p2b_offset_seconds": self._p2b_offset_seconds,
                     "blocking_conditions": ",".join(_blocking) if _blocking else "",
                     "in_trade": self._position is not None,
                     "strike_delta": signal.strike_delta,

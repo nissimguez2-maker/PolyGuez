@@ -271,6 +271,7 @@ def settle_shadow_trades(
     *,
     btc_close_price: float | None = None,
     strike: float | None = None,
+    cl_close_offset_seconds: float | None = None,
 ) -> None:
     """Settle all pending shadow trades for a given market.
 
@@ -283,6 +284,11 @@ def settle_shadow_trades(
     2. Polymarket-resolution mode (legacy fallback):
        Pass `outcome_prices` = [yes_settled, no_settled] from Gamma. "up" wins
        if yes_settled > 0.5. Only works once the market has actually resolved.
+
+    LATENCY-TASK-7: `cl_close_offset_seconds` — how far the Chainlink
+    settlement tick was from the market's expiry timestamp. Stored on each
+    settled shadow row so analysts can exclude "bad resolution windows"
+    (large offsets) from win-rate comparisons. Only applied in BTC-feed mode.
     """
     use_btc_mode = (
         btc_close_price is not None and strike is not None and strike > 0
@@ -333,12 +339,22 @@ def settle_shadow_trades(
                     pnl = -size
                     outcome = "loss"
 
-            client.table("shadow_trade_log").update({
+            _update = {
                 "exit_price": settled_price,
                 "pnl": pnl,
                 "outcome": outcome,
                 "settled": True,
-            }).eq("id", shadow["id"]).execute()
+            }
+            # LATENCY-TASK-7: record how far the Chainlink settlement
+            # tick sat from expiry so we can bucket out "bad resolution
+            # windows" in analysis. Only meaningful in BTC-feed mode.
+            if use_btc_mode and cl_close_offset_seconds is not None:
+                _update["cl_close_offset_seconds"] = round(
+                    float(cl_close_offset_seconds), 2
+                )
+            client.table("shadow_trade_log").update(_update).eq(
+                "id", shadow["id"]
+            ).execute()
 
         mode_label = "btc_feed" if use_btc_mode else "polymarket"
         detail = (
