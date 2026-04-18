@@ -101,7 +101,7 @@ async def health():
 
 @app.get("/api/supabase-status")
 async def supabase_status():
-    """Expose Supabase write-failure state for remote diagnosis without Railway log access."""
+    """Expose Supabase + Chainlink state for remote diagnosis without Railway log access."""
     import time as _time
     from agents.utils import supabase_logger as _sb
     client_ok = _sb._supabase_client is not None
@@ -111,6 +111,25 @@ async def supabase_status():
     age_since_fail = round(_time.time() - failed_at, 1) if failed_at else None
     url_set = bool(os.environ.get("SUPABASE_URL"))
     key_set = bool(os.environ.get("SUPABASE_SERVICE_KEY"))
+
+    # Chainlink buffer state — the P2B gate blocks every cycle if this is empty
+    cl_buf_size = 0
+    cl_latest_age = None
+    cl_oldest_age = None
+    p2b_skips = None
+    p2b_consecutive = None
+    if _runner is not None:
+        feed = getattr(_runner, "_btc_feed", None)
+        if feed is not None:
+            buf = getattr(feed, "_chainlink_buffer", None)
+            if buf:
+                cl_buf_size = len(buf)
+                now_m = _time.time()
+                cl_latest_age = round(now_m - buf[-1][0], 1)
+                cl_oldest_age = round(now_m - buf[0][0], 1)
+        p2b_skips = getattr(getattr(_runner, "_rolling_stats", None), "p2b_skips", None)
+        p2b_consecutive = getattr(_runner, "_p2b_consecutive_failures", None)
+
     return JSONResponse({
         "client_initialised": client_ok,
         "init_attempted": _sb._supabase_init_attempted,
@@ -119,6 +138,11 @@ async def supabase_status():
         "log_queue_drops": drops,
         "supabase_url_set": url_set,
         "supabase_key_set": key_set,
+        "chainlink_buffer_size": cl_buf_size,
+        "chainlink_latest_sample_age_seconds": cl_latest_age,
+        "chainlink_oldest_sample_age_seconds": cl_oldest_age,
+        "p2b_skips_total": p2b_skips,
+        "p2b_consecutive_failures": p2b_consecutive,
     })
 
 

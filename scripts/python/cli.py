@@ -93,12 +93,17 @@ def run_polyguez(
         print(f"Invalid mode: {effective_mode}. Using dry-run.")
         effective_mode = "dry-run"
 
+    _defaults = PolyGuezConfig()
+    _p2b_offset_env = os.getenv("MAX_P2B_CHAINLINK_OFFSET_SECONDS")
     config = PolyGuezConfig(
         mode=effective_mode,
-        rtds_ws_url=os.getenv("POLYMARKET_RTDS_URL", PolyGuezConfig().rtds_ws_url),
-        binance_ws_url=os.getenv("BINANCE_WS_URL", PolyGuezConfig().binance_ws_url),
-        coinbase_ws_url=os.getenv("COINBASE_WS_URL", PolyGuezConfig().coinbase_ws_url),
+        rtds_ws_url=os.getenv("POLYMARKET_RTDS_URL", _defaults.rtds_ws_url),
+        binance_ws_url=os.getenv("BINANCE_WS_URL", _defaults.binance_ws_url),
+        coinbase_ws_url=os.getenv("COINBASE_WS_URL", _defaults.coinbase_ws_url),
         dashboard_secret=os.getenv("DASHBOARD_SECRET", ""),
+        # LATENCY-TASK-2 gate — free drpc.org may not have sub-10s Chainlink
+        # samples; raise this on Railway to avoid blocking all cycles.
+        max_p2b_chainlink_offset_seconds=float(_p2b_offset_env) if _p2b_offset_env else _defaults.max_p2b_chainlink_offset_seconds,
     )
 
     from agents.utils.supabase_logger import supabase_startup_check
