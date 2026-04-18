@@ -151,6 +151,35 @@ async def supabase_status():
     })
 
 
+
+# -- Gamma API connectivity probe (no auth — helps remote diagnosis) -------
+
+@app.get("/api/debug-gamma")
+async def debug_gamma():
+    """Test whether Railway can reach gamma-api.polymarket.com."""
+    import httpx as _httpx
+    import time as _time
+    url = "https://gamma-api.polymarket.com/events?slug=btc-updown-5m-test"
+    t0 = _time.time()
+    try:
+        resp = _httpx.get(url, timeout=10.0, headers={"User-Agent": "PolyGuez/1.0"})
+        elapsed = round(_time.time() - t0, 2)
+        return JSONResponse({
+            "reachable": True,
+            "status_code": resp.status_code,
+            "elapsed_seconds": elapsed,
+            "body_preview": resp.text[:200],
+        })
+    except Exception as exc:
+        elapsed = round(_time.time() - t0, 2)
+        return JSONResponse({
+            "reachable": False,
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "elapsed_seconds": elapsed,
+        })
+
+
 # -- HTML dashboard --------------------------------------------------------
 
 @app.get("/", response_class=HTMLResponse)
