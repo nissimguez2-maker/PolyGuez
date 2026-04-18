@@ -1,0 +1,70 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Run Bot (dry-run)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.python.cli",
+      "args": ["run-polyguez", "--dashboard-port", "8080"],
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Dashboard Only (server.py)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.python.server",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Trader Summary",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.python.trader_summary",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Bot Health (JSON)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.python.bot_health",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Signal Analysis",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.python.signal_analysis",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Analyze k (logistic refit)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "scripts.python.analyze_k",
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": true
+    },
+    {
+      "name": "Pytest — current file",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "pytest",
+      "args": ["${file}", "-v"],
+      "envFile": "${workspaceFolder}/.env",
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ]
+}

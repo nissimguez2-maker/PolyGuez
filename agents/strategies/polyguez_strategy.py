@@ -711,6 +711,19 @@ def save_rolling_stats(stats):
                     )
     except Exception as exc:
         logger.error(f"[STATS] Supabase save failed — stats may be lost on redeploy: {exc}")
+        # OBS-01: same silent-outage pattern as CRIT-01. Previously this
+        # exception was logged and swallowed — so an env-misconfig or
+        # rotated service key took rolling_stats writes dark with no
+        # Telegram alert. Route it through the shared write-failure
+        # counter so the audit-1.5 alerter fires after 3 consecutive
+        # save failures (cooldown-gated at 10 min). Import is local to
+        # keep this path crash-safe even if the logger module itself
+        # is the source of the upstream error.
+        try:
+            from agents.utils.supabase_logger import _on_write_failure
+            _on_write_failure(exc, "rolling_stats:save")
+        except Exception as _alert_exc:
+            logger.warning(f"[STATS] Failure-counter hook failed: {_alert_exc}")
 
 
 def load_rolling_stats():

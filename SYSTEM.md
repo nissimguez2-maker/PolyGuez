@@ -165,7 +165,8 @@ was deleted from Supabase on 2026-04-16 (see
 - [ ] **INFRA** — Install Uptime Kuma on VPS; Telegram alert on Railway outage *(CRIT-01 underscores the need for external liveness — `/health` lied for 48h)*
 - [ ] **OC-01/02** — Verify CONTEXT.md fetch + input-validation rule in all 5 agent SOULs
 - [ ] **OC-04** — Off-site backup of agent memories (currently on-VPS only)
-- [ ] **OBS-01** *(new 2026-04-18)* — `save_rolling_stats` in `polyguez_strategy.py` swallows Supabase exceptions to `logger.error` without touching `_on_write_failure`. Same class of silent outage as CRIT-01. Small patch once CRIT-01 root cause is confirmed.
+- [x] **OBS-01** — `save_rolling_stats` now routes its exception handler through `_on_write_failure("rolling_stats:save")`, closing the last swallow-and-log Supabase path. Landed alongside VS-01..06.
+- [x] **VS-01..06** *(new 2026-04-18)* — committed `.vscode/` operator workspace: `tasks.json` (Status / Supabase / Deploy / Dev groups), `launch.json` (bot, dashboard, trader_summary, bot_health, signal_analysis, analyze_k, pytest-current-file), `settings.json` (pytest + black-on-save + SQLTools stub), `extensions.json`. `.vscode/` removed from `.gitignore`. `.env.example` extended with every env var the runtime reads. `CLAUDE.md` gains a VS Code section so future sessions keep tasks.json and .env.example in sync with new scripts/env vars.
 
 **Schema hygiene (low priority, post-live):**
 

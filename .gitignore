@@ -3,7 +3,9 @@
 .idea
 .ipynb_checkpoints
 .mypy_cache
-.vscode
+# .vscode/ is intentionally committed — the operator workspace (tasks.json /
+# launch.json / settings.json / extensions.json) is part of the project so
+# every clone opens ready to run. Do not re-add .vscode here.
 __pycache__
 .pytest_cache
 htmlcov
