@@ -1,0 +1,49 @@
+{
+  "python.defaultInterpreterPath": "${workspaceFolder}/venv/bin/python",
+  "python.envFile": "${workspaceFolder}/.env",
+  "python.testing.pytestEnabled": true,
+  "python.testing.pytestArgs": ["tests"],
+  "python.testing.unittestEnabled": false,
+  "python.analysis.typeCheckingMode": "basic",
+  "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.rulers": [100]
+  },
+  "[json]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "vscode.json-language-features"
+  },
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/*.pyc": true,
+    "**/.mypy_cache": true,
+    "**/.DS_Store": true
+  },
+  "search.exclude": {
+    "**/venv": true,
+    "**/.venv": true,
+    "**/__pycache__": true,
+    "**/node_modules": true,
+    "**/scripts/frontend/dist": true,
+    "data/trade_history.json": true
+  },
+  "sqltools.connections": [
+    {
+      "name": "PolyGuez Supabase (prod)",
+      "driver": "PostgreSQL",
+      "previewLimit": 50,
+      "server": "aws-0-ap-south-1.pooler.supabase.com",
+      "port": 6543,
+      "database": "postgres",
+      "username": "postgres.rapmxqnxsobvxqtfnwqh",
+      "connectionTimeout": 15,
+      "askForPassword": true
+    }
+  ]
+}

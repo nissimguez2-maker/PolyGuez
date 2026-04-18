@@ -254,6 +254,15 @@ class PolyGuezConfig(BaseModel):
     live_fok_net_edge_min: float = Field(default=0.10, ge=0.0, le=0.5,
         description="Live mode only: minimum net_edge required to fall back to FOK taker order "
                     "if the maker order times out. Below this, an unfilled maker is simply skipped.")
+    # MODEL-06 part (a): logistic steepness. Previously hardcoded in
+    # polyguez_strategy.py; lifted here so a refit (post-100 V5 live trades,
+    # via scripts/python/analyze_k.py) only needs a config push. Default
+    # matches the legacy hardcoded prior. MLE on 88K shadows suggests the
+    # true value is 0.007–0.010 — DO NOT change this without a refit pass
+    # on clean V5 live data.
+    k_logistic: float = Field(default=0.035, ge=0.001, le=0.5,
+        description="Logistic steepness prior. Effective k is this / sqrt(seconds_remaining/60). "
+                    "0.035 is a known-overcalibrated prior; refit on V5 live before flipping to live mode.")
     strong_edge_threshold: float = Field(default=0.25, ge=0.01, le=0.5, description="Edge threshold for strong signal")
     strong_depth_threshold: float = Field(default=40000.0, ge=0.0, description="Depth threshold for strong signal")
     low_balance_threshold: float = Field(default=40.0, ge=1.0, le=500.0, description="Balance below which low-balance sizing applies")

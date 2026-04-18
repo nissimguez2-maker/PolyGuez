@@ -57,6 +57,36 @@
 - Do not go live if any pre-live blocker in `SYSTEM.md` → "Open work" is still
   open.
 
+## VS Code workspace (committed — Nessim's operator interface)
+
+The repo ships a committed `.vscode/` workspace so every clone opens ready to
+run. Prefer it over raw terminal instructions.
+
+- `.vscode/tasks.json` — operator task palette reachable from
+  **Terminal → Run Task…**. Tasks are grouped as `Status`, `Supabase`,
+  `Deploy`, `Dev`. Always add a task entry when you add a new ops script
+  under `scripts/ops/` or `scripts/python/`.
+- `.vscode/launch.json` — debug configurations for the bot, dashboard,
+  trader summary, bot health, signal analysis, `analyze_k`, and current-file
+  pytest.
+- `.vscode/settings.json` — pytest, black-on-save, column ruler at 100, and
+  a SQLTools stub for the Supabase pooler (password prompt, not stored).
+- `.vscode/extensions.json` — recommended extensions (Python, Pylance, black,
+  SQLTools + pg driver, GitLens, GH Actions, GH PRs, YAML, TOML).
+- `.env.example` — committed; every env var the system reads. Copy to `.env`
+  (gitignored) and fill in secrets.
+
+Rules for every Claude surface:
+
+- Never make Nessim open a raw terminal. Surface actions through a task or
+  launch config. If the action isn't there yet, add it to `tasks.json` in the
+  same PR.
+- Any new ops script under `scripts/ops/` or `scripts/python/` → corresponding
+  task entry in `.vscode/tasks.json` in the same PR.
+- Any new env var read by code → line in `.env.example` in the same PR.
+- Do not add machine-specific absolute paths to `.vscode/*`. Use
+  `${workspaceFolder}` throughout.
+
 ## What's in the repo (quick map)
 
 See `SYSTEM.md` → "Key files". This file does not duplicate that map; update

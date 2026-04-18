@@ -1,0 +1,202 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "PolyGuez — Status: Bot Health",
+      "type": "shell",
+      "command": "python3 scripts/python/cli.py health",
+      "group": "test",
+      "detail": "CLI health probe — bot runner, feeds, CLOB, Supabase, Railway loop age.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Status: Bot Health (JSON)",
+      "type": "shell",
+      "command": "python3 scripts/python/bot_health.py",
+      "group": "test",
+      "detail": "Machine-readable JSON snapshot — trade count, last write, Supabase reachability.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Status: Trader Summary",
+      "type": "shell",
+      "command": "python3 scripts/python/trader_summary.py",
+      "group": "test",
+      "detail": "OpenClaw trader-agent data tool — P&L, win rate, recent trades.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Status: Signal Analysis",
+      "type": "shell",
+      "command": "python3 scripts/python/signal_analysis.py",
+      "group": "test",
+      "detail": "Recent signal distribution and block-reason breakdown.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Supabase: Read Trade Log (last 20)",
+      "type": "shell",
+      "command": "python3 scripts/ops/sb_read.py --table trade_log --filter era=eq.V5 --order ts.desc --limit 20",
+      "group": "test",
+      "detail": "Last 20 V5 trade_log rows via Supabase REST.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Supabase: Read Rolling Stats",
+      "type": "shell",
+      "command": "python3 scripts/ops/sb_read.py --table rolling_stats",
+      "group": "test",
+      "detail": "rolling_stats singleton — trades, P&L, sim balance, updated_at.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Supabase: Read Signal Log (last 10)",
+      "type": "shell",
+      "command": "python3 scripts/ops/sb_read.py --table signal_log --filter session_tag=eq.V5 --order ts.desc --limit 10",
+      "group": "test",
+      "detail": "Last 10 V5 signal_log rows — use this to verify signals are writing.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Supabase: Read Shadow Trades (last 20)",
+      "type": "shell",
+      "command": "python3 scripts/ops/sb_read.py --table shadow_trade_log --order ts.desc --limit 20",
+      "group": "test",
+      "detail": "Last 20 shadow_trade_log rows — shadow settlement sanity check.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Supabase: Migrate Schema",
+      "type": "shell",
+      "command": "python3 scripts/ops/sb_migrate.py --confirm CONFIRM_SCHEMA",
+      "group": "build",
+      "detail": "Apply any new files in supabase/migrations/ to prod. Idempotent.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Deploy: Railway",
+      "type": "shell",
+      "command": "python3 scripts/ops/deploy_prod.py --confirm CONFIRM_DEPLOY",
+      "group": "build",
+      "detail": "Trigger a Railway redeploy of the current main. Requires RAILWAY_TOKEN in .env.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Deploy: Push to GitHub (main)",
+      "type": "shell",
+      "command": "python3 scripts/ops/github_push.py --branch main --confirm CONFIRM_PUSH_MAIN",
+      "group": "build",
+      "detail": "Push local main to origin. Triggers Railway auto-deploy + CONTEXT.md refresh.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Dev: Run Tests",
+      "type": "shell",
+      "command": "pytest tests/ -v",
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "detail": "Run the full pytest suite.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Dev: Syntax Check All",
+      "type": "shell",
+      "command": "python3 -m compileall agents scripts -q",
+      "group": "build",
+      "detail": "Byte-compile all Python — fast smoke check for syntax errors across the tree.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Dev: Open Dashboard",
+      "type": "shell",
+      "command": "open https://polyguez-production.up.railway.app",
+      "group": "test",
+      "detail": "Open the live dashboard in your default browser.",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Dev: Refresh CONTEXT.md Locally",
+      "type": "shell",
+      "command": "python3 .github/scripts/refresh_context.py",
+      "group": "build",
+      "detail": "Regenerate CONTEXT.md's LIVE STATE block locally (the GH Action does this on push).",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -194,6 +194,15 @@ def log_signal(snapshot: dict, session_tag: str = "V5") -> None:
         try:
             client = _client()
             if not client:
+                # CRIT-01: previously this path returned silently, never
+                # reaching _on_write_failure — so the audit-1.5 Telegram
+                # alerter was blind to env-misconfig outages (exactly the
+                # class that took the bot dark for 48h on 2026-04-16).
+                # Now we count it as a failure so the alerter fires.
+                _on_write_failure(
+                    RuntimeError("supabase client unavailable (check SUPABASE_URL/SUPABASE_SERVICE_KEY)"),
+                    "signal_log:no_client",
+                )
                 return
             client.table("signal_log").insert(snapshot).execute()
             _on_write_success()
@@ -222,6 +231,13 @@ def log_trade(record: dict, session_tag: str = "V5") -> None:
         try:
             client = _client()
             if not client:
+                # CRIT-01: see log_signal for rationale. Trade-log writes
+                # are the highest-leverage failure to surface — a silent
+                # trade_log outage corrupts every calibration downstream.
+                _on_write_failure(
+                    RuntimeError("supabase client unavailable (check SUPABASE_URL/SUPABASE_SERVICE_KEY)"),
+                    "trade_log:no_client",
+                )
                 return
             if signal_id:
                 existing = (
@@ -256,6 +272,12 @@ def log_shadow_trade(record: dict, session_tag: str = "v2") -> None:
         try:
             client = _client()
             if not client:
+                # CRIT-01: shadow writes are high-volume; surface the
+                # outage via the same cooldown-gated alerter path.
+                _on_write_failure(
+                    RuntimeError("supabase client unavailable (check SUPABASE_URL/SUPABASE_SERVICE_KEY)"),
+                    "shadow_trade_log:no_client",
+                )
                 return
             client.table("shadow_trade_log").insert(record).execute()
             _on_write_success()

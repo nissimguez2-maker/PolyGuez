@@ -65,10 +65,14 @@ def evaluate_entry_signal(
             price_feed_ok=price_feed_ok,
         )
 
-    # Terminal probability via logistic model
+    # Terminal probability via logistic model.
+    # MODEL-06(a): `k` is sourced from PolyGuezConfig.k_logistic rather than
+    # a module-level constant. Effective k still decays as
+    # 1/sqrt(seconds_remaining / 60.0) — that time-scaling stays hardcoded.
     strike_delta = chainlink_price - price_to_beat
     seconds_remaining = max(1.0, 300.0 - elapsed_seconds)
-    k = 0.035 / math.sqrt(seconds_remaining / 60.0)
+    k_prior = getattr(config, "k_logistic", 0.035)
+    k = k_prior / math.sqrt(seconds_remaining / 60.0)
     clamped = max(-500.0, min(500.0, -k * strike_delta))
     terminal_probability_yes = 1.0 / (1.0 + math.exp(clamped))
 
@@ -707,6 +711,19 @@ def save_rolling_stats(stats):
                     )
     except Exception as exc:
         logger.error(f"[STATS] Supabase save failed — stats may be lost on redeploy: {exc}")
+        # OBS-01: same silent-outage pattern as CRIT-01. Previously this
+        # exception was logged and swallowed — so an env-misconfig or
+        # rotated service key took rolling_stats writes dark with no
+        # Telegram alert. Route it through the shared write-failure
+        # counter so the audit-1.5 alerter fires after 3 consecutive
+        # save failures (cooldown-gated at 10 min). Import is local to
+        # keep this path crash-safe even if the logger module itself
+        # is the source of the upstream error.
+        try:
+            from agents.utils.supabase_logger import _on_write_failure
+            _on_write_failure(exc, "rolling_stats:save")
+        except Exception as _alert_exc:
+            logger.warning(f"[STATS] Failure-counter hook failed: {_alert_exc}")
 
 
 def load_rolling_stats():
