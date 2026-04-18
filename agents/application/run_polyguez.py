@@ -69,6 +69,19 @@ class PolyGuezRunner:
         self.config = config or PolyGuezConfig()
         self._config_lock = asyncio.Lock()
 
+        # LATENCY-TASK-5: live-mode LLM fallback enforcement. "go" means
+        # "fire the trade anyway when the LLM times out" — safe in
+        # dry-run (we just record what would have happened) but unsafe
+        # in live mode, where it bypasses the guardrail we pay the LLM
+        # latency tax for. Force the safer default and log loudly if an
+        # operator has tried to configure "go".
+        if self.config.mode == "live" and self.config.llm_timeout_fallback == "go":
+            logger.critical(
+                "LATENCY-TASK-5: llm_timeout_fallback='go' is unsafe in live mode; "
+                "forcing 'no-go' for this run. Set reduce-size in config if you want a middle path."
+            )
+            self.config.llm_timeout_fallback = "no-go"
+
         # Existing repo components
         self._polymarket = None  # Lazy init — needs wallet key
         self._gamma = GammaMarketClient()
@@ -1175,6 +1188,47 @@ class PolyGuezRunner:
             log_event(logger, "trade_skipped", f"Skipped: LLM NO-GO — {reason}")
             return False
 
+        # LATENCY-TASK-5: hard LLM latency cutoff. When the operator has
+        # configured max_llm_ms, an LLM call that breached it is treated
+        # as a timeout regardless of what the call returned — the
+        # downstream order submission would be firing on a verdict that
+        # was computed against a market snapshot this stale. Also logs a
+        # shadow trade so the outcome is still captured for analysis.
+        _max_llm_ms = self.config.max_llm_ms
+        if _max_llm_ms is not None and _llm_ms > _max_llm_ms:
+            log_event(logger, "hot_path_stale",
+                f"LLM latency {_llm_ms:.0f}ms > max_llm_ms={_max_llm_ms:.0f}ms — treating as timeout (no trade)",
+                {"llm_ms": round(_llm_ms, 1), "max_llm_ms": _max_llm_ms,
+                 "verdict_raw": verdict, "signal_id": signal.signal_id},
+                level=40)
+            # Shadow-log so we still get outcome data for this would-be trade.
+            try:
+                _shadow_entry_price = signal.yes_price if signal.direction == "up" else signal.no_price
+                _shadow_size = calculate_position_size(
+                    self._usdc_balance, self.config,
+                    edge=signal.edge, depth=getattr(self, "_current_depth", 0.0),
+                )
+                log_shadow_trade({
+                    "market_id": market_id,
+                    "market_question": self._current_market.get("question", "") if self._current_market else "",
+                    "direction": signal.direction,
+                    "entry_price": _shadow_entry_price,
+                    "size_usdc": _shadow_size,
+                    "edge": round(signal.edge, 4),
+                    "terminal_edge": round(signal.terminal_edge, 4),
+                    "terminal_probability": round(signal.terminal_probability, 4),
+                    "strike_delta": round(signal.strike_delta, 2),
+                    "chainlink_price": round(signal.chainlink_price, 2),
+                    "btc_price": round(signal.btc_price, 2),
+                    "elapsed_seconds": round(signal.elapsed_seconds, 1),
+                    "conditions_met": 0,
+                    "conditions_total": 0,
+                    "blocking_conditions": "hot_path_stale",
+                }, session_tag=self.config.session_tag)
+            except Exception:
+                pass
+            return False
+
         # Determine position size (fixed tiers)
         depth = getattr(self, '_current_depth', 0.0)
         size = calculate_position_size(self._usdc_balance, self.config, edge=signal.edge, depth=depth)
@@ -1207,13 +1261,29 @@ class PolyGuezRunner:
         )
         _order_ms = (asyncio.get_running_loop().time() - _t_order_start) * 1000
         _total_ms = _llm_ms + _order_ms
+        # LATENCY-TASK-5: classify every entry into a coarse bucket so
+        # downstream analysis can join PnL against latency without
+        # bucketing by hand. Buckets mirror the task spec.
+        if _total_ms < 200:
+            _latency_bucket = "<200"
+        elif _total_ms < 500:
+            _latency_bucket = "200-500"
+        elif _total_ms < 1000:
+            _latency_bucket = "500-1000"
+        else:
+            _latency_bucket = ">1000"
+        _hot_path_stale = _total_ms > self.config.max_total_hot_path_ms
         log_event(logger, "hot_path_timing",
-            f"LLM={_llm_ms:.0f}ms order={_order_ms:.0f}ms total={_total_ms:.0f}ms")
+            f"LLM={_llm_ms:.0f}ms order={_order_ms:.0f}ms total={_total_ms:.0f}ms bucket={_latency_bucket}"
+            + (" [HOT_PATH_STALE]" if _hot_path_stale else ""),
+            level=40 if _hot_path_stale else 20)
 
         # Store timing for log_trade at settlement
         self._last_entry_llm_ms = _llm_ms
         self._last_entry_order_ms = _order_ms
         self._last_entry_total_ms = _total_ms
+        self._last_entry_latency_bucket = _latency_bucket
+        self._last_entry_hot_path_stale = _hot_path_stale
         # MODEL-02: capture fee data from the CLOB executor response.
         # In dry-run the response contains fee_paid=0.0 and taker_maker="simulated".
         # In live mode the response reflects the actual maker/taker outcome.
@@ -1349,6 +1419,10 @@ class PolyGuezRunner:
                     "llm_response_ms": round(self._last_entry_llm_ms, 1),
                     "order_submit_ms": round(self._last_entry_order_ms, 1),
                     "total_latency_ms": round(self._last_entry_total_ms, 1),
+                    # LATENCY-TASK-5: coarse bucket + hot-path-stale flag so
+                    # post-hoc PnL vs. latency joins are cheap in SQL.
+                    "latency_bucket": getattr(self, "_last_entry_latency_bucket", None),
+                    "hot_path_stale": getattr(self, "_last_entry_hot_path_stale", False),
                     "mode": self.config.mode,
                     "terminal_edge": getattr(self._current_signal, 'terminal_edge', None) if self._current_signal else None,
                     "net_edge": getattr(self._current_signal, 'net_edge', None) if self._current_signal else None,
@@ -1506,6 +1580,10 @@ class PolyGuezRunner:
                 "llm_response_ms": round(self._last_entry_llm_ms, 1),
                 "order_submit_ms": round(self._last_entry_order_ms, 1),
                 "total_latency_ms": round(self._last_entry_total_ms, 1),
+                # LATENCY-TASK-5: coarse bucket + hot-path-stale flag so
+                # post-hoc PnL vs. latency joins are cheap in SQL.
+                "latency_bucket": getattr(self, "_last_entry_latency_bucket", None),
+                "hot_path_stale": getattr(self, "_last_entry_hot_path_stale", False),
                 "mode": self.config.mode,
                 "terminal_edge": getattr(self._current_signal, 'terminal_edge', None) if self._current_signal else None,
                 "net_edge": getattr(self._current_signal, 'net_edge', None) if self._current_signal else None,

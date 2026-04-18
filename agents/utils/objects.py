@@ -332,6 +332,20 @@ class PolyGuezConfig(BaseModel):
     # cancelled before it fills.
     heartbeat_stale_threshold: float = Field(default=8.0, ge=2.0, le=30.0,
         description="Max seconds since the last successful CLOB heartbeat before we refuse to trade.")
+    # LATENCY-TASK-5: hot-path (LLM + order) latency gating.
+    # `max_llm_ms` is an OPT-IN hard cutoff — when set, an LLM call that
+    # exceeds this is treated as a timeout no-go regardless of
+    # `llm_timeout_fallback`. None (default) = rely on `llm_timeout`.
+    max_llm_ms: Optional[float] = Field(default=None, ge=100.0, le=60000.0,
+        description="Hard LLM latency cutoff in ms. If exceeded, the signal is treated as a no-go. None = disabled (uses llm_timeout).")
+    # `max_total_hot_path_ms` bounds the LLM+order round-trip. Trades
+    # placed while the total already exceeds this are flagged
+    # `hot_path_stale` in the trade log for calibration. Currently this
+    # is an observability gate only (the order has already gone out by
+    # the time we measure it); a pre-order gate would require splitting
+    # execute_entry's submit-vs-fill timings.
+    max_total_hot_path_ms: float = Field(default=8000.0, ge=500.0, le=60000.0,
+        description="Hot-path latency soft cutoff in ms. Trades above this are flagged hot_path_stale for post-hoc analysis.")
 
     # FIX 4: Chainlink on-chain fallback
     chainlink_onchain_fallback: bool = Field(default=True)
