@@ -112,6 +112,7 @@ class PolyGuezRunner:
         self._loop_heartbeat_ts = 0.0  # monotonic seconds; updated each main-loop tick for health check
         self._usdc_balance = 0.0
         self._gamma_ok = False
+        self._discovery_misses = 0  # cycles where _discover_market() returned None
         self._clob_ok = False
         self._price_to_beat = None
         self._p2b_source = "none"
@@ -599,6 +600,7 @@ class PolyGuezRunner:
         # Discover active 5-min BTC market
         self._current_market = await self._discover_market()
         if not self._current_market:
+            self._discovery_misses += 1
             await asyncio.sleep(5)
             return
 

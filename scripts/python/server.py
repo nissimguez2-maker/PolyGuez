@@ -130,6 +130,9 @@ async def supabase_status():
         p2b_skips = getattr(getattr(_runner, "_rolling_stats", None), "p2b_skips", None)
         p2b_consecutive = getattr(_runner, "_p2b_consecutive_failures", None)
 
+    gamma_ok = getattr(_runner, "_gamma_ok", None) if _runner else None
+    discovery_misses = getattr(_runner, "_discovery_misses", None) if _runner else None
+
     return JSONResponse({
         "client_initialised": client_ok,
         "init_attempted": _sb._supabase_init_attempted,
@@ -143,6 +146,8 @@ async def supabase_status():
         "chainlink_oldest_sample_age_seconds": cl_oldest_age,
         "p2b_skips_total": p2b_skips,
         "p2b_consecutive_failures": p2b_consecutive,
+        "gamma_ok": gamma_ok,
+        "discovery_misses": discovery_misses,
     })
 
 
