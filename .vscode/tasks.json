@@ -210,6 +210,84 @@
         "clear": true
       },
       "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Dev: Analyze K (logistic calibration)",
+      "type": "shell",
+      "command": "python3 scripts/python/analyze_k.py",
+      "group": "test",
+      "detail": "MLE refit of k_logistic on V5 trade outcomes. Run after ≥100 live-mode trades.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Dev: Inspect Market",
+      "type": "shell",
+      "command": "python3 scripts/python/inspect_market.py",
+      "group": "test",
+      "detail": "Snapshot the active BTC 5-min market (tokens, CLOB depth, P2B, Chainlink offset).",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Dev: Test Feeds",
+      "type": "shell",
+      "command": "python3 scripts/python/test_feeds.py",
+      "group": "test",
+      "detail": "Smoke-test BTC price feeds (Binance WS, Coinbase WS, Chainlink RTDS).",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Dev: Brief Generator",
+      "type": "shell",
+      "command": "python3 scripts/python/brief_generator.py",
+      "group": "test",
+      "detail": "Generate a session performance brief (signals, trades, P&L, win rate).",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Supabase: Backfill Shadow Trades",
+      "type": "shell",
+      "command": "python3 scripts/ops/backfill_shadows.py",
+      "group": "build",
+      "detail": "Settle any unsettled shadow_trade_log rows against Gamma outcome data.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Supabase: Maintenance",
+      "type": "shell",
+      "command": "python3 scripts/ops/sb_maintenance.py",
+      "group": "build",
+      "detail": "Archive old signal_log rows, vacuum trade_archive, and verify index health.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
     }
   ]
 }

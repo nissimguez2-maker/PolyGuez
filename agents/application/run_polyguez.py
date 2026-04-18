@@ -155,6 +155,11 @@ class PolyGuezRunner:
         # few _entry_window evaluations shouldn't fail on "never sent"
         # before the task has had a chance to post.
         self._runner_start_ts: float = time.time()
+        # LATENCY-TASK-4: True/False after _heartbeat_loop detects whether
+        # py_clob_client supports post_heartbeat. None = not yet determined.
+        # Exposed on self so _entry_window can bypass the heartbeat gate when
+        # the installed client version doesn't support it (e.g. v0.17.5).
+        self._heartbeat_supported: Optional[bool] = None
 
         # Hot-path timing (set per entry, read at settle)
         self._last_entry_llm_ms = 0.0
@@ -355,6 +360,7 @@ class PolyGuezRunner:
                 if self._polymarket and self._polymarket.client:
                     if _heartbeat_supported is None:
                         _heartbeat_supported = hasattr(self._polymarket.client, 'post_heartbeat')
+                        self._heartbeat_supported = _heartbeat_supported
                         if not _heartbeat_supported:
                             log_event(logger, "heartbeat_warn",
                                 "post_heartbeat not available in this py-clob-client version — heartbeat disabled. Upgrade to v0.22+ to enable.", level=30)
@@ -940,7 +946,13 @@ class PolyGuezRunner:
             # startup grace period (first 15s of runner life). That grace
             # avoids gating the first-cycle scan on a task that hasn't
             # tick-one'd yet.
-            if self._last_heartbeat_sent_ts <= 0 and (_now - self._runner_start_ts) < 15.0:
+            # If the installed py_clob_client version doesn't support
+            # post_heartbeat (e.g. v0.17.5), bypass the gate entirely — the
+            # server won't cancel maker orders that were never registered via
+            # a heartbeat-capable session.
+            if self._heartbeat_supported is False:
+                signal.heartbeat_ok = True
+            elif self._last_heartbeat_sent_ts <= 0 and (_now - self._runner_start_ts) < 15.0:
                 signal.heartbeat_ok = True
             else:
                 signal.heartbeat_ok = (
