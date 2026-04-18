@@ -65,10 +65,14 @@ def evaluate_entry_signal(
             price_feed_ok=price_feed_ok,
         )
 
-    # Terminal probability via logistic model
+    # Terminal probability via logistic model.
+    # MODEL-06(a): `k` is sourced from PolyGuezConfig.k_logistic rather than
+    # a module-level constant. Effective k still decays as
+    # 1/sqrt(seconds_remaining / 60.0) — that time-scaling stays hardcoded.
     strike_delta = chainlink_price - price_to_beat
     seconds_remaining = max(1.0, 300.0 - elapsed_seconds)
-    k = 0.035 / math.sqrt(seconds_remaining / 60.0)
+    k_prior = getattr(config, "k_logistic", 0.035)
+    k = k_prior / math.sqrt(seconds_remaining / 60.0)
     clamped = max(-500.0, min(500.0, -k * strike_delta))
     terminal_probability_yes = 1.0 / (1.0 + math.exp(clamped))
 
