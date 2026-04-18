@@ -5,6 +5,7 @@ where window_ts = now - (now % 300).  Queries the Gamma events endpoint
 directly instead of scanning all markets.
 """
 
+import asyncio
 import json
 import re
 import time
@@ -125,6 +126,67 @@ class MarketDiscovery:
 
         # Fallback: broad search for any active btc-updown-5m market
         return self._fallback_search(config)
+
+    async def find_active_btc_5min_market_async(self, config):
+        """Async variant of find_active_btc_5min_market.
+
+        Fires all three slug queries in parallel via asyncio.gather so the
+        discovery hop takes max(one query latency) instead of sum(three).
+        Results are still evaluated in priority order: previous → current → next.
+        """
+        now_ts = int(time.time())
+        current_window = now_ts - (now_ts % _WINDOW_SECONDS)
+        candidates = [
+            current_window - _WINDOW_SECONDS,
+            current_window,
+            current_window + _WINDOW_SECONDS,
+        ]
+        slugs = [f"btc-updown-5m-{w}" for w in candidates]
+
+        loop = asyncio.get_event_loop()
+        results = await asyncio.gather(
+            *[loop.run_in_executor(None, self._query_event_by_slug, slug) for slug in slugs],
+            return_exceptions=True,
+        )
+
+        now_dt = datetime.now(timezone.utc)
+        for i, market in enumerate(results):
+            if isinstance(market, BaseException) or not market or market.get("closed"):
+                continue
+            slug = slugs[i]
+            window_ts = candidates[i]
+            event_start_dt = MarketDiscovery.get_event_start_time(market)
+            end_dt = MarketDiscovery.get_market_expiry(market)
+            aligned = MarketDiscovery._is_window_aligned(event_start_dt, end_dt, now_dt)
+            market["_alignment_ok"] = aligned
+            market["_alignment_now_ts"] = now_dt.isoformat()
+            market["_alignment_event_start"] = event_start_dt.isoformat() if event_start_dt else None
+            market["_alignment_end_date"] = end_dt.isoformat() if end_dt else None
+
+            if not aligned:
+                log_event(logger, "market_alignment_failed",
+                    f"Skipping misaligned market (window={window_ts}): {market.get('question', '')}",
+                    {
+                        "now": market["_alignment_now_ts"],
+                        "event_start": market["_alignment_event_start"],
+                        "end_date": market["_alignment_end_date"],
+                        "slug": slug,
+                    },
+                    level=30)
+                continue
+
+            log_event(logger, "market_aligned",
+                f"Selected aligned market: {market.get('question', '')}",
+                {
+                    "now": market["_alignment_now_ts"],
+                    "event_start": market["_alignment_event_start"],
+                    "end_date": market["_alignment_end_date"],
+                    "window_ts": window_ts,
+                })
+            return market
+
+        loop2 = asyncio.get_event_loop()
+        return await loop2.run_in_executor(None, self._fallback_search, config)
 
     def _query_event_by_slug(self, slug):
         """Query GET /events?slug=... and extract the first market."""

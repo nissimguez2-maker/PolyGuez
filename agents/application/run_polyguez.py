@@ -1995,11 +1995,8 @@ class PolyGuezRunner:
 
     async def _discover_market(self):
         """Find active 5-min BTC market via Gamma API."""
-        loop = asyncio.get_event_loop()
         try:
-            market = await loop.run_in_executor(
-                None, self._discovery.find_active_btc_5min_market, self.config,
-            )
+            market = await self._discovery.find_active_btc_5min_market_async(self.config)
             if market:
                 self._gamma_ok = True
                 log_event(logger, "market_found", f"Found: {market.get('question', 'unknown')}")
