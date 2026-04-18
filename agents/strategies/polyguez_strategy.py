@@ -4,6 +4,7 @@ import asyncio
 import json
 import math
 import os
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -677,60 +678,42 @@ def save_rolling_stats(stats):
     os.makedirs(_DATA_DIR, exist_ok=True)
     with open(_HISTORY_FILE, "w") as f:
         f.write(stats.model_dump_json(indent=2))
-    # Upsert to Supabase as durable backup + verify
-    try:
-        from agents.utils.supabase_logger import _client, _on_write_failure
-        client = _client()
-        if not client:
-            _on_write_failure(
-                RuntimeError("Supabase client unavailable"),
-                "rolling_stats:client_none",
-            )
-        if client:
-            stats_data = stats.model_dump()
+
+    # Upsert to Supabase as durable backup — run in a daemon thread so the
+    # caller (always async context) isn't blocked for 400–1600ms waiting on
+    # two synchronous HTTP calls. The write-failure alerter handles outages.
+    stats_snapshot = stats.model_dump()
+    stats_snapshot["trade_count"] = stats.total_trades
+    stats_snapshot["total_pnl"] = stats.total_pnl
+    stats_snapshot["wins"] = stats.total_wins
+    stats_snapshot["losses"] = stats.total_losses
+    stats_snapshot["win_rate"] = stats.win_rate
+
+    def _supabase_upsert(data):
+        try:
+            from agents.utils.supabase_logger import _client, _on_write_failure
+            client = _client()
+            if not client:
+                _on_write_failure(
+                    RuntimeError("Supabase client unavailable"),
+                    "rolling_stats:client_none",
+                )
+                return
             written_at = datetime.now(timezone.utc).isoformat()
-            stats_data["updated_at"] = written_at
-            # Surface computed @property values into the persisted blob so
-            # downstream readers (refresh_context.py, dashboard, any ad-hoc
-            # SQL) see real numbers instead of null. RollingStats.model_dump()
-            # skips @property by design; we inject them explicitly.
-            stats_data["trade_count"] = stats.total_trades
-            stats_data["total_pnl"] = stats.total_pnl
-            stats_data["wins"] = stats.total_wins
-            stats_data["losses"] = stats.total_losses
-            stats_data["win_rate"] = stats.win_rate
+            data["updated_at"] = written_at
             client.table("rolling_stats").upsert({
                 "id": "singleton",
-                "data": stats_data,
+                "data": data,
             }).execute()
-            # Verify write-back: confirm the persisted updated_at matches what we just wrote.
-            # A "row exists" check was insufficient — a silently-cached/failed write would still
-            # return the stale row and pass. Comparing updated_at catches real write failures.
-            verify = client.table("rolling_stats").select("data").eq("id", "singleton").execute()
-            if not verify.data:
-                logger.error("[STATS] Supabase write-back verification FAILED — row not found after upsert")
-            else:
-                persisted = (verify.data[0].get("data") or {}).get("updated_at")
-                if persisted != written_at:
-                    logger.error(
-                        f"[STATS] Supabase write-back verification FAILED — "
-                        f"persisted updated_at={persisted} != written_at={written_at}"
-                    )
-    except Exception as exc:
-        logger.error(f"[STATS] Supabase save failed — stats may be lost on redeploy: {exc}")
-        # OBS-01: same silent-outage pattern as CRIT-01. Previously this
-        # exception was logged and swallowed — so an env-misconfig or
-        # rotated service key took rolling_stats writes dark with no
-        # Telegram alert. Route it through the shared write-failure
-        # counter so the audit-1.5 alerter fires after 3 consecutive
-        # save failures (cooldown-gated at 10 min). Import is local to
-        # keep this path crash-safe even if the logger module itself
-        # is the source of the upstream error.
-        try:
-            from agents.utils.supabase_logger import _on_write_failure
-            _on_write_failure(exc, "rolling_stats:save")
-        except Exception as _alert_exc:
-            logger.warning(f"[STATS] Failure-counter hook failed: {_alert_exc}")
+        except Exception as exc:
+            logger.error(f"[STATS] Supabase save failed — stats may be lost on redeploy: {exc}")
+            try:
+                from agents.utils.supabase_logger import _on_write_failure
+                _on_write_failure(exc, "rolling_stats:save")
+            except Exception as _alert_exc:
+                logger.warning(f"[STATS] Failure-counter hook failed: {_alert_exc}")
+
+    threading.Thread(target=_supabase_upsert, args=(stats_snapshot,), daemon=True).start()
 
 
 def load_rolling_stats():

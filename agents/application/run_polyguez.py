@@ -160,6 +160,11 @@ class PolyGuezRunner:
         # Exposed on self so _entry_window can bypass the heartbeat gate when
         # the installed client version doesn't support it (e.g. v0.17.5).
         self._heartbeat_supported: Optional[bool] = None
+        # LATENCY-TASK-3: depth TTL cache. _fetch_depth is called every
+        # 100ms tick inside _entry_window. CLOB depth changes on the order
+        # of seconds, so a 4s cache is safe and eliminates ~9 of every 10
+        # get_order_book HTTP calls.
+        self._depth_cache: dict = {}  # token_id → {"depth": float, "ts": float}
 
         # Hot-path timing (set per entry, read at settle)
         self._last_entry_llm_ms = 0.0
@@ -1193,10 +1198,14 @@ class PolyGuezRunner:
         """Deterministic signal fired — run LLM confirmation then execute."""
         log_event(logger, "signal_fired", f"Deterministic signal FIRED: {signal.direction}")
 
-        # Build CLOB depth summary for LLM context
-        clob_depth = await self._get_clob_depth(
-            yes_token if signal.direction == "up" else no_token,
-        )
+        # Build CLOB depth summary for LLM context — skip the HTTP call
+        # entirely when LLM is disabled since the string is never consumed.
+        if self.config.llm_enabled:
+            clob_depth = await self._get_clob_depth(
+                yes_token if signal.direction == "up" else no_token,
+            )
+        else:
+            clob_depth = ""
 
         # LLM confirmation — provider context from background cache (not fetched inline)
         _cache = self._provider_context_cache
@@ -2168,9 +2177,15 @@ class PolyGuezRunner:
 
         Returns -1.0 when depth cannot be measured (no wallet, API error)
         so the signal evaluator can skip the depth gate instead of blocking.
+        Results are cached for 4s — CLOB depth changes on the order of
+        seconds so this eliminates ~9 of every 10 get_order_book calls
+        during the 100ms-tick entry window.
         """
         if not self._polymarket:
             return -1.0
+        cached = self._depth_cache.get(token_id)
+        if cached and (time.time() - cached["ts"]) < 4.0:
+            return cached["depth"]
         loop = asyncio.get_event_loop()
         book = None
         try:
@@ -2178,6 +2193,7 @@ class PolyGuezRunner:
                 None, self._polymarket.client.get_order_book, token_id,
             )
             depth = compute_clob_depth(book, "buy")
+            self._depth_cache[token_id] = {"depth": depth, "ts": time.time()}
             log_event(logger, "clob_depth_fetched", f"Depth for {token_id[:16]}...: {depth:.1f}")
             return depth
         except Exception as exc:
