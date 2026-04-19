@@ -704,31 +704,48 @@ class PolyGuezRunner(CLOBMixin):
                     self._p2b_cross_check_divergence = 0.0
             else:
                 # LATENCY-TASK-2: refuse to fabricate P2B from "current"
-                # Chainlink. Log why and skip the cycle. Halts after N in
-                # a row, same policy as the "no Chainlink at all" branch.
+                # Chainlink. Log why and skip the cycle.
                 if cl_price is None or cl_price <= 0:
                     reason = "no_buffer_sample"
                     offset_str = "n/a"
                 else:
                     reason = "offset_too_large"
                     offset_str = f"{cl_offset:.1f}s"
+
+                # Distinguish RPC-broken (halt-worthy) from missed-window
+                # (safe skip). The halt counter protects against a dead
+                # feed — not the bootstrap case where we started mid-market
+                # and no sample aligns with this specific eventStartTime.
+                # If the latest Chainlink sample is fresh, the feed is
+                # alive and we just need to wait for the next market.
+                _, latest_age = self._btc_feed.get_chainlink_price()
+                feed_alive = latest_age < 60.0
+
                 log_event(logger, "p2b_offset_too_large",
                     f"P2B Chainlink offset={offset_str} > threshold={max_offset:.1f}s "
-                    f"(reason={reason}); skipping cycle",
+                    f"(reason={reason}, feed_alive={feed_alive}); skipping cycle",
                     {"reason": reason,
                      "offset_seconds": round(cl_offset, 2) if cl_offset is not None else None,
-                     "threshold_seconds": max_offset},
+                     "threshold_seconds": max_offset,
+                     "feed_latest_sample_age": round(latest_age, 1),
+                     "feed_alive": feed_alive},
                     level=30)
-                self._p2b_consecutive_failures += 1
                 self._rolling_stats.p2b_skips += 1
                 self._current_market = None
-                if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
-                    self._killed = True
-                    self._kill_timestamp = datetime.now(timezone.utc).isoformat()
-                    return
-                # Pace failures at SYSTEM.md's documented 2.5s cadence so the
-                # halt counter tracks real elapsed time (≈25s at threshold=10),
-                # not microsecond-spin at startup before the buffer seeds.
+
+                if feed_alive:
+                    # Feed healthy — missed this market's P2B window. Reset
+                    # the halt counter; next market cycle will have fresh
+                    # samples spanning its eventStartTime.
+                    self._p2b_consecutive_failures = 0
+                else:
+                    # Feed appears broken (no fresh samples). Bump halt counter.
+                    self._p2b_consecutive_failures += 1
+                    if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
+                        self._killed = True
+                        self._kill_timestamp = datetime.now(timezone.utc).isoformat()
+                        return
+                # Pace retries at SYSTEM.md's documented 2.5s cadence.
                 await asyncio.sleep(2.5)
                 return
         else:
