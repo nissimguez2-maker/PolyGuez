@@ -56,9 +56,9 @@
     {
       "label": "PolyGuez — Supabase: Read Trade Log (last 20)",
       "type": "shell",
-      "command": "python3 scripts/ops/sb_read.py --table trade_log --filter era=eq.V5 --order ts.desc --limit 20",
+      "command": "python3 scripts/ops/sb_read.py --table trade_log --filter era=eq.V6 --order ts.desc --limit 20",
       "group": "test",
-      "detail": "Last 20 V5 trade_log rows via Supabase REST.",
+      "detail": "Last 20 V6 trade_log rows via Supabase REST.",
       "presentation": {
         "reveal": "always",
         "panel": "shared",
@@ -82,9 +82,9 @@
     {
       "label": "PolyGuez — Supabase: Read Signal Log (last 10)",
       "type": "shell",
-      "command": "python3 scripts/ops/sb_read.py --table signal_log --filter session_tag=eq.V5 --order ts.desc --limit 10",
+      "command": "python3 scripts/ops/sb_read.py --table signal_log --filter session_tag=eq.V6 --order ts.desc --limit 10",
       "group": "test",
-      "detail": "Last 10 V5 signal_log rows — use this to verify signals are writing.",
+      "detail": "Last 10 V6 signal_log rows — use this to verify signals are writing.",
       "presentation": {
         "reveal": "always",
         "panel": "shared",
@@ -317,7 +317,7 @@
     {
       "label": "PolyGuez — Supabase: Backfill Market Outcomes (dry-run)",
       "type": "shell",
-      "command": "python3 scripts/python/backfill_market_outcomes.py --era V5",
+      "command": "python3 scripts/python/backfill_market_outcomes.py --era V6",
       "group": "build",
       "detail": "Preview Polymarket-resolved outcomes → signal_log backfill (no writes).",
       "presentation": {
@@ -330,9 +330,9 @@
     {
       "label": "PolyGuez — Supabase: Backfill Market Outcomes (commit)",
       "type": "shell",
-      "command": "python3 scripts/python/backfill_market_outcomes.py --era V5 --commit",
+      "command": "python3 scripts/python/backfill_market_outcomes.py --era V6 --commit",
       "group": "build",
-      "detail": "Write Polymarket-resolved outcomes into signal_log.outcome / outcome_ts for V5.",
+      "detail": "Write Polymarket-resolved outcomes into signal_log.outcome / outcome_ts for V6.",
       "presentation": {
         "reveal": "always",
         "panel": "shared",

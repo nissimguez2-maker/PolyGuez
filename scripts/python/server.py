@@ -289,7 +289,7 @@ async def get_trades(secret: str = Query(default=""), mode: str = Query(default=
             client = _client()
             if not client:
                 return JSONResponse({"error": "Supabase client unavailable"}, status_code=503)
-            session = _runner.config.session_tag if _runner else "V5"
+            session = _runner.config.session_tag if _runner else "V6"
             result = (
                 client.table("trade_log")
                 .select("*")
@@ -350,7 +350,7 @@ def _evaluate_live_gates() -> list[dict]:
     })
 
     cfg = getattr(_runner, "config", None) if _runner else None
-    session_tag = getattr(cfg, "session_tag", "V5") if cfg else "V5"
+    session_tag = getattr(cfg, "session_tag", "V6") if cfg else "V6"
 
     trade_count = None
     brier_value = None

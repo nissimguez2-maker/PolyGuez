@@ -222,7 +222,7 @@ class PolyGuezConfig(BaseModel):
     edge_scaled_sizing: bool = Field(default=False, description="When True, use fractional Kelly sizing interpolated between normal and strong bet sizes based on edge")
 
     dashboard_secret: str = Field(default_factory=lambda: __import__('secrets').token_urlsafe(32), description="Dashboard auth secret — auto-generated if not set via env")
-    session_tag: str = Field(default_factory=lambda: os.environ.get("SESSION_TAG", "V5"), description="Version tag — set SESSION_TAG env var in Railway to start a new session without code changes")
+    session_tag: str = Field(default_factory=lambda: os.environ.get("SESSION_TAG", "V6"), description="Version tag — set SESSION_TAG env var in Railway to start a new session without code changes")
 
     @model_validator(mode='after')
     def _warn_suspicious_combinations(self):

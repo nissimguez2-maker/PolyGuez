@@ -33,20 +33,26 @@ All signals and trades log to Supabase for post-hoc calibration.
 
 ---
 
-## Current session: **V5 (clean era)** — started 2026-04-15
+## Current session: **V6 (post-gate-fix era)** — started 2026-04-19
 
-V5 is the canonical research session. All rows carry `era = 'V5'`. Pre-V5 data
-was deleted from Supabase on 2026-04-16 (see
-`supabase/migrations/2026_04_18_cleanse_pre_v5.sql`). The
-`rolling_stats.reset_token = 'V5-CLEAN'` forces clean boot on every restart.
+V6 is the canonical research session. All rows carry `session_tag = 'V6'` going
+forward. V5 data (2026-04-15 → 2026-04-19, 49 trades, 1W/48L) is preserved in
+Supabase under `session_tag='V5'` but no longer counts toward live-mode math —
+those 49 trades fired against a broken `clob_fresh_ok` gate (CRIT-01) and are
+not representative. The `rolling_stats.reset_token = 'V6-CLEAN'` forces clean
+boot on the next restart so the in-memory counter begins at 0.
 
-**V5 goals:**
-- Accumulate ≥100 clean dry-run trades to support calibration.
-  *Blocked by CRIT-01: counter frozen at 43 since 2026-04-16 16:26:37Z.*
-- Refit logistic `k_logistic` on live V5 data. Current value `0.035` is a prior;
-  MLE on 88K shadows suggests true `k ≈ 0.007–0.010`. **Do not go live until
-  refitted.** Config field landed (MODEL-06(a)); refit (MODEL-06(b)) pending
-  data.
+**Why cut now:** LATENCY-4b (commit `6fc816a`, 2026-04-19) fixed the CLOB
+freshness gate that had been blocking 100% of V5 entries. The gate-fix changes
+the population of firing trades, so we start counting fresh from here.
+
+**V6 goals:**
+- Accumulate ≥100 clean dry-run trades under the fixed gate to support
+  calibration.
+- Refit logistic `k_logistic` on V6 live data. Current value `0.035` is a
+  prior; MLE on 88K shadows suggests true `k ≈ 0.007–0.010`. **Do not go live
+  until refitted.** Config field landed (MODEL-06(a)); refit (MODEL-06(b))
+  pending data.
 - Programmatic live-mode gate — *landed (MODEL-01, commit `93aaef7`).* Gate
   still requires operator to pass `min_net_edge > 0.02` before flipping.
 - Flip to live only after that gate passes.
@@ -58,7 +64,7 @@ was deleted from Supabase on 2026-04-16 (see
 | Param | Value | Notes |
 |---|---|---|
 | `mode` | `dry-run` | Live requires `CONFIRM` in dashboard + (pending) programmatic gate |
-| `session_tag` | `V5` | From env `SESSION_TAG` |
+| `session_tag` | `V6` | From env `SESSION_TAG` |
 | `k_logistic` (logistic steepness) | `0.035` | ⚠️ Overcalibrated — MLE suggests 0.007–0.010. MODEL-06(a) landed: now a `PolyGuezConfig` field, consumed at `polyguez_strategy.py:74`. Refit on V5 live data before flipping to live. |
 | `bet_size_normal` / `strong` | $8 / $10 | `low_balance` variants $3 / $5 |
 | `max_capital_fraction` | 0.20 | Per-trade cap as fraction of balance |

@@ -265,7 +265,7 @@ def supabase_startup_check() -> bool:
         return False
 
 
-def log_signal(snapshot: dict, session_tag: str = "V5") -> None:
+def log_signal(snapshot: dict, session_tag: str = "V6") -> None:
     """Fire-and-forget in background thread — never blocks the main loop."""
     snapshot["ts"] = datetime.now(timezone.utc).isoformat()
     snapshot["session_tag"] = session_tag
@@ -294,7 +294,7 @@ def log_signal(snapshot: dict, session_tag: str = "V5") -> None:
     _submit_log(_insert)
 
 
-def log_trade(record: dict, session_tag: str = "V5") -> None:
+def log_trade(record: dict, session_tag: str = "V6") -> None:
     """Fire-and-forget trade_log insert. COR-01 idempotency: if a row with this
     `signal_id` already exists in trade_log (e.g. because a crash-restart re-
     settled the same trade, or _recover_pending_position double-called

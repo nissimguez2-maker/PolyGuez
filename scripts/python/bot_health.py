@@ -39,8 +39,8 @@ def _parse_ts(ts_str: str | None) -> datetime | None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Bot health -> JSON")
-    parser.add_argument("--session", default="V5",
-                        help="session_tag to inspect (default: V5)")
+    parser.add_argument("--session", default="V6",
+                        help="session_tag to inspect (default: V6)")
     parser.add_argument("--stall-minutes", type=float, default=15.0,
                         help="minutes without a signal = 'stalled' (default: 15)")
     parser.add_argument("--silent-minutes", type=float, default=60.0,

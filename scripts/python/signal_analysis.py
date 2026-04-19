@@ -42,8 +42,8 @@ def _split_blockers(raw: object) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Signal-log analysis -> JSON")
-    parser.add_argument("--session", default="V5",
-                        help="session_tag to analyze (default: V5)")
+    parser.add_argument("--session", default="V6",
+                        help="session_tag to analyze (default: V6)")
     parser.add_argument("--hours", type=int, default=24,
                         help="lookback window in hours (default: 24)")
     args = parser.parse_args()

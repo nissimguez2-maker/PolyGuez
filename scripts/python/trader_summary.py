@@ -33,9 +33,9 @@ import sys
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="V5 trader summary → JSON")
-    parser.add_argument("--session", default="V5",
-                        help="session_tag to summarize (default: V5)")
+    parser = argparse.ArgumentParser(description="Trader summary → JSON")
+    parser.add_argument("--session", default="V6",
+                        help="session_tag to summarize (default: V6)")
     parser.add_argument("--limit", type=int, default=50,
                         help="max recent trades to include (default: 50)")
     args = parser.parse_args()

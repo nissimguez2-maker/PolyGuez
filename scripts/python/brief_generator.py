@@ -150,7 +150,7 @@ def _live_gate_defaults() -> dict:
 def main() -> int:
     parser = argparse.ArgumentParser(description="PolyGuez brief generator")
     parser.add_argument("--kind", choices=["full", "short"], default="full")
-    parser.add_argument("--session", default="V5")
+    parser.add_argument("--session", default="V6")
     args = parser.parse_args()
 
     tz = ZoneInfo("Asia/Jerusalem")
