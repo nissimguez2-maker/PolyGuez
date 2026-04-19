@@ -335,7 +335,86 @@ async function pollSlow() {
       shWREl.textContent = shWR + '%';
       shWREl.className = 'sf-val ' + (sh.wins > sh.losses ? 'positive' : 'negative');
     }
+
+    // ── Live vs Shadow parity (per-trade avg ratio) ─────────────────
+    // Purpose: tell Nessim whether live trades are tracking the shadow
+    // population. If live avg ≈ shadow avg, the bot isn't cherry-picking
+    // a worse subset than the shadow stream suggests.
+    // Gate: need ≥20 settled shadows + ≥1 live trade with a close.
+    const tSumForParity = await sq('dashboard_trade_summary', 'limit=1');
+    if (tSumForParity.length && sh.settled >= 20) {
+      const tp = tSumForParity[0];
+      const liveTrades = (tp.wins || 0) + (tp.losses || 0);
+      const livePnl = parseFloat(tp.total_pnl) || 0;
+      const liveAvg = liveTrades > 0 ? livePnl / liveTrades : 0;
+      const shadowAvg = shPnl / sh.settled;
+
+      const pv = $('parityVal');
+      const pb = $('parityBadge');
+      const la = $('liveAvgPnl');
+      const sa = $('shadowAvgPnl');
+      const pn = $('parityNote');
+      if (la) la.textContent = fmtUsd(liveAvg);
+      if (sa) sa.textContent = fmtUsd(shadowAvg);
+
+      if (liveTrades === 0) {
+        if (pv) pv.textContent = '--';
+        if (pb) { pb.textContent = 'no live'; pb.className = 'badge badge-dry'; }
+        if (pn) pn.textContent = 'Need at least 1 closed live trade to compare.';
+      } else if (Math.sign(liveAvg) !== Math.sign(shadowAvg) && shadowAvg !== 0) {
+        if (pv) { pv.textContent = 'DRIFT'; pv.style.color = 'var(--red)'; }
+        if (pb) { pb.textContent = 'signs disagree'; pb.className = 'badge'; pb.style.background = 'var(--red-bg)'; pb.style.color = 'var(--red)'; }
+        if (pn) pn.textContent = 'Live and shadow pnl have opposite signs — investigate.';
+      } else if (shadowAvg === 0) {
+        if (pv) pv.textContent = 'n/a';
+        if (pb) { pb.textContent = 'shadow flat'; pb.className = 'badge badge-dry'; }
+      } else {
+        const ratio = liveAvg / shadowAvg;
+        if (pv) {
+          pv.textContent = ratio.toFixed(2) + 'x';
+          pv.style.color = ratio >= 0.8 ? 'var(--green)' : ratio >= 0.5 ? 'var(--amber)' : 'var(--red)';
+        }
+        if (pb) {
+          if (ratio >= 0.8) { pb.textContent = 'parity'; pb.style.background = 'var(--green-bg)'; pb.style.color = 'var(--green)'; }
+          else if (ratio >= 0.5) { pb.textContent = 'mild drift'; pb.style.background = 'var(--amber-bg)'; pb.style.color = 'var(--amber)'; }
+          else { pb.textContent = 'drifting'; pb.style.background = 'var(--red-bg)'; pb.style.color = 'var(--red)'; }
+          pb.className = 'badge';
+        }
+        if (pn) pn.textContent = '≥ 0.80 → parity · 0.5–0.8 → mild drift · < 0.50 → live drifting below shadow';
+      }
+    } else {
+      // Not enough data yet — show waiting state
+      const pv = $('parityVal');
+      const pb = $('parityBadge');
+      const pn = $('parityNote');
+      if (pv) pv.textContent = '--';
+      if (pb) { pb.textContent = 'waiting'; pb.className = 'badge badge-dry'; }
+      if (pn) pn.textContent = `Need ≥ 20 settled shadows (have ${sh.settled}) + ≥ 1 live trade.`;
+    }
   }
+
+  // ── Daily P&L fallback from Supabase (when bot WS is offline) ────
+  // The bot-WS snapshot writes daily P&L every 100ms, but when Railway is
+  // mid-deploy or the WS drops, the topbar pill freezes. Pull today's
+  // closed-trade P&L directly from trade_log as a fallback. Only write if
+  // the bot WS hasn't updated in the last 10s.
+  try {
+    const lastWsAge = Date.now() - (window._dailyPnlFromBotWs || 0);
+    if (lastWsAge > 10000) {
+      const today = new Date(); today.setUTCHours(0, 0, 0, 0);
+      const todayIso = today.toISOString();
+      const todayTrades = await sq('trade_log',
+        `${tagFilter()}ts=gte.${todayIso}&pnl=not.is.null&select=pnl&limit=500`
+      );
+      const dailyPnl = todayTrades.reduce((s, t) => s + (parseFloat(t.pnl) || 0), 0);
+      const dpEl = $('kDailyPnl');
+      if (dpEl) {
+        dpEl.textContent = (dailyPnl >= 0 ? '+$' : '-$') + Math.abs(dailyPnl).toFixed(2);
+        const isDry = $('modeBadge') && $('modeBadge').textContent.includes('DRY');
+        dpEl.className = 'tdp-val ' + (isDry ? 'val-muted' : (dailyPnl >= 0 ? 'positive' : 'negative'));
+      }
+    }
+  } catch (e) { /* pill stays at last known value */ }
 
   // Complete-set edge 24h frequency
   try {

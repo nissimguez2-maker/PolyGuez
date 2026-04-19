@@ -71,6 +71,36 @@
   background: rgba(148, 163, 184, 0.06);
 }
 
+/* Daily P&L pill in the topbar — the first thing Nessim checks at 8am. */
+.topbar-dpnl {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 9999px;
+  border: 1px solid var(--card-border);
+  background: rgba(148, 163, 184, 0.06);
+}
+
+.topbar-dpnl .tdp-label {
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: var(--tracking-label);
+  text-transform: uppercase;
+  color: var(--text-4);
+}
+
+.topbar-dpnl .tdp-val {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+
+.topbar-dpnl .tdp-val.positive { color: var(--green); }
+.topbar-dpnl .tdp-val.negative { color: var(--red); }
+.topbar-dpnl .tdp-val.val-muted { color: var(--text-3); }
+
 .conn-dot {
   width: 7px;
   height: 7px;

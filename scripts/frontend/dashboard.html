@@ -29,6 +29,10 @@
     <div class="topbar-delta" id="deltaBox">Δ --</div>
   </div>
   <div class="topbar-right">
+    <span class="topbar-dpnl" id="dailyPnlBox" title="Net P&L for trades closed today">
+      <span class="tdp-label">Today</span>
+      <span class="tdp-val" id="kDailyPnl">--</span>
+    </span>
     <span class="conn-dot off" id="wsDot" title="Binance WS"></span>
     <span class="badge badge-dry" id="modeBadge">DRY-RUN</span>
     <span class="section-tag" id="sessionTagEl"></span>
@@ -253,11 +257,20 @@
         <div class="card-title">Vol &amp; Edge</div>
         <div class="chart-wrap chart-wrap-md"><canvas id="volCanvas"></canvas></div>
       </article>
-      <!-- Placeholder column keeps the shell symmetric; can be filled later. -->
-      <article class="card" style="opacity:0.5">
-        <div class="card-title">Daily P&amp;L</div>
-        <div class="kpi-val" id="kDailyPnl">--</div>
-        <div class="kpi-sub">today</div>
+      <article class="card">
+        <div class="card-head">
+          <div class="card-title">Live vs Shadow</div>
+          <span id="parityBadge" class="badge badge-dry">--</span>
+        </div>
+        <div class="cs-hero">
+          <span id="parityVal" class="cs-val">--</span>
+          <span class="cs-caption">live avg / shadow avg</span>
+        </div>
+        <div class="cs-stats">
+          <span>Live avg: <strong id="liveAvgPnl">--</strong></span>
+          <span>Shadow avg: <strong id="shadowAvgPnl">--</strong></span>
+        </div>
+        <div class="cs-note" id="parityNote">≥ 0.80 → parity · &lt; 0.50 → live drifting below shadow</div>
       </article>
     </div>
 

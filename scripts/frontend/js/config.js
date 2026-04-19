@@ -328,8 +328,14 @@ function connectBotWs() {
         if (dpEl) {
           const prev = parseFloat(dpEl.textContent.replace(/[^-\d.]/g,''));
           dpEl.textContent = (snap.daily_pnl >= 0 ? '+$' : '-$') + Math.abs(snap.daily_pnl).toFixed(2);
-          dpEl.className = 'val ' + (snap.daily_pnl >= 0 ? 'positive' : 'negative');
+          // Topbar pill uses `tdp-val` as base class; preserve it and just
+          // swap the sign/mute modifier. `val` + `kpi-val` would drop the
+          // base styling when the element lived in the old analytics tile.
+          const mode = $('modeBadge');
+          const dry = mode && mode.textContent.includes('DRY');
+          dpEl.className = 'tdp-val ' + (dry ? 'val-muted' : (snap.daily_pnl >= 0 ? 'positive' : 'negative'));
           flashEl(dpEl, snap.daily_pnl, prev);
+          window._dailyPnlFromBotWs = Date.now();
         }
       }
 
