@@ -737,11 +737,24 @@ class PolyGuezRunner(CLOBMixin):
             self._current_market = None
             return
 
-        # Wait for BTC feed buffer
+        # Wait for BTC feed buffer. Bounded so a broken Binance WebSocket on
+        # Railway doesn't block the cycle indefinitely (was causing /health to
+        # flip 503 after HEALTH_MAX_STALE_SECONDS=120s and Railway to
+        # crash-loop the container). Heartbeat updates inside the wait so the
+        # health check reflects 'cycle alive, just waiting' rather than hung.
         if not self._btc_feed.is_ready():
             log_event(logger, "btc_buffer_filling", "Waiting for BTC price buffer")
-            while not self._btc_feed.is_ready() and not self._killed:
-                await asyncio.sleep(0.1)
+            btc_wait_deadline = time.time() + 60.0
+            while not self._btc_feed.is_ready() and not self._killed and time.time() < btc_wait_deadline:
+                self._loop_heartbeat_ts = time.time()
+                await asyncio.sleep(0.5)
+            if not self._btc_feed.is_ready():
+                log_event(logger, "btc_buffer_timeout",
+                    "BTC price buffer not ready after 60s — bailing cycle so main loop can iterate",
+                    level=30)
+                self._current_market = None
+                await asyncio.sleep(2.5)
+                return
 
         # Entry window loop
         entered = await self._entry_window(market_id, yes_token, no_token, expiry_dt)
