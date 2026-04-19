@@ -1,5 +1,5 @@
 import typer
-from devtools import pprint
+from pprint import pprint
 
 app = typer.Typer()
 
