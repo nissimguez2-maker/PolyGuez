@@ -76,9 +76,9 @@ was deleted from Supabase on 2026-04-16 (see
 | `blocked_hours_utc` | `[0, 3]` | Thin-liquidity windows |
 | `llm_enabled` | `False` | Phase 0 — LLM disabled |
 | `max_p2b_chainlink_offset_seconds` | `10.0` | LATENCY-2. Max buffer→eventStart offset for P2B; over = cycle skipped. |
-| `max_binance_age_seconds` | `2.0` | LATENCY-3. Hard gate on Binance WS staleness. |
-| `max_rtds_age_seconds` | `1.0` | LATENCY-3. Applied only once RTDS has ever delivered. |
-| `max_chainlink_age_seconds` | `10.0` | LATENCY-3. General Chainlink staleness gate. |
+| `max_binance_age_seconds` | `10.0` | LATENCY-3. Hard gate on Binance WS staleness. Raised 2026-04-19 from `2.0` — Railway us-west2 is geo-blocked from Binance, so we rely on RTDS fallback. |
+| `max_rtds_age_seconds` | `30.0` | LATENCY-3. Applied only once RTDS has ever delivered. Raised 2026-04-19 from `1.0` — observed RTDS gaps 10-20s on Railway. |
+| `max_chainlink_age_seconds` | `60.0` | LATENCY-3. General Chainlink staleness gate. Raised 2026-04-19 from `10.0` — on-chain Chainlink heartbeat is 3600s; RTDS forwarding cadence is 10-60s. |
 | `clob_ws_stale_threshold` | `3.0` | LATENCY-4. CLOB WS message-age cutoff. |
 | `heartbeat_stale_threshold` | `8.0` | LATENCY-4. Blocks entry before Polymarket's ~10s heartbeat cancel. |
 | `max_llm_ms` | `None` | LATENCY-5. Opt-in hard cutoff (ms); over = no-go, bypasses `llm_timeout_fallback`. |

@@ -128,12 +128,12 @@ class PolyGuezConfig(BaseModel):
     # were logged but not gated; we now refuse to trade when any required
     # feed is older than its threshold. RTDS is optional — the check is
     # only applied once it has ever delivered a sample (age >= 0).
-    max_binance_age_seconds: float = Field(default=2.0, ge=0.1, le=30.0,
-        description="Max seconds since the last Binance WS tick before we refuse to trade.")
-    max_rtds_age_seconds: float = Field(default=1.0, ge=0.1, le=30.0,
-        description="Max seconds since the last RTDS message before we refuse to trade. Only applied if RTDS has ever delivered.")
-    max_chainlink_age_seconds: float = Field(default=10.0, ge=0.5, le=60.0,
-        description="Max seconds since the last Chainlink update before we refuse to trade.")
+    max_binance_age_seconds: float = Field(default=10.0, ge=0.1, le=30.0,
+        description="Max seconds since the last Binance WS tick before we refuse to trade. Raised from 2.0 — Railway us-west2 is geo-blocked from Binance, so we rely on RTDS fallback which has wider natural gaps.")
+    max_rtds_age_seconds: float = Field(default=30.0, ge=0.1, le=30.0,
+        description="Max seconds since the last RTDS message before we refuse to trade. Raised from 1.0 — observed RTDS gaps of 10-20s on Railway; 30s still blocks a genuinely dead feed. Only applied if RTDS has ever delivered.")
+    max_chainlink_age_seconds: float = Field(default=60.0, ge=0.5, le=60.0,
+        description="Max seconds since the last Chainlink update before we refuse to trade. Raised from 10.0 — on-chain Chainlink BTC/USD heartbeat is 3600s; sample cadence via RTDS forwarding is 10-60s.")
     # LATENCY-TASK-4: CLOB WS freshness + heartbeat health gates.
     # `clob_ws_stale_threshold` — seconds since the last CLOB WS message
     # past which we treat YES/NO quotes as stale and block entry. 3s is a
