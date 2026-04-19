@@ -147,6 +147,14 @@ async def supabase_status():
     usdc_balance = getattr(_runner, "_usdc_balance", None) if _runner else None
     sim_balance = getattr(getattr(_runner, "_rolling_stats", None), "simulated_balance", None) if _runner else None
 
+    killed = bool(getattr(_runner, "is_killed", False)) if _runner else None
+    last_tick = float(getattr(_runner, "_loop_heartbeat_ts", 0.0) or 0.0) if _runner else 0.0
+    loop_age_seconds = round(_time.time() - last_tick, 1) if last_tick else None
+    rs = getattr(_runner, "_rolling_stats", None) if _runner else None
+    entries_total = len(getattr(rs, "trades", []) or []) if rs is not None else None
+    commit = os.environ.get("RAILWAY_GIT_COMMIT_SHA")
+    session_tag = os.environ.get("SESSION_TAG")
+
     return JSONResponse({
         "client_initialised": client_ok,
         "init_attempted": _sb._supabase_init_attempted,
@@ -164,6 +172,11 @@ async def supabase_status():
         "discovery_misses": discovery_misses,
         "usdc_balance": usdc_balance,
         "sim_balance": sim_balance,
+        "killed": killed,
+        "loop_age_seconds": loop_age_seconds,
+        "entries_total": entries_total,
+        "commit": commit,
+        "session_tag": session_tag,
     })
 
 

@@ -158,6 +158,31 @@
       "problemMatcher": []
     },
     {
+      "label": "PolyGuez — Deploy: Railway Login (first-time)",
+      "type": "shell",
+      "command": "railway login",
+      "group": "build",
+      "detail": "Authenticate the Railway CLI in this machine (opens browser). Prerequisite for the Railway MCP server and the Tail Logs task.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Deploy: Railway Tail Logs",
+      "type": "shell",
+      "command": "railway logs --service \"${env:RAILWAY_SERVICE_ID}\"",
+      "group": "test",
+      "detail": "Stream live Railway logs for the PolyGuez service. Requires `railway login` first.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "PolyGuez — Deploy: Push to GitHub (main)",
       "type": "shell",
       "command": "python3 scripts/ops/github_push.py --branch main --confirm CONFIRM_PUSH_MAIN",
