@@ -708,6 +708,11 @@ class PolyGuezRunner(CLOBMixin):
                 if self._p2b_consecutive_failures >= self.config.p2b_consecutive_failure_halt:
                     self._killed = True
                     self._kill_timestamp = datetime.now(timezone.utc).isoformat()
+                    return
+                # Pace failures at SYSTEM.md's documented 2.5s cadence so the
+                # halt counter tracks real elapsed time (≈25s at threshold=10),
+                # not microsecond-spin at startup before the buffer seeds.
+                await asyncio.sleep(2.5)
                 return
         else:
             log_event(logger, "p2b_no_start_time", "No eventStartTime in market dict", level=30)
