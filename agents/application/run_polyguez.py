@@ -575,6 +575,23 @@ class PolyGuezRunner(CLOBMixin):
         # until cycle 1 runs `_resolve_pending_settlements`.
         await self._resolve_pending_settlements()
 
+        # Wait for Chainlink buffer to seed before entering the cycle loop.
+        # Without this, startup races with the Chainlink polling task: cycle 1
+        # finds an empty buffer, bails with reason=no_buffer_sample, and with
+        # no delay on that path the 10-failure halt fires within seconds —
+        # before the polling task has had a chance to fetch a single sample.
+        # Bounded wait so a truly broken RPC still reaches the halt path.
+        cl_wait_deadline = time.time() + 90.0
+        while not self._btc_feed.is_chainlink_ready() and time.time() < cl_wait_deadline and not self._killed:
+            await asyncio.sleep(1.0)
+        if self._btc_feed.is_chainlink_ready():
+            log_event(logger, "chainlink_seeded",
+                f"Chainlink buffer seeded ({len(self._btc_feed._chainlink_buffer)} samples) — entering cycle loop")
+        else:
+            log_event(logger, "chainlink_wait_timeout",
+                "Chainlink buffer still empty after 90s — entering cycle loop anyway (halt logic will catch a truly broken RPC)",
+                level=30)
+
         while not self._killed:
             self._loop_heartbeat_ts = time.time()
             try:
