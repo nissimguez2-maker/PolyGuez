@@ -255,7 +255,15 @@ class CLOBMixin:
                 loop = asyncio.get_event_loop()
                 yes_future = loop.run_in_executor(None, self._get_clob_price_with_log, yes_token, "UP")
                 no_future = loop.run_in_executor(None, self._get_clob_price_with_log, no_token, "DOWN")
-                yes_price, no_price = await asyncio.gather(yes_future, no_future)
+                try:
+                    yes_price, no_price = await asyncio.wait_for(
+                        asyncio.gather(yes_future, no_future), timeout=2.0,
+                    )
+                except asyncio.TimeoutError:
+                    self._clob_ok = False
+                    log_event(logger, "clob_rest_timeout",
+                              "[CLOB/REST] Individual midpoint calls exceeded 2s — giving up", level=30)
+                    return (0.0, 0.0, 1.0)
                 log_event(logger, "clob_rest_individual",
                           f"[CLOB/REST] Individual: UP={yes_price:.4f} DOWN={no_price:.4f}")
                 spread = abs(1.0 - yes_price - no_price)
@@ -292,19 +300,32 @@ class CLOBMixin:
         try:
             async def _fetch_one(token_id, label):
                 url = f"{base}?token_id={token_id}"
-                async with self._clob_http_session.get(url) as resp:
-                    if resp.status != 200:
-                        log_event(logger, "clob_rest_http",
-                                  f"[CLOB/REST] midpoint HTTP {resp.status} for {label} {token_id[:16]}...", level=30)
+                try:
+                    async with self._clob_http_session.get(
+                        url, timeout=aiohttp.ClientTimeout(total=1.5),
+                    ) as resp:
+                        if resp.status != 200:
+                            log_event(logger, "clob_rest_http",
+                                      f"[CLOB/REST] midpoint HTTP {resp.status} for {label} {token_id[:16]}...", level=30)
+                            return 0.0
+                        data = await resp.json(content_type=None)
+                        log_event(logger, "clob_rest_raw",
+                                  f"[CLOB/REST] midpoint {label} raw: {data}", level=10)
+                        if isinstance(data, dict):
+                            val = data.get("mid") or data.get("price") or data.get("midpoint")
+                            try:
+                                return float(val) if val is not None else 0.0
+                            except (TypeError, ValueError):
+                                return 0.0
+                        elif isinstance(data, (str, int, float)):
+                            try:
+                                return float(data)
+                            except (TypeError, ValueError):
+                                return 0.0
                         return 0.0
-                    data = await resp.json(content_type=None)
-                    log_event(logger, "clob_rest_raw",
-                              f"[CLOB/REST] midpoint {label} raw: {data}", level=10)
-                    if isinstance(data, dict):
-                        val = data.get("mid") or data.get("price") or data.get("midpoint")
-                        return float(val) if val is not None else 0.0
-                    elif isinstance(data, (str, int, float)):
-                        return float(data)
+                except asyncio.TimeoutError:
+                    log_event(logger, "clob_rest_timeout",
+                              f"[CLOB/REST] midpoint timeout for {label} {token_id[:16]}...", level=30)
                     return 0.0
 
             yes_price, no_price = await asyncio.gather(

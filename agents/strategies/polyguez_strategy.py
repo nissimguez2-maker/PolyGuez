@@ -122,9 +122,11 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                     signed = await loop.run_in_executor(None, polymarket_client.client.create_order, order_args)
                     resp = await loop.run_in_executor(None, lambda: polymarket_client.client.post_order(signed, orderType=OrderType.GTD, post_only=True))
                     log_event(logger, "maker_order_posted", f"[MAKER/GTD] Limit order at {limit_price:.4f}, expires in {60 + int(seconds_remaining)}s")
-                    # Dynamic timeout based on seconds_remaining
+                    # Dynamic timeout + poll interval based on seconds_remaining.
+                    # Late in the window we can't afford 2s of blind waiting.
                     max_wait = min(30.0, max(5.0, seconds_remaining * 0.4))
-                    polls = int(max_wait / 2)
+                    poll_interval = min(2.0, max(0.3, seconds_remaining / 20.0))
+                    polls = max(1, int(max_wait / poll_interval))
                     # Poll for fill confirmation
                     order_id = None
                     if isinstance(resp, dict):
@@ -133,7 +135,7 @@ async def execute_entry(polymarket_client, token_id, size_usdc, mode, config=Non
                         order_id = resp.orderID
                     if order_id:
                         for _poll in range(polls):
-                            await asyncio.sleep(2)
+                            await asyncio.sleep(poll_interval)
                             try:
                                 status = await loop.run_in_executor(None, polymarket_client.client.get_order, order_id)
                                 if isinstance(status, dict) and status.get("status", "").upper() in ("MATCHED", "FILLED"):

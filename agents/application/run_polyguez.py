@@ -715,7 +715,7 @@ class PolyGuezRunner(CLOBMixin):
         if not self._btc_feed.is_ready():
             log_event(logger, "btc_buffer_filling", "Waiting for BTC price buffer")
             while not self._btc_feed.is_ready() and not self._killed:
-                await asyncio.sleep(1)
+                await asyncio.sleep(0.1)
 
         # Entry window loop
         entered = await self._entry_window(market_id, yes_token, no_token, expiry_dt)
@@ -788,12 +788,19 @@ class PolyGuezRunner(CLOBMixin):
                     if isinstance(outcome_prices_raw, str):
                         try:
                             outcome_prices_raw = json.loads(outcome_prices_raw)
-                        except (json.JSONDecodeError, TypeError):
+                        except (json.JSONDecodeError, TypeError) as _parse_exc:
+                            log_event(logger, "shadow_settlement_parse_fail",
+                                f"Market {market_id} outcomePrices JSON parse failed: {_parse_exc} | raw={outcome_prices_raw!r}",
+                                level=30)
                             outcome_prices_raw = []
                     if isinstance(outcome_prices_raw, list) and len(outcome_prices_raw) >= 2:
                         settle_shadow_trades(market_id, outcome_prices_raw)
                         log_event(logger, "shadow_settled_no_position",
                             f"[SHADOW] Polymarket-fallback settlement for market {market_id} (no real position)")
+                    else:
+                        log_event(logger, "shadow_settlement_skipped",
+                            f"Market {market_id} closed but outcomePrices unusable: {outcome_prices_raw!r}",
+                            level=30)
             except Exception as exc:
                 log_event(logger, "shadow_settle_error", f"Shadow settlement failed: {exc}")
 
@@ -1529,6 +1536,12 @@ class PolyGuezRunner(CLOBMixin):
                         f"Market {market_id} closed but prices not resolved: {outcome_prices}")
                     outcome_str = "pending"
                     pnl = 0.0
+                elif not (0.0 <= yes_settled <= 1.0) or not (0.0 <= no_settled <= 1.0):
+                    log_event(logger, "settlement_bad_price",
+                        f"Market {market_id} prices out of [0,1]: yes={yes_settled} no={no_settled} — treating as pending",
+                        level=30)
+                    outcome_str = "pending"
+                    pnl = 0.0
                 else:
                     settled_price = yes_settled if self._position.side == "YES" else no_settled
 
@@ -1784,6 +1797,11 @@ class PolyGuezRunner(CLOBMixin):
                 yes_settled = float(outcome_prices[0])
                 no_settled = float(outcome_prices[1])
                 settled_price = yes_settled if trade.side == "YES" else no_settled
+                if not (0.0 <= settled_price <= 1.0):
+                    log_event(logger, "pending_bad_price",
+                        f"Market {trade.market_id} settled_price={settled_price} out of [0,1] — skipping resolution",
+                        level=30)
+                    continue
                 if settled_price > 0.5:
                     pnl = round(trade.size_usdc * (1.0 / trade.entry_price - 1.0), 4)
                     trade.outcome = "win"

@@ -213,7 +213,7 @@ class Polymarket:
 
     def get_all_markets(self) -> "list[SimpleMarket]":
         markets = []
-        res = httpx.get(self.gamma_markets_endpoint)
+        res = httpx.get(self.gamma_markets_endpoint, timeout=10.0)
         if res.status_code == 200:
             for market in res.json():
                 try:
@@ -233,7 +233,7 @@ class Polymarket:
 
     def get_market(self, token_id: str) -> SimpleMarket:
         params = {"clob_token_ids": token_id}
-        res = httpx.get(self.gamma_markets_endpoint, params=params)
+        res = httpx.get(self.gamma_markets_endpoint, params=params, timeout=10.0)
         if res.status_code == 200:
             data = res.json()
             market = data[0]
@@ -262,7 +262,7 @@ class Polymarket:
 
     def get_all_events(self) -> "list[SimpleEvent]":
         events = []
-        res = httpx.get(self.gamma_events_endpoint)
+        res = httpx.get(self.gamma_events_endpoint, timeout=10.0)
         if res.status_code == 200:
             print(len(res.json()))
             for event in res.json():
@@ -415,7 +415,7 @@ def test():
 def gamma():
     url = "https://gamma-com"
     markets_url = url + "/markets"
-    res = httpx.get(markets_url)
+    res = httpx.get(markets_url, timeout=10.0)
     code = res.status_code
     if code == 200:
         markets: list[SimpleMarket] = []
