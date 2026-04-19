@@ -315,6 +315,32 @@
       "problemMatcher": []
     },
     {
+      "label": "PolyGuez — Supabase: Backfill Market Outcomes (dry-run)",
+      "type": "shell",
+      "command": "python3 scripts/python/backfill_market_outcomes.py --era V5",
+      "group": "build",
+      "detail": "Preview Polymarket-resolved outcomes → signal_log backfill (no writes).",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "PolyGuez — Supabase: Backfill Market Outcomes (commit)",
+      "type": "shell",
+      "command": "python3 scripts/python/backfill_market_outcomes.py --era V5 --commit",
+      "group": "build",
+      "detail": "Write Polymarket-resolved outcomes into signal_log.outcome / outcome_ts for V5.",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "PolyGuez — Supabase: Maintenance",
       "type": "shell",
       "command": "python3 scripts/ops/sb_maintenance.py",
