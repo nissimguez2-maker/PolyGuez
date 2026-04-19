@@ -1,5 +1,12 @@
+import sys
+# Flushed prints so Railway deploy logs show exactly where startup is. Empty
+# deploy logs + 502 means we died before one of these fired — each line tells
+# us which stage survived.
+print("[BOOT] cli.py: entered", flush=True)
+
 import typer
 from pprint import pprint
+print("[BOOT] cli.py: typer + stdlib ok", flush=True)
 
 app = typer.Typer()
 
@@ -78,12 +85,14 @@ def run_polyguez(
     Run the PolyGuez Momentum strategy.
     Default is dry-run. Use --live for real execution.
     """
+    print("[BOOT] run_polyguez: entered command", flush=True)
     import asyncio
     import threading
 
     from agents.application.run_polyguez import PolyGuezRunner
     from agents.utils.objects import PolyGuezConfig
     import os
+    print("[BOOT] run_polyguez: heavy imports ok (PolyGuezRunner, PolyGuezConfig)", flush=True)
 
     # Resolve port: CLI flag > $PORT env (Railway) > default 8080
     port = dashboard_port or int(os.getenv("PORT", "8080"))
@@ -105,11 +114,15 @@ def run_polyguez(
         # samples; raise this on Railway to avoid blocking all cycles.
         max_p2b_chainlink_offset_seconds=float(_p2b_offset_env) if _p2b_offset_env else _defaults.max_p2b_chainlink_offset_seconds,
     )
+    print("[BOOT] run_polyguez: config built", flush=True)
 
     from agents.utils.supabase_logger import supabase_startup_check
+    print("[BOOT] run_polyguez: calling supabase_startup_check (may take up to ~15s if creds bad)", flush=True)
     supabase_startup_check()
+    print("[BOOT] run_polyguez: supabase_startup_check returned", flush=True)
 
     runner = PolyGuezRunner(config=config)
+    print("[BOOT] run_polyguez: PolyGuezRunner instantiated", flush=True)
 
     if dashboard:
         from scripts.python.server import app as fastapi_app, set_runner
@@ -122,9 +135,9 @@ def run_polyguez(
 
         t = threading.Thread(target=_start_dashboard, daemon=True)
         t.start()
-        print(f"Dashboard running on port {port}")
+        print(f"[BOOT] Dashboard thread started on port {port}", flush=True)
 
-    print(f"PolyGuez starting in [{effective_mode.upper()}] mode")
+    print(f"[BOOT] PolyGuez starting in [{effective_mode.upper()}] mode", flush=True)
     asyncio.run(runner.run())
 
 
