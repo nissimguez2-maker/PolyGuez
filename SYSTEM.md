@@ -80,6 +80,7 @@ was deleted from Supabase on 2026-04-16 (see
 | `max_rtds_age_seconds` | `30.0` | LATENCY-3. Applied only once RTDS has ever delivered. Raised 2026-04-19 from `1.0` — observed RTDS gaps 10-20s on Railway. |
 | `max_chainlink_age_seconds` | `60.0` | LATENCY-3. General Chainlink staleness gate. Raised 2026-04-19 from `10.0` — on-chain Chainlink heartbeat is 3600s; RTDS forwarding cadence is 10-60s. |
 | `clob_ws_stale_threshold` | `3.0` | LATENCY-4. CLOB WS message-age cutoff. |
+| `clob_rest_stale_threshold` | `5.0` | LATENCY-4b (added 2026-04-19). REST-freshness fallback for `clob_fresh_ok`. Added after observing 100% of V5 signals blocked on `clob_stale` while REST midpoints were returning clean quotes — the WS-only gate ignored REST. |
 | `heartbeat_stale_threshold` | `8.0` | LATENCY-4. Blocks entry before Polymarket's ~10s heartbeat cancel. |
 | `max_llm_ms` | `None` | LATENCY-5. Opt-in hard cutoff (ms); over = no-go, bypasses `llm_timeout_fallback`. |
 | `max_total_hot_path_ms` | `8000.0` | LATENCY-5. Trades above this flip `hot_path_stale` on the log row (observability). |

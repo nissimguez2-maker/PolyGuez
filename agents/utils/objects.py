@@ -141,6 +141,15 @@ class PolyGuezConfig(BaseModel):
     # fallback in _poll_clob kicks in long before this threshold.
     clob_ws_stale_threshold: float = Field(default=3.0, ge=0.5, le=30.0,
         description="Max seconds since the last CLOB WS message before quotes are treated as stale.")
+    # LATENCY-TASK-4b: REST-freshness fallback for `clob_fresh_ok`. When the
+    # CLOB WS is dead (observed 100% of signals on 2026-04-19), the WS-only
+    # gate blocks every entry even though REST midpoint polling is still
+    # delivering clean quotes every cycle. This threshold bounds how stale
+    # the last successful CLOB poll (WS or REST) can be before the gate
+    # blocks. 5s = ~50× the `clob_poll_interval=0.1s`, so it only trips on
+    # a genuinely dead poll path.
+    clob_rest_stale_threshold: float = Field(default=5.0, ge=0.5, le=30.0,
+        description="Max seconds since the last successful CLOB poll (WS or REST) before the freshness gate blocks.")
     # `heartbeat_stale_threshold` — Polymarket cancels open maker orders
     # after ~10s without a heartbeat. We block entries at 8s so a
     # borderline-dead session never fires a trade whose order will be

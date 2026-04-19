@@ -231,6 +231,7 @@ class CLOBMixin:
             no_price = self._clob_ws_no
             spread = abs(1.0 - yes_price - no_price)
             self._clob_ok = True
+            self._clob_last_poll_ok_ts = time.time()
             return (yes_price, no_price, spread)
 
         # WS stale or not connected — fall back to REST
@@ -271,6 +272,7 @@ class CLOBMixin:
                           f"[CLOB/REST] Individual: UP={yes_price:.4f} DOWN={no_price:.4f}")
                 spread = abs(1.0 - yes_price - no_price)
                 self._clob_ok = True
+                self._clob_last_poll_ok_ts = time.time()
                 return (yes_price, no_price, spread)
 
             # Last fallback: Gamma outcomePrices
@@ -340,6 +342,7 @@ class CLOBMixin:
                           f"[CLOB/REST] UP={yes_price:.4f} DOWN={no_price:.4f}")
                 spread = abs(1.0 - yes_price - no_price)
                 self._clob_ok = True
+                self._clob_last_poll_ok_ts = time.time()
                 return (yes_price, no_price, spread)
             log_event(logger, "clob_rest_bad",
                       f"[CLOB/REST] Partial midpoint: UP={yes_price} DOWN={no_price}", level=30)

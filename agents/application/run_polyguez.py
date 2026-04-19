@@ -115,6 +115,12 @@ class PolyGuezRunner(CLOBMixin):
         self._gamma_ok = False
         self._discovery_misses = 0  # cycles where _discover_market() returned None
         self._clob_ok = False
+        # LATENCY-TASK-4b: monotonic timestamp of the last successful CLOB
+        # price poll (WS or REST). Feeds `clob_fresh_ok` so the gate can
+        # accept REST freshness when the WS is dead — otherwise a dead
+        # WS blocks 100% of signals even though REST is delivering clean
+        # quotes every cycle. Zero = no successful poll yet this session.
+        self._clob_last_poll_ok_ts: float = 0.0
         self._price_to_beat = None
         self._p2b_source = "none"
         self._p2b_consecutive_failures = 0
@@ -1008,9 +1014,22 @@ class PolyGuezRunner(CLOBMixin):
                 _clob_msg_age = _now - self._clob_ws_last_msg
             else:
                 _clob_msg_age = -1.0  # never received
+            # LATENCY-TASK-4b: accept REST freshness as fallback when WS is
+            # dead. Observed 2026-04-19: 323/323 V5 signals over 6h carried
+            # clob_stale because WS never delivered a message, even though
+            # REST midpoint polling returned clean quotes (yes+no=1.0000,
+            # avg spread 1.7bps) every cycle. The REST path now satisfies
+            # the gate via `_clob_last_poll_ok_ts`, which is set in
+            # `_poll_clob` / `_poll_clob_rest` / `_try_midpoints_combined`
+            # (NOT in the no-wallet Gamma fallback).
+            _rest_fresh = (
+                self._clob_last_poll_ok_ts > 0
+                and (_now - self._clob_last_poll_ok_ts) <= self.config.clob_rest_stale_threshold
+            )
             signal.clob_fresh_ok = (
                 self.config.clob_ws_enabled is False
                 or (_clob_msg_age >= 0 and _clob_msg_age <= self.config.clob_ws_stale_threshold)
+                or _rest_fresh
             )
             if self._last_heartbeat_sent_ts > 0:
                 _heartbeat_age = _now - self._last_heartbeat_sent_ts
