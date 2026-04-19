@@ -27,7 +27,10 @@ from py_clob_client.clob_types import (
 )
 from py_clob_client.order_builder.constants import BUY
 
+from agents.utils.logger import get_logger, log_event
 from agents.utils.objects import SimpleMarket, SimpleEvent
+
+logger = get_logger("polyguez.polymarket")
 
 load_dotenv()
 
@@ -60,10 +63,12 @@ class Polymarket:
                 chain_id = w3.eth.chain_id  # Quick connectivity check
                 self.polygon_rpc = rpc_url
                 self.w3 = w3
-                print(f"[Polymarket] Connected to Polygon RPC: {rpc_url} (chain={chain_id})")
+                log_event(logger, "rpc_connected",
+                    f"[Polymarket] Connected to Polygon RPC: {rpc_url} (chain={chain_id})")
                 break
             except Exception as rpc_exc:
-                print(f"[Polymarket] RPC {rpc_url} failed: {rpc_exc}")
+                log_event(logger, "rpc_failed",
+                    f"[Polymarket] RPC {rpc_url} failed: {rpc_exc}", level=30)
                 continue
 
         if not self.w3:
@@ -127,7 +132,7 @@ class Polymarket:
         usdc_approve_tx_receipt = web3.eth.wait_for_transaction_receipt(
             send_usdc_approve_tx, 600
         )
-        print(usdc_approve_tx_receipt)
+        log_event(logger, "usdc_approve_tx", f"USDC approve tx receipt: {usdc_approve_tx_receipt}")
 
         nonce = web3.eth.get_transaction_count(pub_key)
 
@@ -143,7 +148,7 @@ class Polymarket:
         ctf_approval_tx_receipt = web3.eth.wait_for_transaction_receipt(
             send_ctf_approval_tx, 600
         )
-        print(ctf_approval_tx_receipt)
+        log_event(logger, "ctf_approve_tx", f"CTF approve tx receipt: {ctf_approval_tx_receipt}")
 
         nonce = web3.eth.get_transaction_count(pub_key)
 
@@ -160,7 +165,7 @@ class Polymarket:
         usdc_approve_tx_receipt = web3.eth.wait_for_transaction_receipt(
             send_usdc_approve_tx, 600
         )
-        print(usdc_approve_tx_receipt)
+        log_event(logger, "usdc_approve_tx", f"USDC approve tx receipt: {usdc_approve_tx_receipt}")
 
         nonce = web3.eth.get_transaction_count(pub_key)
 
@@ -176,7 +181,7 @@ class Polymarket:
         ctf_approval_tx_receipt = web3.eth.wait_for_transaction_receipt(
             send_ctf_approval_tx, 600
         )
-        print(ctf_approval_tx_receipt)
+        log_event(logger, "ctf_approve_tx", f"CTF approve tx receipt: {ctf_approval_tx_receipt}")
 
         nonce = web3.eth.get_transaction_count(pub_key)
 
@@ -193,7 +198,7 @@ class Polymarket:
         usdc_approve_tx_receipt = web3.eth.wait_for_transaction_receipt(
             send_usdc_approve_tx, 600
         )
-        print(usdc_approve_tx_receipt)
+        log_event(logger, "usdc_approve_tx", f"USDC approve tx receipt: {usdc_approve_tx_receipt}")
 
         nonce = web3.eth.get_transaction_count(pub_key)
 
@@ -209,7 +214,7 @@ class Polymarket:
         ctf_approval_tx_receipt = web3.eth.wait_for_transaction_receipt(
             send_ctf_approval_tx, 600
         )
-        print(ctf_approval_tx_receipt)
+        log_event(logger, "ctf_approve_tx", f"CTF approve tx receipt: {ctf_approval_tx_receipt}")
 
     def get_all_markets(self) -> "list[SimpleMarket]":
         markets = []
@@ -220,8 +225,8 @@ class Polymarket:
                     market_data = self.map_api_to_market(market)
                     markets.append(SimpleMarket(**market_data))
                 except Exception as e:
-                    print(e)
-                    pass
+                    log_event(logger, "market_map_error",
+                        f"Failed to map market: {e}", level=30)
         return markets
 
     def filter_markets_for_trading(self, markets: "list[SimpleMarket]"):
@@ -264,15 +269,15 @@ class Polymarket:
         events = []
         res = httpx.get(self.gamma_events_endpoint, timeout=10.0)
         if res.status_code == 200:
-            print(len(res.json()))
-            for event in res.json():
+            data = res.json()
+            log_event(logger, "events_fetched", f"Fetched {len(data)} events", level=10)
+            for event in data:
                 try:
-                    print(1)
                     event_data = self.map_api_to_event(event)
                     events.append(SimpleEvent(**event_data))
                 except Exception as e:
-                    print(e)
-                    pass
+                    log_event(logger, "event_map_error",
+                        f"Failed to map event: {e}", level=30)
         return events
 
     def map_api_to_event(self, event) -> SimpleEvent:
@@ -372,10 +377,10 @@ class Polymarket:
             amount=amount,
         )
         signed_order = self.client.create_market_order(order_args)
-        print("Execute market order... signed_order ", signed_order)
+        log_event(logger, "market_order_signed",
+            f"Executing FOK market order: token_id={token_id} amount={amount}")
         resp = self.client.post_order(signed_order, orderType=OrderType.FOK)
-        print(resp)
-        print("Done!")
+        log_event(logger, "market_order_resp", f"Market order response: {resp}")
         return resp
 
     def get_usdc_balance(self) -> float:

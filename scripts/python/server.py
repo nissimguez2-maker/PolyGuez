@@ -50,7 +50,19 @@ class StaticAuthMiddleware(BaseHTTPMiddleware):
             secret = _get_dashboard_secret()
             if secret:
                 qs_ok = request.query_params.get('secret') == secret
-                ref_ok = secret in (request.headers.get('referer') or '')
+                # Parse the referer URL and check the `secret` query param for
+                # *equality* (not substring). The prior `secret in referer`
+                # check would accept any referer containing the secret as a
+                # substring, including spoofed ones.
+                ref_ok = False
+                ref = request.headers.get('referer') or ''
+                if ref:
+                    try:
+                        from urllib.parse import urlparse, parse_qs
+                        ref_qs = parse_qs(urlparse(ref).query)
+                        ref_ok = secret in ref_qs.get('secret', [])
+                    except Exception:
+                        ref_ok = False
                 cookie_ok = request.cookies.get('dboard_secret') == secret
                 if not (qs_ok or ref_ok or cookie_ok):
                     from fastapi.responses import Response as _R

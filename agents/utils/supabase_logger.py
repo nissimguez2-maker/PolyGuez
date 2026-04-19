@@ -58,9 +58,12 @@ def _on_write_failure(exc: Exception, source: str) -> None:
         _last_alert_ts = now
         count = _consecutive_write_failures
     # Release lock before the (potentially slow) Telegram send.
+    # `str(exc)` instead of `exc!r`: the repr can include SDK internals that
+    # embed API keys or tokens from request URLs / headers; str() sticks to
+    # the human-readable message and the type name is added explicitly.
     _send_telegram_alert(
         f"[PolyGuez] Supabase writes failing ({count} consecutive). "
-        f"Last: {source}: {exc!r}"
+        f"Last: {source}: {type(exc).__name__}: {str(exc)[:500]}"
     )
 
 
@@ -190,7 +193,7 @@ def _init_client_locked():
         global _supabase_init_failed_at
         _supabase_init_failed_at = time.time()
         msg = (
-            f"[PolyGuez] Supabase client init FAILED: {e!r}. "
+            f"[PolyGuez] Supabase client init FAILED: {type(e).__name__}: {str(e)[:500]}. "
             "All writes are dead. Will retry in 2 min. "
             "Check Railway logs for root cause."
         )
@@ -251,7 +254,8 @@ def supabase_startup_check() -> bool:
         return True
     except Exception as exc:
         msg = (
-            f"[PolyGuez STARTUP] Supabase write probe FAILED: {exc!r}. "
+            f"[PolyGuez STARTUP] Supabase write probe FAILED: "
+            f"{type(exc).__name__}: {str(exc)[:500]}. "
             "SUPABASE_SERVICE_KEY is likely wrong (anon key?) or rotated. "
             "Fix: Supabase Dashboard > Settings > API > service_role key → "
             "paste into Railway Variables as SUPABASE_SERVICE_KEY, then redeploy."

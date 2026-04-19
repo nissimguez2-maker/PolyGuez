@@ -17,7 +17,6 @@ from agents.utils.logger import get_logger, log_event
 logger = get_logger("polyguez.market_discovery")
 
 _WINDOW_SECONDS = 300  # 5-minute windows
-_PRICE_TO_BEAT_RE = re.compile(r"\$([0-9,]+\.?\d*)")
 
 # Tiered P2B regexes (most specific first)
 _P2B_PRIMARY = re.compile(r"price\s+to\s+beat.{0,30}\$([0-9,]+\.\d{2})", re.IGNORECASE)
@@ -397,11 +396,9 @@ class MarketDiscovery:
 
         # Tier 4: fallback to Chainlink price at market open
         if chainlink_price is not None and sanity_min <= chainlink_price <= sanity_max:
-            import logging
-            logging.getLogger("polyguez.market_discovery").warning(
-                "P2B not in description — using Chainlink price at market open as P2B: $%.2f",
-                chainlink_price,
-            )
+            log_event(logger, "p2b_chainlink_fallback",
+                f"P2B not in description — using Chainlink price at market open as P2B: ${chainlink_price:.2f}",
+                level=30)
             return chainlink_price
 
         return None

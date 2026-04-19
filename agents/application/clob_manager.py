@@ -168,7 +168,10 @@ class CLOBMixin:
                 try:
                     if self._clob_ws:
                         await self._clob_ws.ping()
-                except Exception:
+                except Exception as ping_exc:
+                    log_event(logger, "clob_ws_ping_failed",
+                        f"[CLOB/WS] Ping failed — exiting ping loop: {type(ping_exc).__name__}: {ping_exc}",
+                        level=30)
                     break
         except asyncio.CancelledError:
             pass

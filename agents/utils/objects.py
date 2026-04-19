@@ -185,8 +185,8 @@ class PolyGuezConfig(BaseModel):
     )
 
     # P2B parsing hardening
-    p2b_sanity_min: float = Field(default=10000.0, description="Min plausible BTC price for P2B")
-    p2b_sanity_max: float = Field(default=500000.0, description="Max plausible BTC price for P2B")
+    # (p2b_sanity_min/_max live as module constants in market_discovery.py —
+    # the previously duplicated config fields were never wired up.)
     # Lowered 50 -> 10 per audit: at the 2.5s signal cadence, 50 failures was
     # 125s of bad shadow entries before halt; 10 caps it at ~25s.
     p2b_consecutive_failure_halt: int = Field(default=10, description="Halt after N consecutive P2B parse failures")
