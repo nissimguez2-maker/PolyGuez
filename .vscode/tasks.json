@@ -119,6 +119,19 @@
       "problemMatcher": []
     },
     {
+      "label": "PolyGuez — Supabase: Create Missing Tables",
+      "type": "shell",
+      "command": "python3 scripts/python/create_tables.py",
+      "group": "build",
+      "detail": "One-shot initializer for missing Supabase tables (signal/trade logging).",
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
       "label": "PolyGuez — Deploy: Check Railway Env Vars",
       "type": "shell",
       "command": "python3 scripts/ops/fix_railway_env.py",

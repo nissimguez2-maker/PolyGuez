@@ -416,10 +416,12 @@ class PriceFeedManager:
         _last_binance_buffer_ts throttle). When WS is down, this keeps prices flowing.
         """
         log_event(logger, "price_poll_started", "[PRICE] Poll loop started")
+        _consecutive_all_failed = 0
         while not self._stop.is_set():
             try:
                 price = await self._fetch_btc_price_multi_source()
                 if price is not None and price > 0:
+                    _consecutive_all_failed = 0
                     ts = time.time()
                     self._binance_msg_count += 1
                     self._binance_msg_count_window += 1
@@ -436,8 +438,14 @@ class PriceFeedManager:
                         self._binance_connected = True
                     self._maybe_log_stats()
                 else:
+                    _consecutive_all_failed += 1
+                    # Log ERROR every cycle, CRITICAL when the streak crosses
+                    # thresholds so an operator can distinguish a one-off
+                    # blip from a sustained outage.
+                    _level = 50 if _consecutive_all_failed in (5, 20, 60) else 40
                     log_event(logger, "multi_source_all_failed",
-                              "[PRICE] All sources failed this cycle", level=40)
+                              f"[PRICE] All sources failed ({_consecutive_all_failed} in a row)",
+                              level=_level)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:

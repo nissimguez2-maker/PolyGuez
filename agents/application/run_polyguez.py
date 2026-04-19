@@ -321,8 +321,12 @@ class PolyGuezRunner(CLOBMixin):
             try: await self._clob_ws_task
             except asyncio.CancelledError: pass
         if self._clob_ws:
-            try: await self._clob_ws.close()
-            except: pass
+            try:
+                await self._clob_ws.close()
+            except Exception as close_exc:
+                log_event(logger, "clob_ws_close_err",
+                    f"Error closing CLOB WS during shutdown: {type(close_exc).__name__}: {close_exc}",
+                    level=10)
 
         # Stop CLOB HTTP session
         if self._clob_http_session:
@@ -1282,8 +1286,10 @@ class PolyGuezRunner(CLOBMixin):
                     "conditions_total": 0,
                     "blocking_conditions": "hot_path_stale",
                 }, session_tag=self.config.session_tag)
-            except Exception:
-                pass
+            except Exception as _sh_exc:
+                log_event(logger, "shadow_log_failed",
+                    f"Shadow trade log failed (hot_path_stale): {type(_sh_exc).__name__}: {_sh_exc}",
+                    level=30)
             return False
 
         # Determine position size (fixed tiers)
